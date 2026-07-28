@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idlarr
 // @namespace    idlarr
-// @version      1.4.0
+// @version      1.0.0
 // @description  Never lose an account to inactivity again. Reports "I was logged in" to a self-hosted watchdog; sends nothing to the tracker.
 // @author       you
 // @run-at       document-idle
