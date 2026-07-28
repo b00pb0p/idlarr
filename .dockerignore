@@ -1,0 +1,10 @@
+# The image needs exactly two files. Everything else — tests, docs, the
+# screenshot, .git — was being shipped to the Docker daemon on every build for
+# no reason. Deny-all then allow, so adding a file to the repo cannot silently
+# bloat the context again.
+#
+# If you add a COPY to the Dockerfile, add an exception for it here too, or the
+# build fails with "file not found" despite the file plainly existing.
+*
+!requirements.txt
+!app.py
