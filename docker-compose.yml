@@ -1,0 +1,31 @@
+services:
+  idlarr:
+    build: .
+    container_name: idlarr
+    restart: unless-stopped
+    ports:
+      - "8099:8080"
+    volumes:
+      # Pre-create both on the host and chown them to PUID below. If Docker
+      # creates them they come out root-owned and the container cannot write
+      # its database — startup fails with "unable to open database file".
+      - ./data:/data
+      - ./config:/config
+    environment:
+      # --- secrets: set these in a .env file beside this compose file --------
+      # ${VAR:?msg} makes compose abort loudly rather than start without them.
+      # That guard matters: an empty IDLARR_TOKEN disables auth entirely,
+      # so a typo'd variable would silently turn /ping into an open endpoint.
+      IDLARR_TOKEN: "${IDLARR_TOKEN:?set IDLARR_TOKEN in .env}"
+      NTFY_TOKEN: "${NTFY_TOKEN:-}"
+
+      # --- where your notifications go --------------------------------------
+      NTFY_URL: "${NTFY_URL:?set NTFY_URL in .env, e.g. https://ntfy.sh}"
+      NTFY_TOPIC: "${NTFY_TOPIC:-idlarr}"
+
+      # --- where the status page lives (used as the ntfy click target) ------
+      STATUS_URL: "${STATUS_URL:-}"
+
+      # --- non-secret settings ----------------------------------------------
+      TZ: "${TZ:-UTC}"
+      PUID: "${PUID:-1001}"

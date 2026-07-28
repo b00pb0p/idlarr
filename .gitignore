@@ -1,0 +1,12 @@
+*.db
+*.pyc
+*.tar.gz
+.env
+.pytest_cache/
+.venv/
+/data/
+CLAUDE.md
+LOCAL.md
+__pycache__/
+data/
+trackers.yml

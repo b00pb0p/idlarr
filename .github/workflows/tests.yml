@@ -1,0 +1,25 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Check the config example and userscript still parse
+        run: |
+          python -c "import yaml; d=yaml.safe_load(open('trackers.example.yml')); print(len(d['trackers']), 'example trackers')"
+          python -c "import ast; ast.parse(open('app.py').read()); print('app.py OK')"

@@ -1,0 +1,344 @@
+# Idlarr
+
+**Never lose an account to inactivity again.**
+
+[![tests](https://github.com/b00pb0p/idlarr/actions/workflows/tests.yml/badge.svg)](https://github.com/b00pb0p/idlarr/actions/workflows/tests.yml)
+
+Private trackers prune accounts that go idle. Idlarr watches how long it has been
+since you actually logged in to each one, and pushes a notification before the
+clock runs out.
+
+**It never contacts a tracker.** A userscript already running in your browser
+reports when you were seen logged in; the service does the rest. There is nothing
+for a tracker to detect and nothing to ban you for.
+
+<!-- Replace with your own screenshot; see "Screenshot" below before you do. -->
+![The Idlarr status page](docs/screenshot.png)
+
+## Why not just automate the logins?
+
+That was the first thought, and it was scrapped. Plenty of trackers ban automated
+logins, and a ban is permanently worse than the inactivity disable it would have
+prevented. Idlarr is deliberately passive: it observes a page you were going to
+load anyway and never issues a request of its own. If a feature seems to need
+one, it doesn't.
+
+## Requirements
+
+- Docker and Docker Compose
+- A browser with [Violentmonkey](https://violentmonkey.github.io/) or Tampermonkey
+- Somewhere private to host it — Tailscale, a VPN, or reverse-proxy auth
+- An [ntfy](https://ntfy.sh) topic for push notifications
+
+FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
+
+## How it works
+
+1. You visit a tracker in your normal browser.
+2. The userscript checks whether you're authenticated and POSTs `{tracker, kind}`
+   to the service. Two event kinds:
+   - `visit` — fires on every page load
+   - `auth` — fires only when you're actually logged in
+3. Daily, the service compares `last auth` against that tracker's inactivity limit
+   and pushes an escalating ntfy alert if you're getting close.
+
+Tracking both kinds is what separates *"my session died"* from *"I haven't been
+there in two months"* from *"the userscript broke."*
+
+## Setup
+
+**1. Create the data directories** — before anything else, because the container
+runs as a non-root user and cannot create them itself:
+
+```bash
+mkdir -p data config && chown -R 1001 data config
+```
+
+If Docker creates them instead, they come out root-owned and startup fails with
+`unable to open database file`. Override the UID with `PUID` in `.env`.
+
+**2. Config** — copy the example and edit it:
+
+```bash
+cp trackers.example.yml config/trackers.yml
+```
+
+One entry per tracker: an `id`, a display `name`, a `url`, and
+`inactivity_days`. The example ships every limit at `30` with
+`verified: false`.
+
+> **Those numbers are fail-safe placeholders, not research.** Nobody outside a
+> tracker reliably knows its current inactivity policy, and a limit guessed too
+> long costs you the account — the exact failure this tool exists to prevent.
+> 30 days nags you early enough for almost any real policy. Read each tracker's
+> own rules page, correct the number, then flip `verified: true`.
+
+The status page marks unverified rows and counts them in the header, so what
+you still haven't checked stays visible.
+
+While you're in each rules page, note three things that can make an entry
+unnecessary: whether **seeding announces** reset the clock, whether your **user
+class** is exempt, and whether the site has a **vacation mode**.
+
+**3. Secrets and settings** — copy `.env.example` to `.env` and fill it in:
+
+```bash
+cp .env.example .env
+openssl rand -hex 32          # -> IDLARR_TOKEN
+```
+
+| Variable | Required | Default | What it does |
+|---|---|---|---|
+| `IDLARR_TOKEN` | **yes** | — | Shared secret for `/ping`. The service **refuses to start** without it. Must byte-match `TOKEN` in the userscript. |
+| `NTFY_URL` | **yes** | — | ntfy server, e.g. `https://ntfy.sh`. Compose aborts if unset. |
+| `NTFY_TOPIC` | no | `idlarr` | Topic to publish to. Subscribe to this on your phone. |
+| `NTFY_TOKEN` | no | *(empty)* | Only if your ntfy server requires auth. |
+| `STATUS_URL` | no | *(empty)* | Public URL of the status page, used as the notification click target. Blank just omits the link. |
+| `TZ` | no | `UTC` | Drives the daily check and **all day counting** — set it to your own zone or countdowns can be a day out. |
+| `PUID` | no | `1001` | UID the container runs as. Must own `./data` and `./config`. |
+| `IDLARR_BACKUP_KEEP` | no | `14` | Dated database snapshots to retain. `0` disables backups. |
+| `IDLARR_BACKUP_DIR` | no | `/data/backups` | Where those snapshots go. |
+| `IDLARR_DEDUPE_HOURS` | no | `12` | One event per tracker per kind per this window. Must be ≥ the userscript's `COOLDOWN`. |
+
+`IDLARR_DB` and `IDLARR_CONFIG` are set in the image and only need changing if
+you run it outside Docker.
+
+**4. Deploy**
+
+```bash
+docker compose up -d --build
+```
+
+**Keep the status page private.** Three write endpoints are unauthenticated by
+design, and one of them rewrites your config — see *Things that will bite you*.
+Put it behind Tailscale, a VPN, or reverse-proxy auth. Do not expose it.
+
+`/ping` itself is token-protected, and the service **refuses to start** without
+`IDLARR_TOKEN` — an empty token would disable authentication entirely, which is
+indistinguishable from working until something writes to your database.
+
+**5. Userscript** — install `idlarr.user.js` in Violentmonkey, then edit:
+- `TOKEN` — must byte-match `IDLARR_TOKEN`
+- `ENDPOINT` — full URL **including `/ping`**
+- `@connect` — the same host as a **bare hostname** (required: trackers set a
+  strict CSP, which is why this uses `GM_xmlhttpRequest`)
+- one `@match` line and one `SITES` entry per tracker, with **ids matching
+  `trackers.yml`**. If they drift, `/ping` returns `404 unknown tracker` and the
+  console says so.
+
+**6. Bootstrap** — everything starts at `no data`. Visit each tracker while
+logged in, or use `seen` on the status page.
+
+## Endpoints
+
+| Route | Purpose |
+|---|---|
+| `GET /` | Status page |
+| `GET /api/status` | Same data as JSON |
+| `POST /ping` | Userscript ingest (bearer auth) |
+| `POST /api/mark/{id}` | Manual "I just logged in" — **unauthenticated**, see below |
+| `POST /api/unmark/{id}` | Remove the most recent auth event — **unauthenticated** |
+| `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune`, writes trackers.yml — **unauthenticated** |
+| `GET /api/history/{id}` | Recent auth events, newest first (drawer) |
+| `POST /api/test-notify` | Fire the check immediately (bearer auth) |
+| `GET /healthz` | Health check |
+
+## The status page
+
+A sortable table: **tracker · software · state · last auth · left · limit ·
+elapsed**, worst first by default. Click any heading to sort; blanks always sort
+last, so a tracker with no data can never outrank one that's expiring.
+
+Click a **name** to open that tracker in a new tab. Click anywhere else on the
+row to expand a drawer with three panels:
+
+- **controls** — limit, `confirm`, `immune` (with a reason field), `seen`, `undo`
+- **alert schedule** — the exact date each rung fires, or why it won't
+- **auth history** — recent auth events, and whether each was observed or asserted
+
+Limits written here go straight into `trackers.yml`, comments intact,
+hot-reloaded, no restart. `seen` is two-step on purpose.
+
+## Adding or removing a tracker
+
+Two files, and the **`id` must be identical in both**. If they drift, `/ping`
+returns `404 unknown tracker` and the userscript logs it to the console.
+
+Say you're adding AnimeBytes (Gazelle) and Blutopia (UNIT3D).
+
+**`config/trackers.yml`** — append two entries:
+
+```yaml
+  - id: animebytes
+    name: AnimeBytes
+    url: https://animebytes.tv/
+    inactivity_days: 30
+    verified: false
+    notes: "Gazelle"
+
+  - id: blutopia
+    name: Blutopia
+    url: https://blutopia.cc/
+    inactivity_days: 30
+    verified: false
+    notes: "UNIT3D"
+```
+
+`url` should point at a page that requires a login — the status page links to it,
+and it's where you'll land to reset the clock. `notes` starting with the tracker
+software (`Gazelle`, `UNIT3D`, `TBDev`, `Custom`) populates the software column
+for free. Leave `inactivity_days: 30` and `verified: false` until you've read the
+site's own rules page.
+
+**`idlarr.user.js`** — one `@match` line in the metadata block:
+
+```javascript
+// @match        *://*.animebytes.tv/*
+// @match        *://*.blutopia.cc/*
+```
+
+and one `SITES` entry each, with the **same ids**:
+
+```javascript
+  const SITES = [
+    { host: 'animebytes.tv', id: 'animebytes' },
+    { host: 'blutopia.cc', id: 'blutopia' },
+  ];
+```
+
+`host` is the bare domain, no scheme and no path — it's matched as a substring of
+`location.hostname`, so it covers `www.` and any other subdomain. The `@match`
+pattern `*://*.domain/*` covers the apex domain too.
+
+Reinstall the script, then visit each site logged in. You want:
+
+```
+[idlarr] animebytes active on animebytes.tv
+[idlarr] animebytes auth recorded
+```
+
+If the second line doesn't appear, run `__idlarr()` — see
+[When a tracker won't record](#when-a-tracker-wont-record).
+
+### A site the heuristic can't read
+
+Single-page apps often keep no logout control in the DOM until you open a user
+menu, which passive detection can't do. Point `authSel` at anything that only
+exists when you're authenticated — a per-account download link, an upload button,
+your username:
+
+```javascript
+    { host: 'example.cc', id: 'example', authSel: 'a[href*="/torrent?key="]' },
+```
+
+A passkey in a download URL is stronger evidence than a logout link, since it
+cannot be rendered for an anonymous visitor. Note that such links usually only
+appear on torrent-listing pages — point that tracker's `url` at its browse page.
+
+**Removing** a tracker is the reverse: delete both entries and reinstall. Its
+recorded events stay in the database, so re-adding the same `id` later resumes
+the old countdown rather than starting fresh.
+
+## Immune trackers
+
+Some accounts can't be pruned at all: you donated, your user class is exempt, or
+the site has a standing exemption. Hit `immune` on that row and it moves to its
+own section — no countdown, no alerts ever, and it leaves the unconfirmed-limits
+denominator, so `1/21` means 21 trackers still actually need a number.
+
+A reason field appears when you toggle it on. Fill it in. In six months you will
+not remember whether it was the donation or the user class, and if the site
+changes its policy that's the only thing that tells you what to re-check.
+
+Immunity outranks every other state, including `expired` — an immune tracker that
+hasn't been touched in 200 days is still fine, and saying otherwise would train
+you to ignore the alerts that matter.
+
+## Alert escalation
+
+Relative to each tracker's inactivity limit:
+
+| Remaining | State | ntfy priority |
+|---|---|---|
+| immune | immune | silent — never alerts |
+| > 35% | ok | silent |
+| ≤ 35% (or past `alert_at_pct`) | due | default |
+| ≤ 14 days | warn | high |
+| ≤ 5 days | critical | urgent |
+| past the limit | expired | urgent |
+| visited while logged out | session | high |
+
+Repeats daily while actionable. One 3am push is how accounts get lost.
+
+## When a tracker won't record
+
+Run `__idlarr()` in the browser console on that site. It reports the script's own
+view of the page — whether it considers you authenticated, which detection path
+ran, the logout element it matched, whether a visible password field vetoed it,
+and any logout-shaped elements it rejected:
+
+```js
+__idlarr()
+```
+
+That object answers nearly every "why isn't this working" question without a
+round of guessing. Common outcomes:
+
+| What you see | What it means |
+|---|---|
+| `logoutFound: false`, `candidates` non-empty | the heuristic missed a convention — widen it, or set `authSel` |
+| `candidates: []` | no logout control in the DOM at all (common in single-page apps) — point `authSel` at something else that only exists when logged in |
+| `isAuthed: true` but nothing recorded | check the lines above it; a debounce or a `401` will say so |
+| `visiblePasswordField: true` | you're on a login page, or a change-password form |
+
+## Screenshot
+
+If you contribute one, **screenshot a demo instance, not your own**. The status
+page lists every tracker you're a member of, and that is not something to publish.
+Point a throwaway container at `trackers.example.yml` and shoot that.
+
+## Things that will bite you
+
+- **The write endpoints have no auth.** `/api/mark`, `/api/unmark` and `/api/limit`
+  are all unauthenticated, and `/api/limit` writes to `trackers.yml`. Keep the
+  status page behind Tailscale or Caddy auth. Don't expose it raw.
+- **The `seen` button is a bootstrap tool, not a workflow.** The week you tap it
+  out of habit without logging in is the week this stops working. It's two-step
+  in the UI for that reason, and every row shows whether its last auth was
+  *seen by userscript* or *marked by hand*. If a mark was wrong — site was down,
+  page came from cache — `undo` removes it.
+- **Auth detection is a heuristic**: a `logout` link present, no password field.
+  Works on Gazelle/UNIT3D and most PHP trackers. If a site redesigns, it silently
+  stops recording `auth` — you'll get alerts you don't deserve. That's the safe
+  failure direction, but check the console (`[idlarr]` logs) before assuming
+  the tracker is at fault. Use `authSel` to override per-site.
+- **`trackers.yml` hot-reloads.** Edit it live; no restart.
+- **The database is backed up nightly** to `/data/backups/idlarr-YYYY-MM-DD.db`,
+  14 days by default (`IDLARR_BACKUP_KEEP`). It is the only record of when each
+  account was last seen — losing it risks no account, but resets every countdown
+  to `no data` until you re-visit all of them. To restore, stop the container,
+  copy a snapshot over `/data/idlarr.db`, start it again.
+- **The clock is `last auth`, not `last visit`.** Passing by while logged out
+  doesn't count, and it shouldn't.
+
+## Contributing
+
+Issues and pull requests welcome. `pytest` runs on every push; please keep it
+green and add a test for behaviour changes — most of the suite exists because
+something silently did the wrong thing once.
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
+.venv/bin/python -m pytest -q
+```
+
+## A note on scope
+
+Idlarr reminds you to log in. That's all it does. It doesn't automate logins,
+touch your ratio, seed, download, or interact with a tracker in any way — it only
+reads a page your browser already loaded. Respect the rules of the sites you're a
+member of; this tool won't help you break them.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
