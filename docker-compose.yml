@@ -17,13 +17,14 @@ services:
       # That guard matters: an empty IDLARR_TOKEN disables auth entirely,
       # so a typo'd variable would silently turn /ping into an open endpoint.
       IDLARR_TOKEN: "${IDLARR_TOKEN:?set IDLARR_TOKEN in .env}"
-      NTFY_TOKEN: "${NTFY_TOKEN:-}"
 
       # --- where your notifications go --------------------------------------
-      NTFY_URL: "${NTFY_URL:?set NTFY_URL in .env, e.g. https://ntfy.sh}"
-      NTFY_TOPIC: "${NTFY_TOPIC:-idlarr}"
+      # Comma-separated Apprise URLs. ntfy, Pushover, Discord, Telegram,
+      # Signal, and ~100 more all go through here. Empty means alerts go
+      # nowhere, and startup says so.
+      IDLARR_NOTIFY_URLS: "${IDLARR_NOTIFY_URLS:?set IDLARR_NOTIFY_URLS in .env}"
 
-      # --- where the status page lives (used as the ntfy click target) ------
+      # --- appended to every alert so you can tap through to the page -------
       STATUS_URL: "${STATUS_URL:-}"
 
       # --- non-secret settings ----------------------------------------------

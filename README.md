@@ -28,7 +28,7 @@ one, it doesn't.
 - Docker and Docker Compose
 - A browser with [Violentmonkey](https://violentmonkey.github.io/) or Tampermonkey
 - Somewhere private to host it — Tailscale, a VPN, or reverse-proxy auth
-- An [ntfy](https://ntfy.sh) topic for push notifications
+- Somewhere to send notifications — [ntfy](https://ntfy.sh), Pushover, Discord, Telegram, or anything else [Apprise](https://github.com/caronc/apprise) supports
 
 FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
 
@@ -40,7 +40,7 @@ FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
    - `visit` — fires on every page load
    - `auth` — fires only when you're actually logged in
 3. Daily, the service compares `last auth` against that tracker's inactivity limit
-   and pushes an escalating ntfy alert if you're getting close.
+   and pushes an escalating alert if you're getting close.
 
 Tracking both kinds is what separates *"my session died"* from *"I haven't been
 there in two months"* from *"the userscript broke."*
@@ -90,10 +90,8 @@ openssl rand -hex 32          # -> IDLARR_TOKEN
 | Variable | Required | Default | What it does |
 |---|---|---|---|
 | `IDLARR_TOKEN` | **yes** | — | Shared secret for `/ping`. The service **refuses to start** without it. Must byte-match `TOKEN` in the userscript. |
-| `NTFY_URL` | **yes** | — | ntfy server, e.g. `https://ntfy.sh`. Compose aborts if unset. |
-| `NTFY_TOPIC` | no | `idlarr` | Topic to publish to. Subscribe to this on your phone. |
-| `NTFY_TOKEN` | no | *(empty)* | Only if your ntfy server requires auth. |
-| `STATUS_URL` | no | *(empty)* | Public URL of the status page, used as the notification click target. Blank just omits the link. |
+| `IDLARR_NOTIFY_URLS` | **yes** | — | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs — ntfy, Pushover, Discord, Telegram, Signal and ~100 more. Compose aborts if unset. |
+| `STATUS_URL` | no | *(empty)* | Public URL of the status page. Appended to every alert so you can tap through. |
 | `TZ` | no | `UTC` | Drives the daily check and **all day counting** — set it to your own zone or countdowns can be a day out. |
 | `PUID` | no | `1001` | UID the container runs as. Must own `./data` and `./config`. |
 | `IDLARR_BACKUP_KEEP` | no | `14` | Dated database snapshots to retain. `0` disables backups. |
@@ -142,6 +140,51 @@ logged in, or use `seen` on the status page.
 | `GET /api/history/{id}` | Recent auth events, newest first (drawer) |
 | `POST /api/test-notify` | Fire the check immediately (bearer auth) |
 | `GET /healthz` | Health check |
+
+## Notifications
+
+Everything goes through [Apprise](https://github.com/caronc/apprise), which
+speaks around a hundred services — **including ntfy**. One setting, one code
+path, nothing bespoke to maintain.
+
+```bash
+IDLARR_NOTIFY_URLS=ntfys://ntfy.example.com/my-topic?token=tk_xxx
+```
+
+Comma-separate for several destinations:
+
+```bash
+IDLARR_NOTIFY_URLS=pover://USER_KEY@APP_TOKEN,discord://WEBHOOK_ID/WEBHOOK_TOKEN
+```
+
+| Service | URL format |
+|---|---|
+| ntfy.sh | `ntfy://ntfy.sh/your-topic` |
+| self-hosted ntfy | `ntfys://ntfy.example.com/your-topic?token=tk_xxx` |
+| Pushover | `pover://USER_KEY@APP_TOKEN` |
+| Pushbullet | `pbul://ACCESS_TOKEN` |
+| Discord | `discord://WEBHOOK_ID/WEBHOOK_TOKEN` |
+| Telegram | `tgram://BOT_TOKEN/CHAT_ID` |
+| Signal | `signal://HOST:PORT/FROM/TO` (needs signal-cli-rest-api) |
+| Slack | `slack://TOKEN_A/TOKEN_B/TOKEN_C/#channel` |
+| Matrix | `matrix://USER:PASS@HOST/#room` |
+| Gotify | `gotify://HOST/TOKEN` |
+| Email | `mailto://user:pass@gmail.com` |
+
+The [Apprise wiki](https://github.com/caronc/apprise/wiki) has the rest.
+
+Alert priority maps to Apprise's own severity, so an expiring account looks
+different on your phone from a routine nudge: `default` becomes *info*, `high`
+becomes *warning*, `urgent` becomes *failure*.
+
+`STATUS_URL`, if set, is appended to the message body rather than used as a
+provider-specific click action — every service renders a URL, only some support
+a tap target.
+
+**With `IDLARR_NOTIFY_URLS` empty, nothing can reach you.** Compose refuses to
+start without it, and the service warns if it ends up empty anyway.
+
+**These URLs contain credentials.** Keep them in `.env`, which is gitignored.
 
 ## The status page
 
@@ -258,17 +301,22 @@ you to ignore the alerts that matter.
 
 Relative to each tracker's inactivity limit:
 
-| Remaining | State | ntfy priority |
-|---|---|---|
-| immune | immune | silent — never alerts |
-| > 35% | ok | silent |
-| ≤ 35% (or past `alert_at_pct`) | due | default |
-| ≤ 14 days | warn | high |
-| ≤ 5 days | critical | urgent |
-| past the limit | expired | urgent |
-| visited while logged out | session | high |
+| Remaining | State | Priority | Reaches you as |
+|---|---|---|---|
+| immune | immune | — | never alerts |
+| > 35% | ok | — | silent |
+| ≤ 35% (or past `alert_at_pct`) | due | `default` | *info* |
+| ≤ 14 days | warn | `high` | *warning* |
+| ≤ 5 days | critical | `urgent` | *failure* |
+| past the limit | expired | `urgent` | *failure* |
+| visited while logged out | session | `high` | *warning* |
 
-Repeats daily while actionable. One 3am push is how accounts get lost.
+The right-hand column is the Apprise severity, which each service renders in its
+own way — a colour in Discord, a priority level in Pushover, a tag in ntfy.
+
+Alerts batch into **one message per day**, not one per tracker. A dozen separate
+pushes is how someone starts ignoring them. It repeats daily while anything is
+actionable — one 3am push is how accounts get lost.
 
 ## When a tracker won't record
 

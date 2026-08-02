@@ -437,6 +437,32 @@ def test_require_token_accepts_the_right_token(monkeypatch):
     app.require_token("Bearer correct")          # must not raise
 
 
+# ---------------------------------------------------- apprise fan-out
+
+def test_apprise_severity_mapping():
+    """Priorities must reach Apprise as its own severity names, so a phone
+    shows an urgent alert differently from a routine one."""
+    assert app.apprise_type("urgent") == "failure"
+    assert app.apprise_type("high") == "warning"
+    assert app.apprise_type("default") == "info"
+
+
+def test_apprise_type_is_total():
+    """Every priority the ladder can produce must map to something."""
+    for p in ("default", "high", "urgent"):
+        assert app.apprise_type(p) in ("info", "warning", "failure")
+    assert app.apprise_type(None) == "info"        # never raises
+    assert app.apprise_type("nonsense") == "info"
+
+
+def test_notify_urls_parses_a_comma_list(monkeypatch):
+    import importlib
+    monkeypatch.setenv("IDLARR_NOTIFY_URLS",
+                       " pover://user@token , discord://id/tok ,, tgram://bot/chat ")
+    parsed = [u.strip() for u in os.environ["IDLARR_NOTIFY_URLS"].split(",") if u.strip()]
+    assert parsed == ["pover://user@token", "discord://id/tok", "tgram://bot/chat"]
+
+
 # ------------------------------------------------------------ notification
 
 def row(**over):
@@ -462,20 +488,20 @@ def test_free_text_immune_reason_does_not_break_it():
     import json
     p = app.build_notification([row(name="Ünicode", reason="café — 50% off ✓")])
     json.dumps(p)
-    assert "café" in p["message"]
+    assert "café" in p["body"]
 
 
-def test_priority_is_numeric_for_the_json_api():
-    p = app.build_notification([row(priority="urgent")])
-    assert p["priority"] == 5
-    assert app.build_notification([row(priority="default")])["priority"] == 3
-    assert app.build_notification([row(priority="high")])["priority"] == 4
+def test_priority_is_carried_through_by_name():
+    """Apprise maps the name to each service's own severity at send time."""
+    assert app.build_notification([row(priority="urgent")])["priority"] == "urgent"
+    assert app.build_notification([row(priority="high")])["priority"] == "high"
+    assert app.build_notification([row(priority="default")])["priority"] == "default"
 
 
 def test_worst_priority_wins():
     p = app.build_notification([row(priority="default"), row(priority="urgent"),
                                 row(priority="high")])
-    assert p["priority"] == 5
+    assert p["priority"] == "urgent"
 
 
 def test_single_item_title_names_the_tracker():
@@ -488,11 +514,17 @@ def test_many_items_batch_into_one_message():
     rows = [row(name=f"T{i}") for i in range(23)]
     p = app.build_notification(rows)
     assert p["title"] == "23 trackers need a login"
-    assert p["message"].count("\n") == 22
+    assert p["body"].count("\n") == 22
 
 
-def test_topic_comes_from_config_not_the_url():
-    assert app.build_notification([row()])["topic"] == app.NTFY_TOPIC
+def test_status_url_is_in_the_body_not_a_click_action(monkeypatch):
+    """Every service renders a URL in text; only some support tap targets."""
+    monkeypatch.setattr(app, "STATUS_URL", "https://box.example/")
+    p = app.build_notification([row()])
+    assert p["body"].endswith("https://box.example/")
+
+    monkeypatch.setattr(app, "STATUS_URL", "")
+    assert "http" not in app.build_notification([row()])["body"]
 
 
 # ------------------------------------------------------------------- ordering

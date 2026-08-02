@@ -18,7 +18,6 @@ from html import escape as html_escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import httpx
 import yaml
 from fastapi import Body, FastAPI, Header, HTTPException, Response
 from fastapi.responses import HTMLResponse
@@ -28,10 +27,13 @@ from fastapi.responses import HTMLResponse
 DB_PATH = Path(os.environ.get("IDLARR_DB", "/data/idlarr.db"))
 CONFIG_PATH = Path(os.environ.get("IDLARR_CONFIG", "/config/trackers.yml"))
 TOKEN = os.environ.get("IDLARR_TOKEN", "")
-NTFY_URL = os.environ.get("NTFY_URL", "").rstrip("/")
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "idlarr")
-NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "")
-STATUS_URL = os.environ.get("STATUS_URL", "")  # public URL, used in ntfy click action
+STATUS_URL = os.environ.get("STATUS_URL", "")  # appended to alerts so you can tap through
+
+# Every notification goes through Apprise -- ntfy included, via ntfy:// or
+# ntfys://. One code path, ~100 services, nothing bespoke to maintain. See
+# https://github.com/caronc/apprise/wiki for each service's URL scheme.
+# These strings carry credentials, so they are never printed.
+NOTIFY_URLS = [u.strip() for u in os.environ.get("IDLARR_NOTIFY_URLS", "").split(",") if u.strip()]
 
 # One event per kind per tracker per this window. Server-side on purpose — see
 # the note in /ping. Must be >= the userscript's client-side cooldown.
@@ -390,60 +392,76 @@ def statuses(now: datetime | None = None) -> list[dict]:
     return sorted(rows, key=lambda r: (order[r["state"]], r["days_left"] if r["days_left"] is not None else 9999))
 
 
-# ntfy's JSON priorities. The header API takes names, the JSON API takes 1-5.
-NTFY_PRIORITY = {"min": 1, "low": 2, "default": 3, "high": 4, "urgent": 5}
-
-
 def build_notification(rows: list[dict]) -> dict | None:
-    """Build the ntfy JSON payload, or None if nothing is actionable.
+    """Build the alert, or None if nothing is actionable.
 
-    Split out from the HTTP call so it can be tested without a network, and
-    because getting this wrong is silent: a malformed push looks exactly like
-    a quiet day.
+    Provider-neutral: title, body and a priority name. Apprise turns that into
+    whatever each service wants. Split out from sending so it can be tested
+    without a network, and because getting it wrong is silent -- a malformed
+    push looks exactly like a quiet day.
     """
     actionable = [r for r in rows if r["priority"]]
     if not actionable:
         return None
 
     worst = max(actionable, key=lambda r: ["default", "high", "urgent"].index(r["priority"]))
-    payload = {
-        "topic": NTFY_TOPIC,
-        "message": "\n".join(f"{r['name']}: {r['reason']}" for r in actionable),
-        "title": (f"{actionable[0]['name']} — {actionable[0]['reason']}"
+    body = "\n".join(f"{r['name']}: {r['reason']}" for r in actionable)
+    # The link goes in the BODY, not a provider-specific click action: every
+    # service renders a URL, but only some support a tap target.
+    if STATUS_URL:
+        body += f"\n\n{STATUS_URL}"
+
+    return {
+        "title": (f"{actionable[0]['name']} -- {actionable[0]['reason']}"
                   if len(actionable) == 1
                   else f"{len(actionable)} trackers need a login"),
-        "priority": NTFY_PRIORITY[worst["priority"]],
-        "tags": ["warning" if worst["priority"] == "urgent" else "hourglass"],
+        "body": body,
+        "priority": worst["priority"],
     }
-    if STATUS_URL:
-        payload["click"] = STATUS_URL
-    return payload
+
+
+# Apprise NotifyType names. Kept as plain strings so the mapping is testable
+# without the library installed, and resolved only at send time.
+APPRISE_TYPE = {"default": "info", "high": "warning", "urgent": "failure"}
+
+
+def apprise_type(priority: str) -> str:
+    return APPRISE_TYPE.get(priority, "info")
 
 
 async def notify(rows: list[dict]) -> None:
-    if not NTFY_URL:
-        print("[notify] NTFY_URL unset, skipping")
-        return
     payload = build_notification(rows)
     if payload is None:
         print("[notify] nothing due")
         return
+    if not NOTIFY_URLS:
+        print("[notify] IDLARR_NOTIFY_URLS is empty -- alert not sent")
+        return
 
-    # POST JSON to the server root, NOT /<topic>. The header-based API cannot
-    # carry non-ASCII: titles contain tracker names and reason strings (which
-    # include an em dash), and immune_reason is free text the user types. That
-    # crashed every push with a UnicodeEncodeError while looking, from the
-    # outside, exactly like having nothing to report.
-    headers = {"Authorization": f"Bearer {NTFY_TOKEN}"} if NTFY_TOKEN else {}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(NTFY_URL, json=payload, headers=headers)
-            if r.status_code >= 300:
-                print(f"[notify] REJECTED {r.status_code}: {r.text[:200]}")
-            else:
-                n = payload["message"].count("\n") + 1
-                print(f"[notify] sent ({r.status_code}) to {n} item(s)")
-    except Exception as exc:  # never let a push failure kill the loop
+        import apprise
+    except ImportError:
+        print("[notify] apprise is not installed (pip install apprise)")
+        return
+
+    def _send() -> bool:
+        ap = apprise.Apprise()
+        for url in NOTIFY_URLS:
+            if not ap.add(url):
+                # Never print the URL itself: these contain credentials.
+                print(f"[notify] apprise rejected a URL (scheme '{url.split('://')[0]}')")
+        if not len(ap):
+            print("[notify] no usable notification URLs")
+            return False
+        return ap.notify(title=payload["title"], body=payload["body"],
+                         notify_type=apprise_type(payload["priority"]))
+
+    try:
+        # Apprise is synchronous; a slow provider must not stall the scheduler.
+        ok = await asyncio.to_thread(_send)
+        n = payload["body"].count("\n") + 1
+        print(f"[notify] {'sent' if ok else 'FAILED'} to {len(NOTIFY_URLS)} target(s), {n} item(s)")
+    except Exception as exc:   # never let a push failure kill the loop
         print(f"[notify] FAILED: {exc}")
 
 
@@ -520,6 +538,12 @@ async def lifespan(app: FastAPI):
             "Generate one with `openssl rand -hex 32`, put it in .env, and use "
             "the same value for TOKEN in the userscript."
         )
+    if not NOTIFY_URLS:
+        # Not fatal -- the status page still works -- but a watchdog that
+        # cannot reach you is the exact failure this project exists to avoid,
+        # and silence is indistinguishable from "nothing is due".
+        print("[startup] WARNING: IDLARR_NOTIFY_URLS is empty. "
+              "Alerts will go nowhere. See .env.example.")
     init_db()
     load_config()
     task = asyncio.create_task(scheduler())
