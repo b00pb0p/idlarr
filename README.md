@@ -47,16 +47,25 @@ there in two months"* from *"the userscript broke."*
 
 ## Setup
 
-**1. Create the data directories** — before anything else, because the container
-runs as a non-root user and cannot create them itself:
+**1. Create a directory and fetch the templates** — there's no need to clone
+the repo; the image is prebuilt:
 
 ```bash
-mkdir -p data config && chown -R 1001 data config
+mkdir -p idlarr/data idlarr/config && cd idlarr
+chown -R 1001 data config
+
+BASE=https://raw.githubusercontent.com/b00pb0p/idlarr/main
+curl -fsSLO $BASE/trackers.example.yml
+curl -fsSLO $BASE/.env.example
+curl -fsSLO $BASE/idlarr.user.js
 ```
 
-If Docker creates them instead, they come out root-owned and startup fails with
-`unable to open database file`. The image runs as UID 1001; if you need a
-different one you have to build from source (see `PUID` below).
+The `chown` matters: the container runs as a non-root user and cannot create
+those directories itself. If Docker creates them, they come out root-owned and
+startup fails with `unable to open database file`. The image runs as UID 1001;
+for a different one you must build from source (see `PUID` below).
+
+*(Cloned the repo instead? You already have all three — skip the `curl`s.)*
 
 **2. Config** — copy the example and edit it:
 
@@ -143,7 +152,8 @@ Put it behind Tailscale, a VPN, or reverse-proxy auth. Do not expose it.
 `IDLARR_TOKEN` — an empty token would disable authentication entirely, which is
 indistinguishable from working until something writes to your database.
 
-**5. Userscript** — install `idlarr.user.js` in Violentmonkey, then edit:
+**5. Userscript** — open `idlarr.user.js` (downloaded in step 1), paste it into
+a new Violentmonkey script, then edit:
 - `TOKEN` — must byte-match `IDLARR_TOKEN`
 - `ENDPOINT` — full URL **including `/ping`**
 - `@connect` — the same host as a **bare hostname** (required: trackers set a
