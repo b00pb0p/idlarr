@@ -6,7 +6,7 @@ services:
     ports:
       - "8099:8080"
     volumes:
-      # Pre-create both on the host and chown them to PUID below. If Docker
+      # Pre-create both on the host and chown them to 1001. If Docker
       # creates them they come out root-owned and the container cannot write
       # its database — startup fails with "unable to open database file".
       - ./data:/data
@@ -29,4 +29,6 @@ services:
 
       # --- non-secret settings ----------------------------------------------
       TZ: "${TZ:-UTC}"
-      PUID: "${PUID:-1001}"
+      # PUID is NOT here on purpose: it is a build argument, baked into the
+      # image. Setting it at runtime does nothing. chown data/ and config/ to
+      # 1001, or build from source with --build-arg PUID=<uid>.

@@ -55,7 +55,8 @@ mkdir -p data config && chown -R 1001 data config
 ```
 
 If Docker creates them instead, they come out root-owned and startup fails with
-`unable to open database file`. Override the UID with `PUID` in `.env`.
+`unable to open database file`. The image runs as UID 1001; if you need a
+different one you have to build from source (see `PUID` below).
 
 **2. Config** — copy the example and edit it:
 
@@ -93,7 +94,7 @@ openssl rand -hex 32          # -> IDLARR_TOKEN
 | `IDLARR_NOTIFY_URLS` | **yes** | — | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs — ntfy, Pushover, Discord, Telegram, Signal and ~100 more. Compose aborts if unset. |
 | `STATUS_URL` | no | *(empty)* | Public URL of the status page. Appended to every alert so you can tap through. |
 | `TZ` | no | `UTC` | Drives the daily check and **all day counting** — set it to your own zone or countdowns can be a day out. |
-| `PUID` | no | `1001` | UID the container runs as. Must own `./data` and `./config`. |
+| `PUID` | build only | `1001` | **Build argument, not a runtime variable.** The published image always runs as 1001; `chown` your `data/` and `config/` to match. To use a different UID you must build from source: `docker compose build --build-arg PUID=1000`. |
 | `IDLARR_BACKUP_KEEP` | no | `14` | Dated database snapshots to retain. `0` disables backups. |
 | `IDLARR_BACKUP_DIR` | no | `/data/backups` | Where those snapshots go. |
 | `IDLARR_DEDUPE_HOURS` | no | `12` | One event per tracker per kind per this window. Must be ≥ the userscript's `COOLDOWN`. |
