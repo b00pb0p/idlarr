@@ -103,6 +103,33 @@ you run it outside Docker.
 
 **4. Deploy**
 
+A prebuilt multi-arch image is published to GHCR, so there's nothing to build:
+
+```yaml
+services:
+  idlarr:
+    image: ghcr.io/b00pb0p/idlarr:latest
+    container_name: idlarr
+    restart: unless-stopped
+    ports:
+      - "8099:8080"
+    volumes:
+      - ./data:/data
+      - ./config:/config
+    env_file: .env
+```
+
+```bash
+docker compose up -d
+```
+
+Tags: `latest` follows releases, `1.2` and `1.2.3` pin to a version, `edge`
+tracks `main`. Pin to a major.minor if you'd rather not be upgraded into
+breaking changes — `IDLARR_NOTIFY_URLS` replacing `NTFY_*` is the kind of thing
+that will happen again.
+
+Building from source instead — for anyone modifying it:
+
 ```bash
 docker compose up -d --build
 ```

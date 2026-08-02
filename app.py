@@ -544,8 +544,40 @@ async def lifespan(app: FastAPI):
         # and silence is indistinguishable from "nothing is due".
         print("[startup] WARNING: IDLARR_NOTIFY_URLS is empty. "
               "Alerts will go nowhere. See .env.example.")
-    init_db()
-    load_config()
+    # The next two are what a first-time user actually hits. Both used to
+    # surface as a raw traceback in a restart loop, which says nothing about
+    # the fix. They still refuse to start on purpose: auto-creating either one
+    # would turn a mis-mounted volume into a silently empty install that looks
+    # like it is working.
+    try:
+        init_db()
+    except sqlite3.OperationalError as exc:
+        uid = os.getuid()
+        raise RuntimeError(
+            f"Cannot open the database at {DB_PATH}: {exc}\n"
+            f"  The container runs as UID {uid}, and the directory you mounted at\n"
+            f"  /data must be writable by it. From your compose directory:\n"
+            f"      mkdir -p data && chown -R {uid} data\n"
+            f"  If /data looks empty when it should not be, the mount is pointing\n"
+            f"  somewhere other than you think."
+        ) from exc
+
+    if not CONFIG_PATH.exists():
+        raise RuntimeError(
+            f"No tracker config at {CONFIG_PATH}.\n"
+            f"  Copy the example into the directory you mounted at /config:\n"
+            f"      cp trackers.example.yml config/trackers.yml\n"
+            f"  If you did create it, /config is mounted somewhere else."
+        )
+    try:
+        cfg = load_config()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not read {CONFIG_PATH}: {exc}\n"
+            f"  Check it is valid YAML and readable by UID {os.getuid()}."
+        ) from exc
+    print(f"[startup] {len(cfg['trackers'])} tracker(s) loaded, timezone {cfg['timezone']}")
+
     task = asyncio.create_task(scheduler())
     yield
     task.cancel()
