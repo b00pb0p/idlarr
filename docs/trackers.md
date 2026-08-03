@@ -32,6 +32,13 @@ cost you a list on screen, not a rewritten config.
 | Prowlarr | `http://prowlarr.local:9696` | Settings → General → API Key |
 | Jackett | `http://jackett.local:9117` | top of the Jackett dashboard |
 
+A connection that works is **remembered**, so a container recreate does not send
+you back for the key. Leave the key field blank to reuse it; it is only reused
+for the same source and URL, never sent to a different host. It is stored in the
+database in plaintext and included in the nightly backup — there is a **Forget**
+button beside it if that is not what you want. The key is never sent back to the
+browser; the field only shows that one is saved.
+
 Public indexers and usenet are skipped — there is no account to lose. Trackers
 already in your config are skipped too, matched on **site** as well as id, so a
 tracker Prowlarr names differently is not added twice.

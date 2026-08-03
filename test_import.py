@@ -317,3 +317,57 @@ def test_a_non_api_subdomain_is_still_the_same_tracker(client, cfg, monkeypatch)
     assert [x["skip"] for x in c] == ["already configured"]
     assert client.post("/api/import", json={**BODY, "apply": True}).json()["added"] == []
     assert "alphatracker" not in ids(cfg)
+
+
+# --------------------------------------------------- remembering the connection
+
+def test_a_working_connection_is_remembered(client, cfg, prowlarr):
+    """A container recreate should not send you back to Prowlarr for the key."""
+    client.post("/api/import", json=BODY)
+    assert app.get_state("import_source") == "prowlarr"
+    assert app.get_state("import_url") == BODY["url"]
+    assert app.get_state("import_key") == "k"
+
+
+def test_a_failed_connection_is_not_remembered(client, cfg, monkeypatch):
+    """Saving a key that did not work means the blank-to-reuse path silently
+    replays a bad credential forever."""
+    monkeypatch.setattr(app, "_fetch_json",
+                        lambda u, h: (_ for _ in ()).throw(ValueError("refused")))
+    assert client.post("/api/import", json=BODY).status_code == 502
+    assert not app.get_state("import_key")
+
+
+def test_blank_key_reuses_the_saved_one(client, cfg, prowlarr):
+    client.post("/api/import", json=BODY)
+    r = client.post("/api/import", json={**BODY, "api_key": ""})
+    assert r.status_code == 200
+    assert r.json()["candidates"]
+
+
+def test_blank_key_is_not_reused_for_a_different_instance(client, cfg, prowlarr):
+    """Sending one service's key to another host would be a credential leak."""
+    client.post("/api/import", json=BODY)
+    r = client.post("/api/import", json={**BODY, "url": "http://other.example:9696",
+                                         "api_key": ""})
+    assert r.status_code == 400
+    r = client.post("/api/import", json={**BODY, "source": "jackett", "api_key": ""})
+    assert r.status_code == 400
+
+
+def test_forget_clears_it(client, cfg, prowlarr):
+    client.post("/api/import", json=BODY)
+    assert client.post("/api/import", json={"forget": True}).json() == {"forgotten": True}
+    for k in ("import_source", "import_url", "import_key"):
+        assert not app.get_state(k)
+
+
+def test_the_key_is_never_sent_back_to_the_browser(client, cfg, prowlarr):
+    # A distinctive key: BODY's is one letter, which appears all over the page
+    # and would make this assertion pass or fail for unrelated reasons.
+    secret = "tk_zq7wvx4n8m2playbook"
+    client.post("/api/import", json={**BODY, "api_key": secret})
+    page = client.get("/").text
+    assert secret not in page
+    assert "saved &mdash; leave blank to reuse" in page
+    assert BODY["url"] in page          # the URL is fine to show

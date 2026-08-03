@@ -1248,14 +1248,31 @@ async def import_indexers(payload: dict = Body(...)):
     Defaults to a PREVIEW. Writing seven trackers into someone's config on a
     button press, when the API key might point at the wrong instance, is not a
     thing to do without showing the list first.
+
+    A working connection is remembered in the `state` table so a container
+    recreate does not send you back to Prowlarr for the key again. It is stored
+    in plaintext, on the same disk as everything else this service knows — see
+    the Import section of the docs, and the Forget button beside it.
     """
+    if payload.get("forget"):
+        for key in ("import_source", "import_url", "import_key"):
+            set_state(key, "")
+        return {"forgotten": True}
+
     source = str(payload.get("source", "")).strip().lower()
     if source not in ("prowlarr", "jackett"):
         raise HTTPException(400, "source must be prowlarr or jackett")
     base = str(payload.get("url", "")).strip()
     if not re.match(r"^https?://", base, re.I):
         raise HTTPException(400, "url must start with http:// or https://")
+
     api_key = str(payload.get("api_key", "")).strip()
+    if not api_key:
+        # Blank means "reuse what is saved", but only for the same instance —
+        # silently sending one service's key to another would be a leak.
+        if (get_state("import_source", "") == source
+                and get_state("import_url", "") == base):
+            api_key = get_state("import_key", "") or ""
     if not api_key:
         raise HTTPException(400, "an API key is required")
 
@@ -1264,6 +1281,11 @@ async def import_indexers(payload: dict = Body(...)):
         found = await asyncio.to_thread(fetch, base, api_key)
     except ValueError as exc:
         raise HTTPException(502, str(exc))
+
+    # Only remember a connection that actually answered.
+    set_state("import_source", source)
+    set_state("import_url", base)
+    set_state("import_key", api_key)
 
     known_ids = {t["id"] for t in load_config()["trackers"]}
     known_hosts = {t["host"] for t in load_config()["trackers"] if t.get("host")}
@@ -2037,11 +2059,11 @@ __SHEET__
   <input id="tmn" placeholder="Alpha Tracker">
   <label for="tmu">url</label>
   <input id="tmu" placeholder="https://alpha.example/">
-  <label for="tmi">id &mdash; goes in every ping, and in the userscript</label>
+  <label for="tmi">id &mdash; ping and script id</label>
   <input id="tmi" placeholder="derived from the name">
   <label for="tmd">inactivity limit, in days</label>
   <input id="tmd" type="text" inputmode="numeric" value="30">
-  <label for="tmo">notes &mdash; first word sets the software column</label>
+  <label for="tmo">notes</label>
   <input id="tmo" placeholder="Gazelle. Seeding counts.">
   <div class="rowb"><button class="lk" id="tmcancel">Cancel</button>
     <button class="lk pri" id="tmsave">Add</button></div>
@@ -2299,13 +2321,17 @@ __SHEET__
  // ---- add tracker ------------------------------------------------------
  const tm=document.getElementById('tm'),tme=document.getElementById('tme');
  const tmn=document.getElementById('tmn'),tmi=document.getElementById('tmi');
- // Mirrors slugify() on the server. Shown as a placeholder rather than filled
- // in, so leaving it blank means "derive it" and the two cannot disagree.
+ // Mirrors slugify() on the server, so what you see is what gets saved.
+ // Filled in as you type the name, but only until you edit it yourself —
+ // after that the field is yours and typing the name no longer overwrites it.
+ // Clearing it hands the job back to the server, which derives the same value.
  const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,40);
- tmn.addEventListener('input',()=>{tmi.placeholder=slug(tmn.value)||'derived from the name';});
+ tmi.addEventListener('input',()=>{tmi.dataset.dirty=tmi.value?'1':'';});
+ tmn.addEventListener('input',()=>{
+   if(tmi.dataset.dirty!=='1')tmi.value=slug(tmn.value);});
  const closeTrk=()=>tm.classList.remove('on');
  document.getElementById('addtrk').addEventListener('click',()=>{
-   tme.textContent='';tm.classList.add('on');tmn.focus();});
+   tme.textContent='';tmi.dataset.dirty='';tm.classList.add('on');tmn.focus();});
  document.getElementById('tmcancel').addEventListener('click',closeTrk);
  tm.addEventListener('click',e=>{if(e.target===tm)closeTrk();});
  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeTrk();});
@@ -2352,6 +2378,12 @@ __SHEET__
    imapply.disabled=fresh===0;
    imapply.textContent=fresh?('Import '+fresh):'Import';
  });
+
+ const imforget=document.getElementById('imforget');
+ if(imforget)imforget.addEventListener('click',async()=>{
+   await fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({forget:true})});
+   location.reload();});
 
  imapply.addEventListener('click',async()=>{
    ime.textContent='';imapply.disabled=true;
@@ -2496,17 +2528,28 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
                            "the generated script would have nowhere to report.",
                 '<span class="val off">unavailable</span>')))
 
+    # A working connection is remembered so a container recreate does not send
+    # you back to Prowlarr for the key. The key itself is never sent back to
+    # the browser — the field shows that one is saved, and blank means reuse it.
+    src, iurl = get_state("import_source", "") or "prowlarr", get_state("import_url", "") or ""
+    saved_key = bool(get_state("import_key"))
+    opt = lambda v, t: f'<option value="{v}"{" selected" if src == v else ""}>{t}</option>'
     imp = (
         '<div class="stack">'
-        '<select id="ims"><option value="prowlarr">Prowlarr</option>'
-        '<option value="jackett">Jackett</option></select>'
-        '<input id="imu" placeholder="http://prowlarr.local:9696">'
-        '<input id="imk" type="password" placeholder="API key" autocomplete="off">'
+        f'<select id="ims">{opt("prowlarr", "Prowlarr")}{opt("jackett", "Jackett")}</select>'
+        f'<input id="imu" placeholder="http://prowlarr.local:9696" value="{esc(iurl)}">'
+        f'<input id="imk" type="password" autocomplete="off" placeholder="'
+        f'{"saved &mdash; leave blank to reuse" if saved_key else "API key"}">'
         '</div>'
         '<div class="imlist" id="imlist"></div>'
         + _row("", "Preview first. Nothing is written until you confirm.",
                '<button class="lk" id="impreview">Preview</button>'
                '<button class="lk pri" id="imapply" disabled>Import</button>')
+        + (_row("Saved connection",
+                "Stored in the database in plaintext, and included in the "
+                "nightly backup. Forget it if that is not what you want.",
+                '<button class="lk" id="imforget">Forget</button>')
+           if (saved_key or iurl) else "")
         + '<p class="e" id="ime"></p>')
 
     notify = (
