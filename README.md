@@ -73,9 +73,35 @@ for a different one you must build from source (see `PUID` below).
 cp trackers.example.yml config/trackers.yml
 ```
 
-One entry per tracker: an `id`, a display `name`, a `url`, and
-`inactivity_days`. The example ships every limit at `30` with
-`verified: false`.
+One entry per tracker:
+
+```yaml
+defaults:
+  inactivity_days: 30
+  alert_at_pct: 0.65
+  timezone: America/Chicago
+  check_hour: 9
+
+trackers:
+  - id: alpha
+    name: Alpha Tracker
+    url: https://alpha.example/
+    inactivity_days: 30
+    verified: false
+    notes: "Gazelle"
+
+  - id: beta
+    name: Beta Tracker
+    url: https://beta.example/browse.php
+    inactivity_days: 90
+    verified: true
+    notes: "UNIT3D. Donated, may be exempt - check."
+```
+
+`url` should point at a page that requires a login — the status page links to
+it, and it's where you'll land to reset the clock. `notes` beginning with the
+tracker software (`Gazelle`, `UNIT3D`, `TBDev`, `Custom`) fills in the software
+column for free. `check_hour` is when the daily check runs, in `timezone`.
 
 > **Those numbers are fail-safe placeholders, not research.** Nobody outside a
 > tracker reliably knows its current inactivity policy, and a limit guessed too
@@ -134,9 +160,8 @@ docker compose up -d
 ```
 
 Tags: `latest` follows releases, `1.2` and `1.2.3` pin to a version, `edge`
-tracks `main`. Pin to a major.minor if you'd rather not be upgraded into
-breaking changes — `IDLARR_NOTIFY_URLS` replacing `NTFY_*` is the kind of thing
-that will happen again.
+tracks `main`. Pin to a major.minor if you'd rather not be
+upgraded into breaking changes.
 
 Building from source instead — for anyone modifying it:
 
@@ -153,14 +178,42 @@ Put it behind Tailscale, a VPN, or reverse-proxy auth. Do not expose it.
 indistinguishable from working until something writes to your database.
 
 **5. Userscript** — open `idlarr.user.js` (downloaded in step 1), paste it into
-a new Violentmonkey script, then edit:
-- `TOKEN` — must byte-match `IDLARR_TOKEN`
-- `ENDPOINT` — full URL **including `/ping`**
-- `@connect` — the same host as a **bare hostname** (required: trackers set a
-  strict CSP, which is why this uses `GM_xmlhttpRequest`)
-- one `@match` line and one `SITES` entry per tracker, with **ids matching
-  `trackers.yml`**. If they drift, `/ping` returns `404 unknown tracker` and the
-  console says so.
+a new Violentmonkey script, and edit four things.
+
+The metadata block — one `@match` per tracker, and `@connect` set to your
+endpoint as a **bare hostname**, no scheme or path:
+
+```javascript
+// @match        *://*.alpha.example/*
+// @match        *://*.beta.example/*
+//
+// @connect      idlarr.example.ts.net
+```
+
+`@connect` is required: trackers set a strict CSP, which is why this uses
+`GM_xmlhttpRequest` rather than `fetch`.
+
+The settings — full URL **including `/ping`**, and the token byte-matching
+`IDLARR_TOKEN` from your `.env`:
+
+```javascript
+  const ENDPOINT = 'https://idlarr.example.ts.net/ping';
+  const TOKEN    = 'the-same-64-char-string-as-IDLARR_TOKEN';
+```
+
+And one `SITES` entry per tracker, with **ids matching `trackers.yml`**:
+
+```javascript
+  const SITES = [
+    { host: 'alpha.example', id: 'alpha' },
+    { host: 'beta.example', id: 'beta' },
+  ];
+```
+
+`host` is the bare domain, matched as a substring of `location.hostname`, so it
+covers `www.` and any other subdomain. If an id here doesn't match one in
+`trackers.yml`, `/ping` returns `404 unknown tracker` and the browser console
+says so.
 
 **6. Bootstrap** — everything starts at `no data`. Visit each tracker while
 logged in, or use `seen` on the status page.
