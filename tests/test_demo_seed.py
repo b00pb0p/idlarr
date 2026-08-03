@@ -26,7 +26,7 @@ os.environ.setdefault("IDLARR_TOKEN", "test-token")
 import app  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
-    "demo_seed", Path(__file__).parent / "tools" / "demo-seed.py")
+    "demo_seed", Path(__file__).resolve().parent.parent / "tools" / "demo-seed.py")
 demo = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(demo)
 

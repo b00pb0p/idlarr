@@ -241,7 +241,7 @@ def test_every_dockerfile_copy_is_allowed_by_dockerignore():
     exists — six minutes into a multi-arch job, having already burned the arm64
     emulation. Its own comment warns about this; a comment is not a guard.
     """
-    root = Path(__file__).parent
+    root = Path(__file__).resolve().parent.parent
     ignore = (root / ".dockerignore").read_text().splitlines()
     if not any(ln.strip() == "*" for ln in ignore):
         pytest.skip(".dockerignore is not deny-all; this check does not apply")
