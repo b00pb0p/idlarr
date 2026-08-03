@@ -7,11 +7,16 @@ last seen logged in; this service nags you before the inactivity limit is reache
 """
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
@@ -19,8 +24,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import yaml
-from fastapi import Body, FastAPI, Header, HTTPException, Response
-from fastapi.responses import HTMLResponse
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 # ---------------------------------------------------------------- config
 
@@ -43,6 +48,12 @@ DEDUPE_HOURS = int(os.environ.get("IDLARR_DEDUPE_HOURS", 12))
 # Set IDLARR_BACKUP_KEEP=0 to turn it off.
 BACKUP_DIR = Path(os.environ.get("IDLARR_BACKUP_DIR", "/data/backups"))
 BACKUP_KEEP = int(os.environ.get("IDLARR_BACKUP_KEEP", 14))
+
+# Set IDLARR_RESET_AUTH=1 to clear the UI login on the next boot. Without an
+# escape hatch a forgotten password bricks the dashboard permanently — the
+# credentials live in the database, so there is no config file to hand-edit
+# the way you would with an *arr's config.xml.
+RESET_AUTH = os.environ.get("IDLARR_RESET_AUTH", "").strip().lower() in ("1", "true", "yes")
 
 KNOWN_SOFTWARE = {"gazelle": "Gazelle", "unit3d": "UNIT3D", "tbdev": "TBDev",
                   "custom": "Custom"}
@@ -305,6 +316,184 @@ def set_state(k: str, v: str) -> None:
         )
 
 
+# ---------------------------------------------------------------- auth
+#
+# Modelled on the *arr apps rather than on an environment variable: a username
+# and password configured IN THE APP, hashed at rest, changeable without
+# touching compose or recreating the container. It rides on the `state` table,
+# so it is covered by the nightly backup for free.
+#
+# IDLARR_TOKEN stays exactly what it was — the API key the userscript sends to
+# /ping. It is read at boot from .env, so letting the UI rotate it would
+# silently desync the two halves and 401 every ping. One credential for
+# machines, one for humans, same split the *arrs use.
+#
+# This is OPTIONAL. With nothing configured the service behaves as 1.0 did.
+# But "off" is a state we announce, never a silence: startup says so and the
+# page carries a banner until you either set a password or dismiss it. Every
+# serious bug in this project's history was invisible, and an open dashboard is
+# not an obvious one — anyone who can reach the port can POST /api/mark and
+# reset a countdown, which is precisely the failure this service exists to
+# prevent, and the dashboard would read `ok` the whole time.
+
+PBKDF2_ROUNDS = 600_000     # OWASP guidance for PBKDF2-HMAC-SHA256, 2023 onward
+SESSION_DAYS = 30
+LOCKOUT_AFTER = 5           # consecutive failures from one address...
+LOCKOUT_SECONDS = 300       # ...costs this long a timeout
+SESSION_COOKIE = "idlarr_session"
+
+# ip -> [consecutive_failures, blocked_until_epoch]. In memory on purpose: a
+# restart clearing it is fine, since the point is to make online guessing slow,
+# not to keep a permanent ban list.
+_login_fails: dict[str, list] = {}
+
+
+def hash_password(pw: str) -> str:
+    """Django-format PBKDF2. stdlib only — no new dependency for this."""
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, PBKDF2_ROUNDS)
+    return (f"pbkdf2_sha256${PBKDF2_ROUNDS}$"
+            f"{base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}")
+
+
+def verify_password(pw: str, encoded: str) -> bool:
+    try:
+        algo, rounds, salt_b64, hash_b64 = encoded.split("$")
+        if algo != "pbkdf2_sha256":
+            return False
+        dk = hashlib.pbkdf2_hmac("sha256", pw.encode(),
+                                 base64.b64decode(salt_b64), int(rounds))
+        return hmac.compare_digest(dk, base64.b64decode(hash_b64))
+    except (ValueError, TypeError, AttributeError):
+        # A malformed hash means "no", never "yes".
+        return False
+
+
+def session_secret() -> bytes:
+    """Stored, not derived from IDLARR_TOKEN. Two reasons: rotating the API
+    token should not sign every browser out, and rotating THIS row is what
+    makes 'sign out everywhere' a single write."""
+    s = get_state("session_secret")
+    if not s:
+        s = secrets.token_hex(32)
+        set_state("session_secret", s)
+    return s.encode()
+
+
+def make_session(user: str) -> str:
+    payload = json.dumps({"u": user, "exp": int(time.time()) + SESSION_DAYS * 86400})
+    raw = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    sig = hmac.new(session_secret(), raw.encode(), hashlib.sha256).hexdigest()
+    return f"{raw}.{sig}"
+
+
+def read_session(cookie: str | None) -> str | None:
+    """Returns the username, or None for anything not currently valid."""
+    if not cookie or "." not in cookie:
+        return None
+    raw, _, sig = cookie.rpartition(".")
+    expected = hmac.new(session_secret(), raw.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        data = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        if int(data.get("exp", 0)) < time.time():
+            return None
+        return str(data.get("u")) or None
+    except (ValueError, TypeError):
+        return None
+
+
+def auth_method() -> str:
+    """'none' | 'forms' | 'basic'.
+
+    A method recorded with no credentials behind it reads as OFF rather than as
+    a locked door nobody holds the key to — otherwise a half-finished setup, or
+    an IDLARR_RESET_AUTH boot, would leave the dashboard permanently 401.
+    """
+    m = get_state("auth_method", "none")
+    return m if (m in ("forms", "basic") and get_state("auth_hash")) else "none"
+
+
+def check_login(user: str, pw: str) -> bool:
+    want_user = get_state("auth_user", "") or ""
+    want_hash = get_state("auth_hash", "") or ""
+    if not want_hash:
+        return False
+    # Evaluate both halves unconditionally so a wrong username and a wrong
+    # password cost the same time and cannot be told apart from outside.
+    ok_user = hmac.compare_digest(user.encode(), want_user.encode())
+    ok_pass = verify_password(pw, want_hash)
+    return ok_user and ok_pass
+
+
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else "?"
+
+
+def lockout_left(ip: str) -> int:
+    """Seconds still to serve, 0 if not locked out."""
+    rec = _login_fails.get(ip)
+    return max(0, int(rec[1] - time.time())) if rec else 0
+
+
+def note_login_failure(ip: str) -> None:
+    rec = _login_fails.setdefault(ip, [0, 0.0])
+    rec[0] += 1
+    if rec[0] >= LOCKOUT_AFTER:
+        rec[0] = 0
+        rec[1] = time.time() + LOCKOUT_SECONDS
+
+
+def authed(request: Request) -> bool:
+    """True when the caller may use the UI and its API.
+
+    Basic credentials are accepted under BOTH methods. The setting decides how
+    an unauthenticated caller is challenged — a login page or the browser's own
+    dialog — not which credentials are valid. That keeps curl and scripts
+    working under `forms` without a login round-trip.
+    """
+    if auth_method() == "none":
+        return True
+    if read_session(request.cookies.get(SESSION_COOKIE)):
+        return True
+    header = request.headers.get("authorization", "")
+    if header.startswith("Basic "):
+        ip = client_ip(request)
+        if lockout_left(ip):
+            return False
+        try:
+            user, _, pw = base64.b64decode(header[6:]).decode().partition(":")
+        except (ValueError, UnicodeDecodeError):
+            return False
+        if check_login(user, pw):
+            _login_fails.pop(ip, None)
+            return True
+        note_login_failure(ip)
+    return False
+
+
+def require_ui(request: Request) -> None:
+    """Route dependency. Passes straight through when auth is off."""
+    if authed(request):
+        return
+    if auth_method() == "basic":
+        raise HTTPException(401, "authentication required",
+                            headers={"WWW-Authenticate": 'Basic realm="Idlarr"'})
+    raise HTTPException(401, "authentication required")
+
+
+def set_session_cookie(resp: Response, request: Request, user: str) -> None:
+    # `secure` only when the request actually arrived over HTTPS. Setting it
+    # unconditionally would break every plain-HTTP LAN install in the most
+    # confusing way possible: the login succeeds, the browser silently drops
+    # the cookie, and you land back on the login page with no error anywhere.
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    resp.set_cookie(SESSION_COOKIE, make_session(user), path="/",
+                    max_age=SESSION_DAYS * 86400, httponly=True,
+                    samesite="lax", secure=(proto == "https"))
+
+
 # ---------------------------------------------------------------- logic
 
 def elapsed_days(later: datetime, earlier: datetime) -> int:
@@ -562,6 +751,16 @@ async def lifespan(app: FastAPI):
             f"  somewhere other than you think."
         ) from exc
 
+    if RESET_AUTH:
+        # Clearing session_secret as well is the point: a password reset that
+        # left existing cookies valid would not lock out whoever you are
+        # resetting because of.
+        for key in ("auth_method", "auth_user", "auth_hash", "session_secret"):
+            set_state(key, "")
+        print("[startup] IDLARR_RESET_AUTH is set — UI authentication has been "
+              "cleared and every existing session invalidated. Remove the "
+              "variable, restart, then set a new login from the status page.")
+
     if not CONFIG_PATH.exists():
         raise RuntimeError(
             f"No tracker config at {CONFIG_PATH}.\n"
@@ -577,6 +776,17 @@ async def lifespan(app: FastAPI):
             f"  Check it is valid YAML and readable by UID {os.getuid()}."
         ) from exc
     print(f"[startup] {len(cfg['trackers'])} tracker(s) loaded, timezone {cfg['timezone']}")
+
+    # Say it out loud. Optional does not mean quiet: an unauthenticated status
+    # page looks identical to an authenticated one until somebody uses it.
+    if auth_method() == "none":
+        print("[startup] UI authentication is OFF. Anyone who can reach this "
+              "port can read your tracker list, reset a countdown via "
+              "/api/mark, and rewrite limits via /api/limit. Set a login from "
+              "the status page, or keep the service on a trusted network.")
+    else:
+        print(f"[startup] UI authentication: {auth_method()} "
+              f"(user {get_state('auth_user', '')!r})")
 
     task = asyncio.create_task(scheduler())
     yield
@@ -626,12 +836,15 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
     return {"ok": True, "tracker": tid, "kind": kind, "deduped": False}
 
 
-@app.post("/api/mark/{tracker_id}")
+@app.post("/api/mark/{tracker_id}", dependencies=[Depends(require_ui)])
 async def mark(tracker_id: str):
     """Bootstrap helper: assert you just logged in. Don't rely on this daily.
 
-    Deliberately unauthenticated so a plain HTML form works — the status page is
-    only as private as the reverse proxy / Tailscale in front of it.
+    Open when no login is configured, which is the 1.0 behaviour. Worth
+    knowing what that means before leaving it that way: a stranger POSTing here
+    resets a countdown, after which the dashboard reads `ok` while the account
+    ages out. That is the whole failure this service prevents, so on a shared
+    network — university, shared housing — set a login.
     """
     known = {t["id"] for t in load_config()["trackers"]}
     if tracker_id not in known:
@@ -654,18 +867,18 @@ def clean(r: dict) -> dict:
     }
 
 
-@app.get("/api/status")
+@app.get("/api/status", dependencies=[Depends(require_ui)])
 async def api_status():
     return [clean(r) for r in statuses()]
 
 
-@app.post("/api/limit/{tracker_id}")
+@app.post("/api/limit/{tracker_id}", dependencies=[Depends(require_ui)])
 async def set_limit(tracker_id: str, payload: dict = Body(...)):
     """Set inactivity_days and/or verified for one tracker, from the status page.
 
-    Unauthenticated, exactly like /api/mark — the page is only as private as the
-    Tailscale/Caddy layer in front of it. This one WRITES to trackers.yml, so
-    that exposure now costs config, not just a countdown reset. See Gotchas.
+    Behind the UI login when one is configured. This one WRITES to
+    trackers.yml, so with auth off the exposure costs config, not just a
+    countdown reset. See Gotchas.
     """
     known = {t["id"] for t in load_config()["trackers"]}
     if tracker_id not in known:
@@ -702,11 +915,11 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
     return clean(row)
 
 
-@app.post("/api/unmark/{tracker_id}")
+@app.post("/api/unmark/{tracker_id}", dependencies=[Depends(require_ui)])
 async def unmark(tracker_id: str):
     """Undo the most recent auth event — a misclicked 'seen', or an auth the
     heuristic recorded wrongly (e.g. a cached logged-in page while the site
-    was actually down). Same unauthenticated posture as /api/mark."""
+    was actually down). Same posture as /api/mark."""
     known = {t["id"] for t in load_config()["trackers"]}
     if tracker_id not in known:
         raise HTTPException(404, "unknown tracker")
@@ -715,7 +928,7 @@ async def unmark(tracker_id: str):
     return {"removed": removed, "row": clean(row)}
 
 
-@app.get("/api/history/{tracker_id}")
+@app.get("/api/history/{tracker_id}", dependencies=[Depends(require_ui)])
 async def history(tracker_id: str, limit: int = 5):
     """Recent auth events for one tracker, newest first.
 
@@ -745,7 +958,152 @@ async def history(tracker_id: str, limit: int = 5):
 
 @app.get("/healthz")
 async def healthz():
+    """Stays open on purpose. Open item 1 wants an uptime monitor pointed here,
+    and a monitor that needs credentials is a monitor that will not get set up.
+    It discloses a tracker count and nothing else."""
     return {"ok": True, "trackers": len(load_config()["trackers"])}
+
+
+# ---------------------------------------------------------------- auth routes
+
+LOGIN_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Idlarr — sign in</title>
+<style>
+ :root{--bg:#0d0f11;--head:#151a1d;--line:#232a2f;--line2:#2e373d;--fg:#dbe3e7;
+   --dim:#727f88;--accent:#e0553f;--bad:#e0553f}
+ *{box-sizing:border-box}
+ html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+   font-family:Archivo,system-ui,sans-serif;font-size:13px;display:flex;
+   align-items:center;justify-content:center}
+ form{background:var(--head);border:1px solid var(--line2);padding:26px;width:310px}
+ h1{font-size:15px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+   margin:0 0 3px;display:flex;align-items:center;gap:9px}
+ h1::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--accent);
+   box-shadow:0 0 10px var(--accent)}
+ p.t{color:var(--dim);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+   margin:0 0 18px}
+ label{display:block;color:var(--dim);font-size:10px;letter-spacing:.12em;
+   text-transform:uppercase;margin:0 0 5px}
+ input{width:100%;background:var(--bg);border:1px solid var(--line2);color:var(--fg);
+   padding:8px 9px;font-family:inherit;font-size:13px;margin-bottom:13px}
+ input:focus{outline:none;border-color:var(--accent)}
+ button{width:100%;background:var(--accent);border:0;color:#fff;padding:9px;
+   font-family:inherit;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+   cursor:pointer}
+ .err{color:var(--bad);font-size:11.5px;min-height:16px;margin:9px 0 0;text-align:center}
+</style></head><body>
+<form id="f" autocomplete="on">
+  <h1>Idlarr</h1><p class="t">sign in</p>
+  <label for="u">username</label><input id="u" name="username" autocomplete="username" autofocus>
+  <label for="p">password</label>
+  <input id="p" name="password" type="password" autocomplete="current-password">
+  <button type="submit">Sign in</button>
+  <p class="err" id="e"></p>
+</form>
+<script>
+document.getElementById('f').addEventListener('submit',async ev=>{
+  ev.preventDefault();
+  const e=document.getElementById('e'); e.textContent='';
+  const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:document.getElementById('u').value,
+                         password:document.getElementById('p').value})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok){location.href='/';} else {e.textContent=d.detail||'sign in failed';}
+});
+</script></body></html>"""
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if auth_method() == "none" or authed(request):
+        return RedirectResponse("/", status_code=303)
+    return HTMLResponse(LOGIN_PAGE)
+
+
+@app.post("/login")
+async def login(request: Request, payload: dict = Body(...)):
+    ip = client_ip(request)
+    left = lockout_left(ip)
+    if left:
+        # 429, not 401: the answer here is "not yet", and a client that cannot
+        # tell those apart will happily keep guessing.
+        raise HTTPException(429, f"too many attempts — try again in {left}s")
+    if auth_method() == "none":
+        raise HTTPException(400, "no login is configured")
+
+    user = str(payload.get("username", ""))
+    pw = str(payload.get("password", ""))
+    if not check_login(user, pw):
+        note_login_failure(ip)
+        raise HTTPException(401, "wrong username or password")
+
+    _login_fails.pop(ip, None)
+    resp = Response(content=json.dumps({"ok": True}), media_type="application/json")
+    set_session_cookie(resp, request, user)
+    return resp
+
+
+@app.post("/logout")
+async def logout():
+    resp = Response(content=json.dumps({"ok": True}), media_type="application/json")
+    resp.delete_cookie(SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.get("/api/auth", dependencies=[Depends(require_ui)])
+async def auth_status():
+    """Never returns the hash, and there is no endpoint that does."""
+    return {"method": auth_method(), "user": get_state("auth_user", "") or ""}
+
+
+@app.post("/api/auth", dependencies=[Depends(require_ui)])
+async def auth_configure(request: Request, payload: dict = Body(...)):
+    """Set, change, or remove the UI login.
+
+    While nothing is configured this is open — the same first-run window an
+    *arr has, and the reason to do setup before putting the box on a shared
+    network. Once configured, changing anything needs the current password, so
+    a borrowed session alone cannot lock you out of your own dashboard.
+    """
+    method = str(payload.get("method", "")).strip().lower()
+    if method not in ("none", "forms", "basic"):
+        raise HTTPException(400, "method must be none, forms, or basic")
+
+    already = bool(get_state("auth_hash"))
+    if already and not check_login(get_state("auth_user", "") or "",
+                                   str(payload.get("current_password", ""))):
+        raise HTTPException(403, "current password is wrong")
+
+    if method == "none":
+        for key in ("auth_method", "auth_user", "auth_hash"):
+            set_state(key, "")
+        # Rotate so sessions minted under the old password die with it.
+        set_state("session_secret", secrets.token_hex(32))
+        return {"method": "none", "user": ""}
+
+    user = str(payload.get("username", "")).strip()
+    pw = str(payload.get("password", ""))
+    if not 1 <= len(user) <= 64:
+        raise HTTPException(400, "username must be 1-64 characters")
+    if ":" in user:
+        # HTTP Basic splits on the first colon, so a colon in the username
+        # would authenticate under `forms` and fail under `basic`.
+        raise HTTPException(400, "username cannot contain a colon")
+    if len(pw) < 8:
+        raise HTTPException(400, "password must be at least 8 characters")
+
+    set_state("auth_user", user)
+    set_state("auth_hash", hash_password(pw))
+    set_state("auth_method", method)
+    # Changing credentials signs every other device out. The caller gets a
+    # fresh cookie in the same response so they are not signed out by their
+    # own password change.
+    set_state("session_secret", secrets.token_hex(32))
+    resp = Response(content=json.dumps({"method": method, "user": user}),
+                    media_type="application/json")
+    set_session_cookie(resp, request, user)
+    return resp
 
 
 @app.post("/api/test-notify")
@@ -952,6 +1310,30 @@ PAGE = """<!doctype html>
     .ctl{gap:6px}
     .foot{font-size:9.5px}
   }
+  .banner{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:13px 0 0;
+    padding:9px 13px;border:1px solid var(--critical);background:#251619;font-size:12px}
+  .banner b{color:var(--critical);letter-spacing:.04em}
+  .banner .sp{margin-left:auto;display:flex;gap:7px}
+  .lk{background:var(--bg);border:1px solid var(--line2);color:var(--fg);
+    font-family:inherit;font-size:11px;padding:4px 10px;cursor:pointer}
+  .lk:hover{border-color:var(--accent)}
+  .lk.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;
+    align-items:center;justify-content:center;z-index:30}
+  .modal.on{display:flex}
+  .modal .box{background:var(--head);border:1px solid var(--line2);padding:22px;
+    width:340px;max-width:92vw}
+  .modal h3{margin:0 0 4px;font-size:12px;letter-spacing:.13em;text-transform:uppercase}
+  .modal .hint{color:var(--dim);font-size:11px;margin:0 0 15px;line-height:1.45}
+  .modal label{display:block;color:var(--dim);font-size:10px;letter-spacing:.11em;
+    text-transform:uppercase;margin:0 0 4px}
+  .modal input,.modal select{width:100%;background:var(--bg);border:1px solid var(--line2);
+    color:var(--fg);padding:7px 8px;font-family:inherit;font-size:12.5px;margin-bottom:12px}
+  .modal input:focus,.modal select:focus{outline:none;border-color:var(--accent)}
+  .modal .rowb{display:flex;gap:8px;margin-top:2px}
+  .modal .rowb button{flex:1;padding:8px;font-family:inherit;font-size:11px;
+    letter-spacing:.09em;text-transform:uppercase;cursor:pointer}
+  .modal .e{color:var(--critical);font-size:11.5px;min-height:15px;margin:7px 0 0}
 </style></head><body><div class="wrap">
 
 <div class="bar"><h1>Idlarr</h1><span class="tag">never lose an account to inactivity</span><span class="stamp">__STAMP__</span>
@@ -961,6 +1343,7 @@ PAGE = """<!doctype html>
     <option value="lim">limit</option><option value="sw">software</option>
   </select><button id="msd" aria-label="reverse sort">&#8645;</button></div>
   <div class="tick">__TICK__</div></div>
+__BANNER__
 <div class="legend">__LEGEND__</div>
 
 <table>
@@ -980,12 +1363,37 @@ PAGE = """<!doctype html>
 Click a row for controls, the alert schedule and auth history &middot; click a name to open the
 tracker &middot; click a heading to sort<br>
 <b>&#9998;</b> = marked by hand, not observed &middot; the countdown runs on <b>auth</b> events only
-&middot; no request is ever made to a tracker.
+&middot; no request is ever made to a tracker.<br>__AUTHFOOT__
 </div>
 </div>
 
+<div class="modal" id="am"><div class="box">
+  <h3>Sign-in</h3>
+  <p class="hint">Stored hashed in the database, not in a file. Changing it signs
+  every other browser out. Forgotten it? Restart with <b>IDLARR_RESET_AUTH=1</b>.</p>
+  <label for="amm">method</label>
+  <select id="amm">
+    <option value="forms">Forms &mdash; login page</option>
+    <option value="basic">Basic &mdash; browser prompt</option>
+    <option value="none">None &mdash; no sign-in</option>
+  </select>
+  <div id="amc">
+    <label for="amu">username</label><input id="amu" autocomplete="username">
+    <label for="amp">password</label>
+    <input id="amp" type="password" autocomplete="new-password" placeholder="8 characters minimum">
+  </div>
+  <div id="amcur" style="display:none">
+    <label for="amx">current password</label>
+    <input id="amx" type="password" autocomplete="current-password">
+  </div>
+  <div class="rowb"><button class="lk" id="amcancel">Cancel</button>
+    <button class="lk pri" id="amsave">Save</button></div>
+  <p class="e" id="ame"></p>
+</div></div>
+
 <script>
 (function(){
+ const CURRENT_METHOD='__AUTHMETHOD__';
  const tb=document.querySelector('tbody');
  const LABEL={ok:'days left',due:'days left',warn:'days left',critical:'days left',
    expired:'days over',session:'re-auth',immune:'exempt',unknown:'no data'};
@@ -1172,6 +1580,52 @@ tracker &middot; click a heading to sort<br>
    const r=document.getElementById('t-'+t.dataset.id);
    if(r){r.scrollIntoView({behavior:'smooth',block:'center'});
      r.classList.remove('flash');void r.offsetWidth;r.classList.add('flash');}}));
+
+ // ---- sign-in ---------------------------------------------------------
+ // The banner is dismissable but NOT sticky-dismissed across a password
+ // change: it is keyed on the current method, so turning auth off again
+ // brings the warning back rather than staying hidden from an earlier click.
+ const ban=document.getElementById('ban');
+ if(ban){
+   if(localStorage.getItem('idl_authban')==='none')ban.style.display='none';
+   const bx=document.getElementById('banx');
+   if(bx)bx.addEventListener('click',()=>{
+     localStorage.setItem('idl_authban','none');ban.style.display='none';});
+ }
+
+ const am=document.getElementById('am'),ame=document.getElementById('ame');
+ const amm=document.getElementById('amm'),amc=document.getElementById('amc');
+ const amcur=document.getElementById('amcur');
+ const openAuth=()=>{ame.textContent='';am.classList.add('on');
+   amcur.style.display=CURRENT_METHOD==='none'?'none':'';
+   amm.value=CURRENT_METHOD==='none'?'forms':CURRENT_METHOD;
+   amc.style.display=amm.value==='none'?'none':'';
+   (amm.value==='none'?amm:document.getElementById('amu')).focus();};
+ const closeAuth=()=>am.classList.remove('on');
+ amm.addEventListener('change',()=>{amc.style.display=amm.value==='none'?'none':'';});
+ document.getElementById('amcancel').addEventListener('click',closeAuth);
+ am.addEventListener('click',e=>{if(e.target===am)closeAuth();});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAuth();});
+ document.querySelectorAll('.js-authcfg').forEach(b=>b.addEventListener('click',openAuth));
+
+ const outb=document.getElementById('out');
+ if(outb)outb.addEventListener('click',()=>fetch('/logout',{method:'POST'})
+   .then(()=>location.href='/login'));
+
+ document.getElementById('amsave').addEventListener('click',async()=>{
+   ame.textContent='';
+   const body={method:amm.value,
+     username:document.getElementById('amu').value,
+     password:document.getElementById('amp').value,
+     current_password:document.getElementById('amx').value};
+   const r=await fetch('/api/auth',{method:'POST',
+     headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){ame.textContent=d.detail||('failed ('+r.status+')');return;}
+   // The method changed, so the dismissed-banner memory is stale.
+   localStorage.removeItem('idl_authban');
+   location.reload();
+ });
 })();
 </script></body></html>"""
 
@@ -1197,7 +1651,13 @@ def esc(s) -> str:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
+async def index(request: Request):
+    if not authed(request):
+        if auth_method() == "basic":
+            raise HTTPException(401, "authentication required",
+                                headers={"WWW-Authenticate": 'Basic realm="Idlarr"'})
+        return RedirectResponse("/login", status_code=303)
+
     rows = statuses()
     payloads = [clean(r) for r in rows]
 
@@ -1244,11 +1704,34 @@ async def index():
             f'<i style="--p:{0 if r["immune"] else max(3, _pct(r)):.0f}%"></i></div></td></tr>')
 
     stamp = datetime.now(local_tz()).strftime("%d %b %Y · %H:%M %Z").upper()
+
+    method = auth_method()
+    if method == "none":
+        # Named consequences, not "consider enabling authentication". The two
+        # verbs are the ones that actually cost you something.
+        banner = (
+            '<div class="banner" id="ban"><b>No sign-in configured.</b> '
+            'Anyone who can reach this page can reset a countdown or rewrite '
+            'your limits.<span class="sp">'
+            '<button class="lk pri js-authcfg">Set one up</button>'
+            '<button class="lk" id="banx">Dismiss</button></span></div>')
+        authfoot = ('Sign-in <b>off</b> &middot; '
+                    '<button class="lk js-authcfg">configure</button>')
+    else:
+        banner = ""
+        authfoot = (f'Signed in as <b>{esc(get_state("auth_user", "") or "")}</b> '
+                    f'({esc(method)}) &middot; '
+                    f'<button class="lk js-authcfg">change</button> '
+                    f'<button class="lk" id="out">sign out</button>')
+
     return (PAGE
             .replace("__ROWS__", "".join(body) or
                      '<tr><td colspan="8"><div class="empty">no trackers configured</div></td></tr>')
             .replace("__TICK__", tick)
             .replace("__LEGEND__", legend)
+            .replace("__BANNER__", banner)
+            .replace("__AUTHFOOT__", authfoot)
+            .replace("__AUTHMETHOD__", method)
             .replace("__STAMP__", stamp))
 
 

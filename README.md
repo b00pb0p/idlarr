@@ -130,6 +130,7 @@ openssl rand -hex 32          # -> IDLARR_TOKEN
 | `STATUS_URL` | no | *(empty)* | Public URL of the status page. Appended to every alert so you can tap through. |
 | `TZ` | no | `UTC` | Drives the daily check and **all day counting** — set it to your own zone or countdowns can be a day out. |
 | `PUID` | build only | `1001` | **Build argument, not a runtime variable.** The published image always runs as 1001; `chown` your `data/` and `config/` to match. To use a different UID you must build from source: `docker compose build --build-arg PUID=1000`. |
+| `IDLARR_RESET_AUTH` | no | *(unset)* | Set to `1` to clear the UI login on the next boot — the only way back in from a forgotten password. **Remove it afterwards**, or every boot clears it again. |
 | `IDLARR_BACKUP_KEEP` | no | `14` | Dated database snapshots to retain. `0` disables backups. |
 | `IDLARR_BACKUP_DIR` | no | `/data/backups` | Where those snapshots go. |
 | `IDLARR_DEDUPE_HOURS` | no | `12` | One event per tracker per kind per this window. Must be ≥ the userscript's `COOLDOWN`. |
@@ -225,12 +226,70 @@ logged in, or use `seen` on the status page.
 | `GET /` | Status page |
 | `GET /api/status` | Same data as JSON |
 | `POST /ping` | Userscript ingest (bearer auth) |
-| `POST /api/mark/{id}` | Manual "I just logged in" — **unauthenticated**, see below |
-| `POST /api/unmark/{id}` | Remove the most recent auth event — **unauthenticated** |
-| `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune`, writes trackers.yml — **unauthenticated** |
+| `POST /api/mark/{id}` | Manual "I just logged in" |
+| `POST /api/unmark/{id}` | Remove the most recent auth event |
+| `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune`, writes trackers.yml |
 | `GET /api/history/{id}` | Recent auth events, newest first (drawer) |
+| `GET`/`POST /api/auth` | Read or change the UI login |
+| `POST /login` · `POST /logout` | Session in, session out |
 | `POST /api/test-notify` | Fire the check immediately (bearer auth) |
-| `GET /healthz` | Health check |
+| `GET /healthz` | Health check — **always open**, so an uptime monitor needs no credentials |
+
+Everything above `/api/test-notify` sits behind the UI login **when one is
+configured**; with none set they are open, which is the 1.0 behaviour. `/ping`
+always uses the bearer token, never the login — the userscript posts to it
+cross-origin from tracker pages, where cookies do not apply.
+
+## Signing in
+
+Optional, and off until you set it up. Configure it from the status page —
+there is no password in `.env`, and nothing to edit in a file. The credentials
+are stored **hashed** (PBKDF2-HMAC-SHA256) in the database, so they ride along
+in the nightly backup and change without recreating the container.
+
+| Method | What a stranger sees |
+|---|---|
+| **None** | The dashboard. Also `POST /api/mark`, which resets a countdown. |
+| **Forms** | A login page. |
+| **Basic** | The browser's own credentials prompt. |
+
+Under **Forms**, HTTP Basic credentials are still accepted on the API, so curl
+and scripts work without a login round-trip. The setting decides how you are
+*challenged*, not which credentials are valid.
+
+### Do I need it?
+
+Behind Tailscale, a VPN, or an authenticating reverse proxy — no, and the
+default costs you nothing. On a shared network — university halls, shared
+housing, an office — yes. The risk is not that someone reads your tracker list,
+though they can. It is that `POST /api/mark/{id}` needs no credentials with auth
+off, and one call silently resets a countdown. Your dashboard then reads `ok`
+while the account ages out, which is the precise failure this whole service
+exists to prevent.
+
+The status page says so in a banner until you either set a login or dismiss it,
+and the startup log names the three things an open instance exposes. Optional
+should not mean easy to forget.
+
+### If you forget the password
+
+There is no config file to hand-edit, so there is an env var instead:
+
+```bash
+IDLARR_RESET_AUTH=1
+```
+
+Start once — the login is cleared and every existing session is invalidated —
+then **remove the variable and restart again**, or the next boot clears it
+right back.
+
+### What it does not cover
+
+`/healthz` stays open so an uptime monitor needs no credentials. `/ping` keeps
+using `IDLARR_TOKEN`, which is unchanged: one credential for the userscript,
+one for you, the same split the *arr apps use. And the login is only as strong
+as the transport — over plain HTTP on an untrusted network, use a VPN or put
+TLS in front of it.
 
 ## Notifications
 

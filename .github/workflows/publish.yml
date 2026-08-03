@@ -40,11 +40,77 @@ jobs:
           # `latest` tracks RELEASES, not main. Pushing to main publishes
           # `edge` instead, so nobody is upgraded into unreleased work by
           # leaving `:latest` in their compose file.
+          #
+          # The `!contains(ref, '-')` on `latest` keeps PRERELEASES off it.
+          # Without that clause, tagging v1.1.0-rc1 still starts with
+          # `refs/tags/v`, so everyone tracking :latest would be shipped a
+          # release candidate — removing the only safe way to test a real
+          # published image.
           tags: |
             type=edge,branch=main
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+
+      # ---- smoke test the actual image, before anything is published --------
+      # The unit tests import app.py directly, so a broken Dockerfile, a
+      # missing dependency or a wrong UID passes all 87 of them and fails at
+      # `docker compose up` instead. That is exactly how the Apprise
+      # dependency shipped broken. Build amd64 into the local daemon first;
+      # the multi-arch push below reuses the same cache, so this is cheap.
+      - name: Build amd64 image for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: idlarr:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Boot the image and verify it serves
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/smoke/data /tmp/smoke/config
+          cp trackers.example.yml /tmp/smoke/config/trackers.yml
+          # The image runs as UID 1001 and must own its bind mounts, or
+          # startup dies with "unable to open database file". Doing this here
+          # means a UID change in the Dockerfile fails CI rather than a user's
+          # first `docker compose up`.
+          sudo chown -R 1001 /tmp/smoke/data /tmp/smoke/config
+          docker run -d --name smoke -p 8099:8080 \
+            -e IDLARR_TOKEN=smoke-token \
+            -e IDLARR_NOTIFY_URLS=json://localhost/ \
+            -v /tmp/smoke/data:/data \
+            -v /tmp/smoke/config:/config \
+            idlarr:smoke
+
+          ok=
+          for _ in $(seq 1 30); do
+            if curl -fsS localhost:8099/healthz -o /tmp/smoke/healthz.json; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs smoke
+          if [ -z "$ok" ]; then echo "::error::container never answered /healthz"; exit 1; fi
+          cat /tmp/smoke/healthz.json; echo
+
+          # Assert on a NUMBER, not just a 200. A config that failed to load
+          # could still answer {"ok":true,"trackers":0} and look healthy —
+          # every silent bug in this project's history looked healthy.
+          count=$(python3 -c "import json;print(json.load(open('/tmp/smoke/healthz.json'))['trackers'])")
+          if [ "$count" != "7" ]; then
+            echo "::error::expected 7 trackers from trackers.example.yml, got $count"; exit 1
+          fi
+
+          # /ping must fail CLOSED. An earlier build accepted every request
+          # when the token env var was misspelled, and /healthz was green the
+          # whole time. This is the assertion that would have caught it.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8099/ping \
+                   -H 'Content-Type: application/json' -d '{"tracker":"alpha"}')
+          if [ "$code" != "401" ]; then
+            echo "::error::unauthenticated /ping returned $code, expected 401"; exit 1
+          fi
+          echo "smoke: 7 trackers, unauthenticated /ping 401"
 
       - uses: docker/build-push-action@v6
         with:

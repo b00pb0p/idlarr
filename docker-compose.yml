@@ -29,6 +29,11 @@ services:
 
       # --- non-secret settings ----------------------------------------------
       TZ: "${TZ:-UTC}"
+      # Emergency door for a forgotten UI password. Set it to 1 in .env, start
+      # once, then REMOVE it -- while it is set, every boot clears the login.
+      # The password itself is not here: it is set from the status page and
+      # stored hashed in the database.
+      IDLARR_RESET_AUTH: "${IDLARR_RESET_AUTH:-}"
       # PUID is NOT here on purpose: it is a build argument, baked into the
       # image. Setting it at runtime does nothing. chown data/ and config/ to
       # 1001, or build from source with --build-arg PUID=<uid>.
