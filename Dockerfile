@@ -4,7 +4,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+# idlarr.user.js is the TEMPLATE the /idlarr.user.js route fills in from live
+# config — it is not a static asset. Leave it out and that route 500s with
+# "cannot read the userscript template".
+COPY app.py idlarr.user.js ./
 
 # Runs as a non-root user. PUID defaults to 1001 (the usual NAS/appdata
 # convention); override at build time if your host uses something else:

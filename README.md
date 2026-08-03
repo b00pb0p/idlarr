@@ -170,51 +170,39 @@ Building from source instead — for anyone modifying it:
 docker compose up -d --build
 ```
 
-**Keep the status page private.** Three write endpoints are unauthenticated by
-design, and one of them rewrites your config — see *Things that will bite you*.
-Put it behind Tailscale, a VPN, or reverse-proxy auth. Do not expose it.
+**Set a sign-in, or keep the page private.** With no login configured, the
+write endpoints are open and one of them rewrites your config — a stranger can
+reset a countdown, after which the dashboard reads `ok` while the account ages
+out. Set one from the footer (see [Signing in](#signing-in)), keep it behind
+Tailscale or a VPN, or both. Do not expose it unauthenticated.
 
 `/ping` itself is token-protected, and the service **refuses to start** without
 `IDLARR_TOKEN` — an empty token would disable authentication entirely, which is
 indistinguishable from working until something writes to your database.
 
-**5. Userscript** — open `idlarr.user.js` (downloaded in step 1), paste it into
-a new Violentmonkey script, and edit four things.
+**5. Userscript** — install [Violentmonkey](https://violentmonkey.github.io/),
+then open the status page and click **Install** in the footer.
 
-The metadata block — one `@match` per tracker, and `@connect` set to your
-endpoint as a **bare hostname**, no scheme or path:
+That link serves a script generated from your live `trackers.yml`: every
+`@match`, the `@connect` host, the endpoint and the token are already filled in,
+and the `SITES` ids come from the same config `/ping` validates against, so they
+cannot disagree. There is nothing to edit.
 
-```javascript
-// @match        *://*.alpha.example/*
-// @match        *://*.beta.example/*
-//
-// @connect      idlarr.example.ts.net
+It also carries `@updateURL`, so **adding a tracker later reaches the browser on
+its own** — Violentmonkey picks it up on the next update check, no reinstall.
+
+The link needs `STATUS_URL` set (step 3); without it the generated script would
+have nowhere to report and the route says so rather than serving one. If you'd
+rather install by hand — no status page access, or you want to read it first —
+the URL is:
+
+```
+https://idlarr.example.ts.net/idlarr.user.js?token=YOUR_IDLARR_TOKEN
 ```
 
-`@connect` is required: trackers set a strict CSP, which is why this uses
-`GM_xmlhttpRequest` rather than `fetch`.
-
-The settings — full URL **including `/ping`**, and the token byte-matching
-`IDLARR_TOKEN` from your `.env`:
-
-```javascript
-  const ENDPOINT = 'https://idlarr.example.ts.net/ping';
-  const TOKEN    = 'the-same-64-char-string-as-IDLARR_TOKEN';
-```
-
-And one `SITES` entry per tracker, with **ids matching `trackers.yml`**:
-
-```javascript
-  const SITES = [
-    { host: 'alpha.example', id: 'alpha' },
-    { host: 'beta.example', id: 'beta' },
-  ];
-```
-
-`host` is the bare domain, matched as a substring of `location.hostname`, so it
-covers `www.` and any other subdomain. If an id here doesn't match one in
-`trackers.yml`, `/ping` returns `404 unknown tracker` and the browser console
-says so.
+The committed `idlarr.user.js` in the repo is the **template** that route fills
+in. You can still edit it by hand and paste it in; see
+[Adding or removing a tracker](#adding-or-removing-a-tracker).
 
 **6. Bootstrap** — everything starts at `no data`. Visit each tracker while
 logged in, or use `seen` on the status page.
@@ -230,6 +218,10 @@ logged in, or use `seen` on the status page.
 | `POST /api/unmark/{id}` | Remove the most recent auth event |
 | `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune`, writes trackers.yml |
 | `GET /api/history/{id}` | Recent auth events, newest first (drawer) |
+| `GET /idlarr.user.js` | The userscript, generated from live config. `?token=` or a session |
+| `POST /api/tracker` | Add a tracker, appends to trackers.yml |
+| `DELETE /api/tracker/{id}` | Remove one. Auth history is kept |
+| `POST /api/import` | Preview (default) or apply a Prowlarr/Jackett import |
 | `GET`/`POST /api/auth` | Read or change the UI login |
 | `POST /login` · `POST /logout` | Session in, session out |
 | `POST /api/test-notify` | Fire the check immediately (bearer auth) |
@@ -354,12 +346,51 @@ hot-reloaded, no restart. `seen` is two-step on purpose.
 
 ## Adding or removing a tracker
 
-Two files, and the **`id` must be identical in both**. If they drift, `/ping`
-returns `404 unknown tracker` and the userscript logs it to the console.
+**From the status page.** Footer, *Trackers* cell, **Add**. Name and URL are
+enough — the id is derived from the name and the host from the URL, both
+editable. The entry is appended to `trackers.yml` with its comments intact, and
+the generated userscript changes with it, so the browser picks up the new
+`@match` on Violentmonkey's next update check.
 
-Say you're adding AnimeBytes (Gazelle) and Blutopia (UNIT3D).
+To remove one, open its row and click **remove**, then confirm. Its **auth
+history stays in the database** on purpose: re-adding the same id restores the
+countdown rather than silently restarting it, which is the failure this whole
+service exists to prevent.
 
-**`config/trackers.yml`** — append two entries:
+New trackers always start at **30 days, unconfirmed**. That is not laziness — a
+limit nobody has read off the tracker's own rules page is a guess, and a guess
+that is too high is the one that loses the account. Raise it and tick *confirm*
+once you have checked.
+
+### Importing from Prowlarr or Jackett
+
+Footer, **Import**. Point it at your own Prowlarr or Jackett with an API key and
+it lists the private indexers it found, marking which are new. Nothing is
+written until you click Import — an API key aimed at the wrong instance should
+cost you a list on screen, not a rewritten config.
+
+| | URL | API key |
+|---|---|---|
+| Prowlarr | `http://prowlarr.local:9696` | Settings → General → API Key |
+| Jackett | `http://jackett.local:9117` | top of the Jackett dashboard |
+
+Public indexers and usenet are skipped — there is no account to lose. Trackers
+already in your config are skipped too, matched on **host** as well as id, so a
+tracker Prowlarr names differently is not added twice.
+
+**Limits are never imported.** Neither tool knows a tracker's inactivity policy,
+so everything arrives at 30 days and unconfirmed like any other new entry. A
+limit that showed up looking authoritative and was wrong in the high direction
+would be worse than no limit at all.
+
+This talks to your indexer manager, never to a tracker. The no-tracker-traffic
+rule is about requests that could get an account banned; Prowlarr on your own
+box is not one of those.
+
+### By hand
+
+`trackers.yml` is still the source of truth and is hot-reloaded, so editing it
+directly works and needs no restart:
 
 ```yaml
   - id: animebytes
@@ -368,50 +399,24 @@ Say you're adding AnimeBytes (Gazelle) and Blutopia (UNIT3D).
     inactivity_days: 30
     verified: false
     notes: "Gazelle"
-
-  - id: blutopia
-    name: Blutopia
-    url: https://blutopia.cc/
-    inactivity_days: 30
-    verified: false
-    notes: "UNIT3D"
 ```
 
-`url` should point at a page that requires a login — the status page links to it,
-and it's where you'll land to reset the clock. `notes` starting with the tracker
-software (`Gazelle`, `UNIT3D`, `TBDev`, `Custom`) populates the software column
-for free. Leave `inactivity_days: 30` and `verified: false` until you've read the
-site's own rules page.
+`url` should point at a page that requires a login — the status page links to
+it, and it's where you'll land to reset the clock. `notes` starting with the
+tracker software (`Gazelle`, `UNIT3D`, `TBDev`, `Custom`) fills the software
+column for free.
 
-**`idlarr.user.js`** — one `@match` line in the metadata block:
+`host` is derived from `url` minus any leading `www.`, and drives the generated
+userscript's `@match` line. Set it explicitly only when the domain you log in on
+differs from the one you want the row to link to:
 
-```javascript
-// @match        *://*.animebytes.tv/*
-// @match        *://*.blutopia.cc/*
+```yaml
+    host: animebytes.tv
 ```
 
-and one `SITES` entry each, with the **same ids**:
-
-```javascript
-  const SITES = [
-    { host: 'animebytes.tv', id: 'animebytes' },
-    { host: 'blutopia.cc', id: 'blutopia' },
-  ];
-```
-
-`host` is the bare domain, no scheme and no path — it's matched as a substring of
-`location.hostname`, so it covers `www.` and any other subdomain. The `@match`
-pattern `*://*.domain/*` covers the apex domain too.
-
-Reinstall the script, then visit each site logged in. You want:
-
-```
-[idlarr] animebytes active on animebytes.tv
-[idlarr] animebytes auth recorded
-```
-
-If the second line doesn't appear, run `__idlarr()` — see
-[When a tracker won't record](#when-a-tracker-wont-record).
+There is no second file to keep in sync any more. The `@match` lines and the
+`SITES` array are generated from these entries, so an id can no longer drift
+between the two and produce a silent `404 unknown tracker`.
 
 ### A site the heuristic can't read
 
@@ -494,6 +499,35 @@ round of guessing. Common outcomes:
 If you contribute one, **screenshot a demo instance, not your own**. The status
 page lists every tracker you're a member of, and that is not something to publish.
 Point a throwaway container at `trackers.example.yml` and shoot that.
+
+## Restoring a backup
+
+Snapshots land in `/data/backups/` as `idlarr-YYYY-MM-DD.db`, written nightly
+during the daily check via SQLite's online backup API. Restoring one is a file
+copy:
+
+```bash
+docker compose stop
+cp data/backups/idlarr-2026-08-03.db data/idlarr.db
+chown 1001 data/idlarr.db
+docker compose start
+```
+
+Startup logs the tracker count; the page should show your countdowns as of that
+snapshot. **Verified against a real deployment** — 23 trackers with every state
+and last-auth date intact.
+
+Two things to expect. A restored snapshot **re-runs that day's check and
+re-sends its alert**, because the backup is written just before the "already
+checked today" marker — so restoring on a day something was due gives you a
+duplicate push. And a restore rolls back to the last nightly snapshot, so auth
+events recorded since then are gone; the countdowns will read older than
+reality until the userscript reports again.
+
+Practising this on a second container first — separate port, separate `data/`
+and `config/` — costs nothing and is how the behaviour above was found. Never
+point a test instance at your live `config/`: the status page **writes** to
+`trackers.yml`.
 
 ## Things that will bite you
 

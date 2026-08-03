@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Tests for the Prowlarr / Jackett import.
+
+Two things matter here beyond "does it parse the JSON". First, that nothing is
+written without an explicit apply — an API key pointed at the wrong instance
+should cost you a list on screen, not seven entries in your config. Second,
+that an imported limit is never treated as fact: neither tool knows a tracker's
+inactivity policy, so everything must land at 30 days and unverified, exactly
+like a hand-added entry.
+
+Run:  .venv/bin/python -m pytest test_import.py -q
+"""
+
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
+import pytest
+import yaml
+
+_tmp = tempfile.mkdtemp(prefix="idlarr-imp-test-")
+os.environ["IDLARR_DB"] = str(Path(_tmp) / "test.db")
+os.environ["IDLARR_CONFIG"] = str(Path(__file__).parent / "tests_fixture.yml")
+os.environ.setdefault("IDLARR_TOKEN", "test-token")
+
+import app  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+FIXTURE = Path(__file__).parent / "tests_fixture.yml"
+
+PROWLARR = [
+    {"name": "Real One", "protocol": "torrent", "privacy": "private",
+     "indexerUrls": ["https://real.example/"]},
+    {"name": "Cardigann One", "protocol": "torrent", "privacy": "private",
+     "indexerUrls": [], "fields": [{"name": "baseUrl", "value": "https://carr.example/"}]},
+    {"name": "Semi One", "protocol": "torrent", "privacy": "semiPrivate",
+     "indexerUrls": ["https://semi.example/"]},
+    {"name": "Public One", "protocol": "torrent", "privacy": "public",
+     "indexerUrls": ["https://pub.example/"]},
+    {"name": "Usenet One", "protocol": "usenet", "privacy": "private",
+     "indexerUrls": ["https://nzb.example/"]},
+    {"name": "Alpha Tracker", "protocol": "torrent", "privacy": "private",
+     "indexerUrls": ["https://alpha.example/"]},          # already configured
+]
+
+JACKETT = [
+    {"id": "realone", "name": "Real One", "type": "private",
+     "site_link": "https://real.example/", "configured": True},
+    {"id": "pub", "name": "Public One", "type": "public",
+     "site_link": "https://pub.example/", "configured": True},
+    {"id": "unconf", "name": "Unconfigured One", "type": "private",
+     "site_link": "https://unconf.example/", "configured": False},
+]
+
+
+@pytest.fixture
+def cfg(tmp_path, monkeypatch):
+    path = tmp_path / "trackers.yml"
+    shutil.copy(FIXTURE, path)
+    monkeypatch.setattr(app, "CONFIG_PATH", path)
+    app._cfg_cache["data"] = None
+    app.init_db()
+    with app.db() as conn:
+        conn.execute("DELETE FROM state")
+    yield path
+    app._cfg_cache["data"] = None
+
+
+@pytest.fixture
+def client(cfg):
+    return TestClient(app.app)
+
+
+@pytest.fixture
+def prowlarr(monkeypatch):
+    monkeypatch.setattr(app, "_fetch_json", lambda url, headers: PROWLARR)
+
+
+@pytest.fixture
+def jackett(monkeypatch):
+    monkeypatch.setattr(app, "_fetch_json", lambda url, headers: JACKETT)
+
+
+def ids(path):
+    return [t["id"] for t in yaml.safe_load(path.read_text())["trackers"]]
+
+
+BODY = {"source": "prowlarr", "url": "http://prowlarr.example:9696", "api_key": "k"}
+
+
+# ------------------------------------------------------------- normalising
+
+def test_prowlarr_keeps_private_torrent_indexers(prowlarr):
+    names = [i["name"] for i in app.prowlarr_indexers("http://x", "k")]
+    assert "Real One" in names
+    assert "Semi One" in names            # semi-private still prunes for inactivity
+    assert "Public One" not in names      # no account to lose
+    assert "Usenet One" not in names      # not a tracker
+
+
+def test_prowlarr_reads_cardigann_base_url(prowlarr):
+    """Most Prowlarr indexers are Cardigann definitions, which carry the address
+    in `fields` rather than in indexerUrls."""
+    got = {i["name"]: i["url"] for i in app.prowlarr_indexers("http://x", "k")}
+    assert got["Cardigann One"] == "https://carr.example/"
+
+
+def test_jackett_skips_public_and_unconfigured(jackett):
+    names = [i["name"] for i in app.jackett_indexers("http://x", "k")]
+    assert names == ["Real One"]
+
+
+# ------------------------------------------------------------- preview
+
+def test_preview_writes_nothing(client, cfg, prowlarr):
+    before = cfg.read_text()
+    r = client.post("/api/import", json=BODY)
+    assert r.status_code == 200
+    assert cfg.read_text() == before
+
+
+def test_preview_marks_what_would_be_skipped(client, prowlarr):
+    got = {c["id"]: c["skip"] for c in client.post("/api/import", json=BODY).json()["candidates"]}
+    assert got["realone"] == ""
+    assert got["alphatracker"] == "already configured"     # matched on host
+
+
+def test_existing_host_under_a_new_name_is_not_re_added(client, cfg, prowlarr):
+    """Prowlarr calls it "Alpha Tracker"; the config calls it "alpha". Same
+    host. Adding it again would split one account's history across two rows and
+    leave both countdowns wrong."""
+    client.post("/api/import", json={**BODY, "apply": True})
+    assert len([i for i in ids(cfg) if i in ("alpha", "alphatracker")]) == 1
+
+
+# ------------------------------------------------------------- apply
+
+def test_apply_adds_the_new_ones(client, cfg, prowlarr):
+    r = client.post("/api/import", json={**BODY, "apply": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body["added"]) == {"realone", "cardigannone", "semione"}
+    assert not body["failed"]
+    for tid in body["added"]:
+        assert tid in ids(cfg)
+
+
+def test_imported_limits_are_never_treated_as_fact(client, cfg, prowlarr):
+    """Neither tool knows an inactivity policy. A limit that arrives looking
+    authoritative and is too high is precisely what loses an account."""
+    client.post("/api/import", json={**BODY, "apply": True})
+    added = [t for t in yaml.safe_load(cfg.read_text())["trackers"]
+             if t["id"] in ("realone", "cardigannone", "semione")]
+    assert len(added) == 3
+    for t in added:
+        assert t["inactivity_days"] == 30
+        assert t["verified"] is False
+
+
+def test_apply_preserves_comments(client, cfg, prowlarr):
+    client.post("/api/import", json={**BODY, "apply": True})
+    assert "EVERY inactivity_days BELOW IS A FAIL-SAFE PLACEHOLDER" in cfg.read_text()
+
+
+def test_apply_is_idempotent(client, cfg, prowlarr):
+    client.post("/api/import", json={**BODY, "apply": True})
+    first = ids(cfg)
+    second = client.post("/api/import", json={**BODY, "apply": True})
+    assert second.json()["added"] == []
+    assert ids(cfg) == first
+
+
+def test_jackett_apply(client, cfg, jackett):
+    r = client.post("/api/import", json={**BODY, "source": "jackett", "apply": True})
+    assert r.json()["added"] == ["realone"]
+    assert "realone" in ids(cfg)
+
+
+def test_imported_trackers_reach_the_userscript(client, cfg, prowlarr, monkeypatch):
+    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    client.post("/api/import", json={**BODY, "apply": True})
+    js = app.render_userscript("https://idlarr.test.internal")
+    assert '{ host: "real.example", id: "realone" }' in js
+
+
+# ------------------------------------------------------------- failures
+
+@pytest.mark.parametrize("body,code", [
+    ({**BODY, "source": "sonarr"}, 400),
+    ({**BODY, "url": "prowlarr.example"}, 400),
+    ({**BODY, "api_key": ""}, 400),
+])
+def test_validation(client, body, code):
+    assert client.post("/api/import", json=body).status_code == code
+
+
+def test_unreachable_host_is_reported_not_swallowed(client, monkeypatch):
+    def boom(url, headers):
+        raise ValueError("could not reach http://prowlarr.example:9696/api/v1/indexer: refused")
+    monkeypatch.setattr(app, "_fetch_json", boom)
+    r = client.post("/api/import", json=BODY)
+    assert r.status_code == 502
+    assert "could not reach" in r.json()["detail"]
+
+
+def test_bad_key_says_so(client, monkeypatch):
+    def boom(url, headers):
+        raise ValueError("http://x/api/v1/indexer returned 401 — check the API key")
+    monkeypatch.setattr(app, "_fetch_json", boom)
+    assert "check the API key" in client.post("/api/import", json=BODY).json()["detail"]
+
+
+def test_needs_auth_when_configured(client, cfg, prowlarr):
+    client.post("/api/auth", json={"method": "forms", "username": "jared",
+                                   "password": "correct-horse"})
+    client.cookies.clear()
+    assert client.post("/api/import", json={**BODY, "apply": True}).status_code == 401
+    assert "realone" not in ids(cfg)

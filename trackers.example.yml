@@ -79,13 +79,19 @@ trackers:
     inactivity_days: 30
     verified: false
     notes: "Custom"
-    # A site whose logout control is not in the DOM needs an explicit selector.
-    # auth_sel is read by nothing in the service — it documents what you put in
-    # the userscript's SITES entry for this host.
+    # A site whose logout control is not in the DOM at all (an SPA that renders
+    # its user menu only on click) needs an explicit selector. Point auth_sel at
+    # anything that exists ONLY when authenticated. It goes straight into the
+    # generated userscript's SITES entry.
+    auth_sel: 'a[href*="/torrent?key="]'
 
   - id: omega
     name: Omega Tracker
     url: https://omega.example/
+    # `host` is derived from `url` (minus any leading www.) and drives the
+    # generated userscript's @match line. Set it explicitly only when the site
+    # you log in on differs from the URL you want the row to link to.
+    host: omega.example
     inactivity_days: 30
     verified: false
     notes: "UNIT3D. Confirm the domain periodically."

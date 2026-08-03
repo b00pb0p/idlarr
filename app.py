@@ -61,6 +61,21 @@ KNOWN_SOFTWARE = {"gazelle": "Gazelle", "unit3d": "UNIT3D", "tbdev": "TBDev",
 _cfg_cache = {"mtime": 0.0, "data": None}
 
 
+def host_from_url(url: str) -> str:
+    """Bare hostname from a config `url`, minus any leading www.
+
+    The userscript matches `location.hostname.includes(host)`, so dropping
+    `www.` is what makes one entry cover both the apex and the subdomain. A
+    tracker whose login sits on a different domain from its browse pages needs
+    an explicit `host:` in the config instead.
+    """
+    if not url:
+        return ""
+    host = re.sub(r"^[a-z]+://", "", url.strip(), flags=re.I).split("/")[0]
+    host = host.split("@")[-1].split(":")[0]          # strip credentials, port
+    return re.sub(r"^www\.", "", host, flags=re.I).lower()
+
+
 def load_config() -> dict:
     """Reload trackers.yml on change so edits don't need a container restart."""
     mtime = CONFIG_PATH.stat().st_mtime
@@ -96,6 +111,16 @@ def load_config() -> dict:
             if not merged.get("software"):
                 first = re.split(r"[.\s]", (merged.get("notes") or "").strip(), maxsplit=1)[0]
                 merged["software"] = KNOWN_SOFTWARE.get(first.lower(), "")
+            # `host` drives the generated userscript's @match lines and its
+            # SITES entry. Derived from `url` so nobody restates the domain,
+            # with an explicit `host:` override for the odd site whose login
+            # lives on a different domain from its browse pages.
+            if not merged.get("host"):
+                merged["host"] = host_from_url(merged.get("url", ""))
+            # Escape hatch for a site the logout heuristic cannot read at all
+            # (an SPA that renders its menu only on click). Any selector that
+            # exists ONLY when authenticated.
+            merged.setdefault("auth_sel", "")
             trackers.append(merged)
         _cfg_cache.update(
             mtime=mtime,
@@ -226,6 +251,135 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
         os.replace(tmp, CONFIG_PATH)
 
     # Force a reload rather than trusting mtime granularity on fuse/shfs mounts.
+    _cfg_cache["data"] = None
+
+
+ID_OK = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+
+
+def slugify(name: str) -> str:
+    """A tracker id from a display name. Must satisfy ID_OK or the caller
+    should reject it — the id ends up in the userscript's SITES array, in DOM
+    element ids, and in every /ping, so it stays boring on purpose."""
+    slug = re.sub(r"[^a-z0-9]+", "", (name or "").strip().lower())
+    return slug[:40]
+
+
+def _entry_block(entry: dict, indent: str) -> list[str]:
+    """Render one tracker as YAML lines. json.dumps gives a double-quoted
+    scalar that is valid YAML and escapes quotes and backslashes; the re-parse
+    check in the callers is what actually proves it survived."""
+    field = indent + "  "
+    out = [f"{indent}- id: {entry['id']}\n",
+           f"{field}name: {json.dumps(entry['name'])}\n",
+           f"{field}url: {json.dumps(entry.get('url', ''))}\n"]
+    if entry.get("host"):
+        out.append(f"{field}host: {json.dumps(entry['host'])}\n")
+    out.append(f"{field}inactivity_days: {int(entry['inactivity_days'])}\n")
+    out.append(f"{field}verified: {'true' if entry.get('verified') else 'false'}\n")
+    if entry.get("notes"):
+        out.append(f"{field}notes: {json.dumps(entry['notes'])}\n")
+    if entry.get("auth_sel"):
+        out.append(f"{field}auth_sel: {json.dumps(entry['auth_sel'])}\n")
+    return out
+
+
+def _others(doc: dict, skip: str) -> dict:
+    """Every tracker except one, keyed by id — for blast-radius checks."""
+    return {t.get("id"): t for t in (doc.get("trackers") or []) if t.get("id") != skip}
+
+
+def add_tracker(entry: dict) -> None:
+    """Append a tracker to trackers.yml, comments intact.
+
+    Same discipline as save_tracker_fields: a line edit, never a yaml dump,
+    validated before os.replace. The extra check here is BLAST RADIUS — every
+    other entry must come back byte-for-byte identical after parsing. An append
+    that quietly reformatted a sibling would be invisible until the day that
+    sibling's limit mattered.
+    """
+    tid = entry["id"]
+    with _write_lock:
+        original = CONFIG_PATH.read_text()
+        lines = original.splitlines(keepends=True)
+        before = yaml.safe_load(original) or {}
+        existing = [t.get("id") for t in (before.get("trackers") or [])]
+        if tid in existing:
+            raise ValueError(f"'{tid}' is already in the config")
+
+        if existing:
+            _, end, indent = _block_bounds(lines, existing[-1])
+        else:
+            # An empty list: insert directly under the `trackers:` key.
+            end = next((i + 1 for i, ln in enumerate(lines)
+                        if re.match(r"^trackers:\s*$", ln)), None)
+            if end is None:
+                raise ValueError("no `trackers:` key in the config to append to")
+            indent = "  "
+
+        block = _entry_block(entry, indent)
+        # Keep the blank-line rhythm the file already uses, without stacking
+        # blank lines when the previous entry already ended with one.
+        if end > 0 and lines[end - 1].strip():
+            block.insert(0, "\n")
+        lines[end:end] = block
+        candidate = "".join(lines)
+
+        after = yaml.safe_load(candidate) or {}
+        n_before, n_after = len(existing), len(after.get("trackers") or [])
+        if n_after != n_before + 1:
+            raise ValueError(f"refusing write: tracker count {n_before} -> {n_after}")
+        fresh = next((t for t in after["trackers"] if t.get("id") == tid), None)
+        if fresh is None:
+            raise ValueError(f"refusing write: '{tid}' is not in the result")
+        if fresh.get("name") != entry["name"]:
+            raise ValueError("refusing write: name did not survive the round-trip")
+        if int(fresh.get("inactivity_days", -1)) != int(entry["inactivity_days"]):
+            raise ValueError("refusing write: inactivity_days did not take")
+        if _others(after, tid) != _others(before, tid):
+            raise ValueError("refusing write: it changed another tracker")
+
+        tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
+        tmp.write_text(candidate)
+        os.replace(tmp, CONFIG_PATH)
+
+    _cfg_cache["data"] = None
+
+
+def remove_tracker(tracker_id: str) -> None:
+    """Delete one tracker's block from trackers.yml.
+
+    Its EVENTS are deliberately left in the database. `events` is append-only
+    apart from drop_last_auth(), and keeping them means re-adding the same id
+    restores its history rather than silently starting the countdown over —
+    which is the failure mode this whole service exists to prevent.
+    """
+    with _write_lock:
+        original = CONFIG_PATH.read_text()
+        lines = original.splitlines(keepends=True)
+        before = yaml.safe_load(original) or {}
+        start, end, _ = _block_bounds(lines, tracker_id)
+        # Absorb one preceding blank line so removals don't leave a growing
+        # gap where trackers used to be.
+        if start > 0 and not lines[start - 1].strip():
+            start -= 1
+        del lines[start:end]
+        candidate = "".join(lines)
+
+        after = yaml.safe_load(candidate) or {}
+        n_before = len(before.get("trackers") or [])
+        n_after = len(after.get("trackers") or [])
+        if n_after != n_before - 1:
+            raise ValueError(f"refusing write: tracker count {n_before} -> {n_after}")
+        if any(t.get("id") == tracker_id for t in (after.get("trackers") or [])):
+            raise ValueError(f"refusing write: '{tracker_id}' is still there")
+        if _others(after, tracker_id) != _others(before, tracker_id):
+            raise ValueError("refusing write: it changed another tracker")
+
+        tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
+        tmp.write_text(candidate)
+        os.replace(tmp, CONFIG_PATH)
+
     _cfg_cache["data"] = None
 
 
@@ -915,6 +1069,200 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
     return clean(row)
 
 
+@app.post("/api/tracker", dependencies=[Depends(require_ui)])
+async def create_tracker(payload: dict = Body(...)):
+    """Add a tracker from the status page.
+
+    `inactivity_days` defaults to 30 and `verified` to false on purpose, the
+    same fail-safe the shipped config shouts about: a limit you have not read
+    off the tracker's own rules page is a guess, and a guess that is too HIGH
+    is the one that loses the account.
+    """
+    name = str(payload.get("name", "")).strip()
+    if not 1 <= len(name) <= 80:
+        raise HTTPException(400, "name must be 1-80 characters")
+
+    tid = str(payload.get("id", "")).strip().lower() or slugify(name)
+    if not tid:
+        # A name of nothing but punctuation slugifies to "". Saying "'' is not
+        # a valid id" tells the user nothing about what to do next.
+        raise HTTPException(
+            400, f"could not derive an id from '{name}' — enter one explicitly")
+    if not ID_OK.match(tid):
+        raise HTTPException(
+            400, "id must be lowercase letters, digits, - or _ (max 40) — "
+                 f"'{tid}' is not usable as one")
+    if tid in {t["id"] for t in load_config()["trackers"]}:
+        raise HTTPException(409, f"'{tid}' already exists")
+
+    url = str(payload.get("url", "")).strip()
+    if url and not re.match(r"^https?://", url, re.I):
+        raise HTTPException(400, "url must start with http:// or https://")
+
+    days = payload.get("inactivity_days", 30)
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "inactivity_days must be a whole number")
+    if not 1 <= days <= 3650:
+        raise HTTPException(400, "inactivity_days must be between 1 and 3650")
+
+    host = str(payload.get("host", "")).strip().lower() or host_from_url(url)
+    entry = {
+        "id": tid, "name": name, "url": url, "host": host,
+        "inactivity_days": days, "verified": bool(payload.get("verified")),
+        "notes": str(payload.get("notes", "")).strip()[:500],
+        "auth_sel": str(payload.get("auth_sel", "")).strip()[:200],
+    }
+    try:
+        add_tracker(entry)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(500, f"config write refused: {exc}")
+
+    row = next(r for r in statuses() if r["id"] == tid)
+    return clean(row)
+
+
+# --- importing from Prowlarr / Jackett ------------------------------------
+#
+# These talk to YOUR indexer manager, never to a tracker. The no-tracker-traffic
+# rule is about requests that could get an account banned; Prowlarr on your own
+# box is not one of those, and it already holds the exact list you would
+# otherwise retype.
+#
+# What it imports is IDENTITY only — name and URL. Never inactivity_days:
+# neither tool knows a tracker's inactivity policy, and a limit that arrives
+# looking authoritative but is too high is the failure this project exists to
+# prevent. Everything lands at 30 days, unverified, like any hand-added entry.
+
+IMPORT_TIMEOUT = 10
+PRIVATE = {"private", "semiprivate", "semi-private"}
+
+
+def _fetch_json(url: str, headers: dict) -> list:
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=IMPORT_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        hint = " — check the API key" if exc.code in (401, 403) else ""
+        raise ValueError(f"{url.split('?')[0]} returned {exc.code}{hint}") from exc
+    except urllib.error.URLError as exc:
+        raise ValueError(f"could not reach {url.split('?')[0]}: {exc.reason}") from exc
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{url.split('?')[0]} did not return JSON: {exc}") from exc
+
+
+def prowlarr_indexers(base: str, api_key: str) -> list[dict]:
+    data = _fetch_json(f"{base.rstrip('/')}/api/v1/indexer", {"X-Api-Key": api_key})
+    out = []
+    for item in data if isinstance(data, list) else []:
+        if str(item.get("protocol", "torrent")).lower() != "torrent":
+            continue
+        if str(item.get("privacy", "")).lower().replace("_", "") not in PRIVATE:
+            continue
+        urls = item.get("indexerUrls") or []
+        url = urls[0] if urls else ""
+        if not url:
+            # Cardigann-defined indexers carry the address in `fields` instead.
+            for field in item.get("fields") or []:
+                if field.get("name") == "baseUrl" and field.get("value"):
+                    url = str(field["value"])
+                    break
+        out.append({"name": str(item.get("name", "")).strip(), "url": url})
+    return out
+
+
+def jackett_indexers(base: str, api_key: str) -> list[dict]:
+    data = _fetch_json(
+        f"{base.rstrip('/')}/api/v2.0/indexers?configured=true&apikey={api_key}", {})
+    out = []
+    for item in data if isinstance(data, list) else []:
+        if not item.get("configured", True):
+            continue
+        if str(item.get("type", "")).lower().replace("_", "") not in PRIVATE:
+            continue
+        out.append({"name": str(item.get("name", "")).strip(),
+                    "url": str(item.get("site_link", "")).strip()})
+    return out
+
+
+@app.post("/api/import", dependencies=[Depends(require_ui)])
+async def import_indexers(payload: dict = Body(...)):
+    """Preview or apply an import from Prowlarr or Jackett.
+
+    Defaults to a PREVIEW. Writing seven trackers into someone's config on a
+    button press, when the API key might point at the wrong instance, is not a
+    thing to do without showing the list first.
+    """
+    source = str(payload.get("source", "")).strip().lower()
+    if source not in ("prowlarr", "jackett"):
+        raise HTTPException(400, "source must be prowlarr or jackett")
+    base = str(payload.get("url", "")).strip()
+    if not re.match(r"^https?://", base, re.I):
+        raise HTTPException(400, "url must start with http:// or https://")
+    api_key = str(payload.get("api_key", "")).strip()
+    if not api_key:
+        raise HTTPException(400, "an API key is required")
+
+    fetch = prowlarr_indexers if source == "prowlarr" else jackett_indexers
+    try:
+        found = await asyncio.to_thread(fetch, base, api_key)
+    except ValueError as exc:
+        raise HTTPException(502, str(exc))
+
+    known_ids = {t["id"] for t in load_config()["trackers"]}
+    known_hosts = {t["host"] for t in load_config()["trackers"] if t.get("host")}
+
+    candidates, seen = [], set()
+    for item in found:
+        if not item["name"]:
+            continue
+        tid = slugify(item["name"])
+        host = host_from_url(item["url"])
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        # Match on host as well as id: the same tracker under a different
+        # display name would otherwise be added twice and split its history.
+        why = ("already configured" if (tid in known_ids or (host and host in known_hosts))
+               else "" if host else "no usable URL")
+        candidates.append({"id": tid, "name": item["name"], "url": item["url"],
+                           "host": host, "skip": why})
+
+    if not payload.get("apply"):
+        return {"source": source, "found": len(found), "candidates": candidates}
+
+    added, failed = [], []
+    for c in candidates:
+        if c["skip"]:
+            continue
+        try:
+            add_tracker({"id": c["id"], "name": c["name"], "url": c["url"],
+                         "host": c["host"], "inactivity_days": 30,
+                         "verified": False, "notes": "", "auth_sel": ""})
+            added.append(c["id"])
+        except (KeyError, ValueError) as exc:
+            failed.append({"id": c["id"], "error": str(exc)})
+    return {"source": source, "added": added, "failed": failed,
+            "skipped": [c["id"] for c in candidates if c["skip"]]}
+
+
+@app.delete("/api/tracker/{tracker_id}", dependencies=[Depends(require_ui)])
+async def delete_tracker(tracker_id: str):
+    """Remove a tracker. Its auth history stays in the database — see
+    remove_tracker() for why."""
+    if tracker_id not in {t["id"] for t in load_config()["trackers"]}:
+        raise HTTPException(404, "unknown tracker")
+    try:
+        remove_tracker(tracker_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(500, f"config write refused: {exc}")
+    return {"removed": tracker_id, "trackers": len(load_config()["trackers"])}
+
+
 @app.post("/api/unmark/{tracker_id}", dependencies=[Depends(require_ui)])
 async def unmark(tracker_id: str):
     """Undo the most recent auth event — a misclicked 'seen', or an auth the
@@ -962,6 +1310,139 @@ async def healthz():
     and a monitor that needs credentials is a monitor that will not get set up.
     It discloses a tracker count and nothing else."""
     return {"ok": True, "trackers": len(load_config()["trackers"])}
+
+
+# ---------------------------------------------------------------- userscript
+#
+# Installing used to mean four careful hand-edits: the @match block, @connect,
+# ENDPOINT/TOKEN, and the SITES array. Every one of them is something this
+# service already knows, and each fails QUIETLY when wrong — a mismatched id
+# 404s, a missing @connect is killed by tracker CSP, a wrong token 401s. So
+# generate the script from the same config /ping validates against, and the
+# whole class stops existing.
+#
+# The template is the committed idlarr.user.js read at runtime, NOT a second
+# copy embedded here. Two copies of the detection heuristic would drift, and
+# the heuristic is the part that took four sites and a debug helper to get
+# right. Every substitution below is checked, so renaming one of these lines
+# fails loudly instead of shipping a script with PUT_IDLARR_TOKEN_HERE in it.
+
+USERSCRIPT_PATH = Path(os.environ.get(
+    "IDLARR_USERSCRIPT", str(Path(__file__).resolve().parent / "idlarr.user.js")))
+USERSCRIPT_BASE_VERSION = "1.1"
+
+
+def userscript_version(payload: str) -> str:
+    """A version that only moves when the generated content actually changes.
+
+    Violentmonkey decides whether to update by comparing versions as ORDERED
+    values, so a content hash cannot be the version — it would not increase.
+    Keep a counter in `state` and bump it only when the hash changes: adding a
+    tracker always triggers an update, and refetching an unchanged script
+    never does.
+    """
+    digest = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    if get_state("userscript_hash") != digest:
+        set_state("userscript_rev", str(int(get_state("userscript_rev", "0") or 0) + 1))
+        set_state("userscript_hash", digest)
+    return f"{USERSCRIPT_BASE_VERSION}.{get_state('userscript_rev', '1')}"
+
+
+def render_userscript(base_url: str) -> str:
+    """Fill the committed template from live config. Raises on anything unfilled."""
+    try:
+        src = USERSCRIPT_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"cannot read the userscript template at "
+                           f"{USERSCRIPT_PATH}: {exc}") from exc
+
+    base = base_url.rstrip("/")
+    connect_host = host_from_url(base)
+    # A tracker with no host cannot be matched, so it is left out entirely
+    # rather than emitted as a broken entry. The route reports the count.
+    trackers = [t for t in load_config()["trackers"] if t.get("host")]
+
+    matches = "\n".join(f"// @match        *://*.{t['host']}/*" for t in trackers)
+    sites = "\n".join(
+        "    {{ host: {}, id: {}{} }},".format(
+            json.dumps(t["host"]), json.dumps(t["id"]),
+            f", authSel: {json.dumps(t['auth_sel'])}" if t.get("auth_sel") else "")
+        for t in trackers)
+
+    version = userscript_version("\n".join([base, matches, sites]))
+
+    # @updateURL/@downloadURL point back here, so adding a tracker on the
+    # status page reaches the browser on Violentmonkey's next update check
+    # instead of needing a reinstall. The token has to ride in the URL: that
+    # fetch carries no session cookie.
+    script_url = f"{base}/idlarr.user.js?token={TOKEN}"
+    meta_extra = (f"// @updateURL   {script_url}\n"
+                  f"// @downloadURL {script_url}\n"
+                  f"// @connect      {connect_host}")
+
+    rules = [
+        ("match block", r"(?m)^// @match .*(?:\n// @match .*)*",
+         matches or "// @match        *://idlarr.invalid/*"),
+        ("connect line", r"(?m)^// @connect .*", meta_extra),
+        ("version line", r"(?m)^// @version .*", f"// @version      {version}"),
+        ("endpoint", r"(?m)^  const ENDPOINT = .*$",
+         f"  const ENDPOINT = {json.dumps(base + '/ping')};"),
+        ("token", r"(?m)^  const TOKEN    = .*$",
+         f"  const TOKEN    = {json.dumps(TOKEN)};"),
+        ("sites array", r"  const SITES = \[.*?\n  \];",
+         "  const SITES = [\n" + sites + "\n  ];"),
+    ]
+    out = src
+    for label, pattern, repl in rules:
+        out, n = re.subn(pattern, lambda _m, r=repl: r, out,
+                         count=1, flags=re.S if label == "sites array" else 0)
+        if n != 1:
+            raise RuntimeError(
+                f"userscript template no longer contains the {label} — "
+                f"idlarr.user.js and render_userscript() have drifted apart")
+
+    # Cosmetic, and deliberately NOT drift-checked: these only make the served
+    # file honest about being generated. A wording change in the template
+    # should not take the endpoint down.
+    out = out.replace(
+        "// ---- one @match per tracker; add both here and in SITES below ----",
+        "// ---- @match lines, generated from trackers.yml ----", 1)
+    # No timestamp in here on purpose: it would make every download differ,
+    # and the whole point of the version counter is that an unchanged script
+    # stays byte-identical.
+    banner = (
+        "\n// ---------------------------------------------------------------\n"
+        f"// GENERATED by Idlarr from trackers.yml — {len(trackers)} tracker(s).\n"
+        "// Do not edit: the next auto-update overwrites this file. Add or\n"
+        "// change trackers on the status page instead, and the browser picks\n"
+        "// it up on Violentmonkey's next update check.\n"
+        "// ---------------------------------------------------------------")
+    return out.replace("// ==/UserScript==", "// ==/UserScript==" + banner, 1)
+
+
+@app.get("/idlarr.user.js")
+async def userscript(request: Request, token: str = ""):
+    """Serve the userscript, generated from live config.
+
+    Reachable with either the API token in the query string or a UI session.
+    The token has to be accepted because Violentmonkey's update check sends no
+    cookies; and the served script necessarily CONTAINS the token, so this is
+    not a widening — with no login configured, /api/mark already grants a
+    stranger strictly more than the token does.
+    """
+    if not (hmac.compare_digest(token, TOKEN) or authed(request)):
+        raise HTTPException(401, "pass ?token=<IDLARR_TOKEN> or sign in first")
+    if not STATUS_URL:
+        raise HTTPException(
+            500,
+            "STATUS_URL is not set, so the generated script would have no "
+            "endpoint to report to. Set it in .env to the URL you reach this "
+            "page on, then restart.")
+    try:
+        body = render_userscript(STATUS_URL)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc))
+    return Response(body, media_type="text/javascript; charset=utf-8")
 
 
 # ---------------------------------------------------------------- auth routes
@@ -1334,6 +1815,43 @@ PAGE = """<!doctype html>
   .modal .rowb button{flex:1;padding:8px;font-family:inherit;font-size:11px;
     letter-spacing:.09em;text-transform:uppercase;cursor:pointer}
   .modal .e{color:var(--critical);font-size:11.5px;min-height:15px;margin:7px 0 0}
+  .modal .box.wide{width:410px}
+  .modal .rowb button:disabled{opacity:.4;cursor:default}
+  .imlist{max-height:184px;overflow:auto;margin:2px 0 13px}
+  .imlist:empty{display:none}
+  .imlist .r{display:flex;gap:9px;align-items:baseline;padding:5px 0;
+    border-bottom:1px solid var(--line);font-size:11.5px}
+  .imlist .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .imlist .sk{color:var(--dim);font-size:9.5px;letter-spacing:.06em;white-space:nowrap}
+  .imlist .new{color:var(--ok);font-size:9.5px;letter-spacing:.06em;white-space:nowrap}
+
+  /* Footer toolbar. Deliberately built like .legend — bordered cells, micro
+     uppercase labels — rather than as buttons trailing off the help text. */
+  .tools{display:flex;margin:16px 0 0;border:1px solid var(--line);
+    background:var(--head);flex-wrap:wrap}
+  .tools .cell{flex:1;min-width:262px;padding:11px 14px;display:flex;
+    align-items:center;gap:10px;border-right:1px solid var(--line)}
+  .tools .cell:last-child{border-right:0}
+  .tools .k{color:var(--dim);font-size:9.5px;letter-spacing:.15em;
+    text-transform:uppercase;white-space:nowrap}
+  .tools .v{font-family:'Azeret Mono',monospace;font-size:11.5px;
+    display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .tools .v::before{content:'';width:6px;height:6px;border-radius:50%;
+    background:var(--dim);flex:none}
+  .tools .v.on::before{background:var(--ok);box-shadow:0 0 7px var(--ok)}
+  .tools .v.off::before{background:var(--critical);box-shadow:0 0 7px var(--critical)}
+  .tools .v.off{color:var(--critical)}
+  .tools .sp{margin-left:auto;display:flex;gap:6px}
+  @media(max-width:760px){
+    .tools .cell{border-right:0;border-bottom:1px solid var(--line);min-width:100%;
+      flex-wrap:wrap}
+    .tools .cell:last-child{border-bottom:0}
+    /* Actions drop to their own line. Label + value + two buttons is ~370px of
+       nowrap content, and a 360px phone leaves ~320px inside the page padding,
+       so without this the Userscript cell overflows instead of wrapping. */
+    .tools .sp{margin-left:0;width:100%;margin-top:7px}
+    .banner .sp{margin-left:0;width:100%}
+  }
 </style></head><body><div class="wrap">
 
 <div class="bar"><h1>Idlarr</h1><span class="tag">never lose an account to inactivity</span><span class="stamp">__STAMP__</span>
@@ -1363,8 +1881,9 @@ __BANNER__
 Click a row for controls, the alert schedule and auth history &middot; click a name to open the
 tracker &middot; click a heading to sort<br>
 <b>&#9998;</b> = marked by hand, not observed &middot; the countdown runs on <b>auth</b> events only
-&middot; no request is ever made to a tracker.<br>__AUTHFOOT__
+&middot; no request is ever made to a tracker.
 </div>
+<div class="tools">__TOOLS__</div>
 </div>
 
 <div class="modal" id="am"><div class="box">
@@ -1389,6 +1908,45 @@ tracker &middot; click a heading to sort<br>
   <div class="rowb"><button class="lk" id="amcancel">Cancel</button>
     <button class="lk pri" id="amsave">Save</button></div>
   <p class="e" id="ame"></p>
+</div></div>
+
+<div class="modal" id="tm"><div class="box">
+  <h3>Add tracker</h3>
+  <p class="hint">The limit starts at 30 days and stays <b>unconfirmed</b> until
+  you read that tracker's own rules page. A limit set too high is the one that
+  loses the account, so this errs short on purpose.</p>
+  <label for="tmn">name</label>
+  <input id="tmn" placeholder="Alpha Tracker">
+  <label for="tmu">url</label>
+  <input id="tmu" placeholder="https://alpha.example/">
+  <label for="tmi">id &mdash; goes in every ping, and in the userscript</label>
+  <input id="tmi" placeholder="derived from the name">
+  <label for="tmd">inactivity limit, in days</label>
+  <input id="tmd" type="text" inputmode="numeric" value="30">
+  <label for="tmo">notes &mdash; first word sets the software column</label>
+  <input id="tmo" placeholder="Gazelle. Seeding counts.">
+  <div class="rowb"><button class="lk" id="tmcancel">Cancel</button>
+    <button class="lk pri" id="tmsave">Add</button></div>
+  <p class="e" id="tme"></p>
+</div></div>
+
+<div class="modal" id="im"><div class="box wide">
+  <h3>Import trackers</h3>
+  <p class="hint">Reads the indexer list from your own Prowlarr or Jackett &mdash;
+  it never contacts a tracker. Limits are <b>not</b> imported, because neither
+  tool knows them: everything arrives at 30 days, unconfirmed.</p>
+  <label for="ims">source</label>
+  <select id="ims"><option value="prowlarr">Prowlarr</option>
+    <option value="jackett">Jackett</option></select>
+  <label for="imu">url</label>
+  <input id="imu" placeholder="http://prowlarr.local:9696">
+  <label for="imk">api key</label>
+  <input id="imk" type="password" autocomplete="off">
+  <div class="imlist" id="imlist"></div>
+  <div class="rowb"><button class="lk" id="imcancel">Cancel</button>
+    <button class="lk" id="impreview">Preview</button>
+    <button class="lk pri" id="imapply" disabled>Import</button></div>
+  <p class="e" id="ime"></p>
 </div></div>
 
 <script>
@@ -1461,7 +2019,8 @@ tracker &middot; click a heading to sort<br>
     +'<button class="chk'+(d.verified?' on':'')+'"'+(imm?' disabled':'')+'>'
     +(d.verified?'\\u2713 confirmed':'confirm')+'</button>'
     +'<button class="imm'+(imm?' on':'')+'">'+(imm?'\\u25cf immune':'immune')+'</button>'
-    +'<button class="seen">seen</button><button class="undo danger">undo</button></div>'
+    +'<button class="seen">seen</button><button class="undo danger">undo</button>'
+    +'<button class="del danger">remove</button></div>'
     +(imm?'<div class="reason"><input class="rsn" value="'+(d.immune_reason||'')
       +'" placeholder="why immune? e.g. donated, elite class"></div>':'')
     +(!imm&&d.notes?'<div class="note">'+d.notes+'</div>':'')
@@ -1535,6 +2094,23 @@ tracker &middot; click a heading to sort<br>
        if(!res.removed){msg('no auth event to undo','bad');return;}
        refresh(res.row);el.remove();tr.classList.remove('open');drawer(tr);
      }).catch(e=>msg(e.message,'bad'));});
+
+   // Two-click confirm rather than a browser dialog: this edits trackers.yml,
+   // and a misclick here deletes a tracker you are relying on. Disarms itself
+   // after 5s so a forgotten armed button cannot be triggered later.
+   const del=el.querySelector('.del');
+   del.addEventListener('click',()=>{
+     if(del.dataset.armed!=='1'){
+       del.dataset.armed='1'; del.textContent='confirm remove';
+       msg('removes it from trackers.yml \\u2014 auth history is kept','warn');
+       setTimeout(()=>{if(del.dataset.armed==='1'){
+         del.dataset.armed=''; del.textContent='remove'; msg('');}},5000);
+       return;}
+     fetch('/api/tracker/'+d.id,{method:'DELETE'}).then(async r=>{
+       const j=await r.json().catch(()=>({}));
+       if(!r.ok)throw new Error(j.detail||('failed ('+r.status+')'));
+       location.reload();
+     }).catch(e=>msg(e.message,'bad'));});
  }
 
  tb.addEventListener('click',e=>{
@@ -1607,6 +2183,89 @@ tracker &middot; click a heading to sort<br>
  am.addEventListener('click',e=>{if(e.target===am)closeAuth();});
  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAuth();});
  document.querySelectorAll('.js-authcfg').forEach(b=>b.addEventListener('click',openAuth));
+
+ // ---- add tracker ------------------------------------------------------
+ const tm=document.getElementById('tm'),tme=document.getElementById('tme');
+ const tmn=document.getElementById('tmn'),tmi=document.getElementById('tmi');
+ // Mirrors slugify() on the server. Shown as a placeholder rather than filled
+ // in, so leaving it blank means "derive it" and the two cannot disagree.
+ const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,40);
+ tmn.addEventListener('input',()=>{tmi.placeholder=slug(tmn.value)||'derived from the name';});
+ const closeTrk=()=>tm.classList.remove('on');
+ document.getElementById('addtrk').addEventListener('click',()=>{
+   tme.textContent='';tm.classList.add('on');tmn.focus();});
+ document.getElementById('tmcancel').addEventListener('click',closeTrk);
+ tm.addEventListener('click',e=>{if(e.target===tm)closeTrk();});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeTrk();});
+ document.getElementById('tmsave').addEventListener('click',async()=>{
+   tme.textContent='';
+   const r=await fetch('/api/tracker',{method:'POST',
+     headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({name:tmn.value,url:document.getElementById('tmu').value,
+       id:tmi.value,inactivity_days:document.getElementById('tmd').value,
+       notes:document.getElementById('tmo').value})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){tme.textContent=d.detail||('failed ('+r.status+')');return;}
+   location.reload();
+ });
+
+ // ---- import from Prowlarr / Jackett -----------------------------------
+ // Names come from an external service, so they are escaped rather than
+ // concatenated into innerHTML raw.
+ const hesc=s=>String(s==null?'':s).replace(/[&<>"']/g,
+   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const im=document.getElementById('im'),ime=document.getElementById('ime');
+ const imlist=document.getElementById('imlist'),imapply=document.getElementById('imapply');
+ const imbody=()=>({source:document.getElementById('ims').value,
+   url:document.getElementById('imu').value,
+   api_key:document.getElementById('imk').value});
+ const closeImp=()=>im.classList.remove('on');
+ document.getElementById('importtrk').addEventListener('click',()=>{
+   ime.textContent='';imlist.innerHTML='';imapply.disabled=true;
+   imapply.textContent='Import';im.classList.add('on');
+   document.getElementById('imu').focus();});
+ document.getElementById('imcancel').addEventListener('click',closeImp);
+ im.addEventListener('click',e=>{if(e.target===im)closeImp();});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeImp();});
+
+ const impost=extra=>fetch('/api/import',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify(Object.assign(imbody(),extra||{}))});
+
+ // Preview first, always. An API key pointed at the wrong instance should cost
+ // a list on screen, not a rewritten config.
+ document.getElementById('impreview').addEventListener('click',async()=>{
+   ime.textContent='';
+   imlist.innerHTML='<div class="r"><span class="nm">checking\\u2026</span></div>';
+   imapply.disabled=true;
+   const r=await impost(); const d=await r.json().catch(()=>({}));
+   if(!r.ok){imlist.innerHTML='';ime.textContent=d.detail||('failed ('+r.status+')');return;}
+   const c=d.candidates||[], fresh=c.filter(x=>!x.skip).length;
+   imlist.innerHTML=c.length?c.map(x=>'<div class="r"><span class="nm">'+hesc(x.name)
+     +'</span>'+(x.skip?'<span class="sk">'+hesc(x.skip)+'</span>'
+                       :'<span class="new">will add</span>')+'</div>').join('')
+     :'<div class="r"><span class="nm">no private trackers found</span></div>';
+   imapply.disabled=fresh===0;
+   imapply.textContent=fresh?('Import '+fresh):'Import';
+ });
+
+ imapply.addEventListener('click',async()=>{
+   ime.textContent='';imapply.disabled=true;
+   const r=await impost({apply:true}); const d=await r.json().catch(()=>({}));
+   if(!r.ok){ime.textContent=d.detail||('failed ('+r.status+')');imapply.disabled=false;return;}
+   location.reload();
+ });
+
+ const cpjs=document.getElementById('cpjs');
+ if(cpjs)cpjs.addEventListener('click',()=>{
+   const u=cpjs.dataset.u, done=()=>{const o=cpjs.textContent;
+     cpjs.textContent='Copied';setTimeout(()=>cpjs.textContent=o,1600);};
+   // clipboard API needs a secure context; plenty of these run on plain http
+   // over a LAN or tailnet, so fall back rather than failing silently.
+   if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(u).then(done);}
+   else{const t=document.createElement('textarea');t.value=u;document.body.appendChild(t);
+     t.select();try{document.execCommand('copy');done();}finally{t.remove();}}
+ });
 
  const outb=document.getElementById('out');
  if(outb)outb.addEventListener('click',()=>fetch('/logout',{method:'POST'})
@@ -1715,14 +2374,44 @@ async def index(request: Request):
             'your limits.<span class="sp">'
             '<button class="lk pri js-authcfg">Set one up</button>'
             '<button class="lk" id="banx">Dismiss</button></span></div>')
-        authfoot = ('Sign-in <b>off</b> &middot; '
-                    '<button class="lk js-authcfg">configure</button>')
+        signin = ('<span class="k">Sign-in</span><span class="v off">not configured</span>'
+                  '<span class="sp"><button class="lk pri js-authcfg">Configure</button>'
+                  '</span>')
     else:
         banner = ""
-        authfoot = (f'Signed in as <b>{esc(get_state("auth_user", "") or "")}</b> '
-                    f'({esc(method)}) &middot; '
-                    f'<button class="lk js-authcfg">change</button> '
-                    f'<button class="lk" id="out">sign out</button>')
+        signin = (f'<span class="k">Sign-in</span>'
+                  f'<span class="v on">{esc(get_state("auth_user", "") or "")}'
+                  f' &middot; {esc(method)}</span>'
+                  f'<span class="sp"><button class="lk js-authcfg">Change</button>'
+                  f'<button class="lk" id="out">Sign out</button></span>')
+
+    # The userscript cell is the install path: a link Violentmonkey can take
+    # directly, so nothing is hand-edited. Without STATUS_URL the generated
+    # script would have no endpoint, so say that instead of offering a
+    # download that cannot work.
+    n_hosts = sum(1 for t in load_config()["trackers"] if t.get("host"))
+    if STATUS_URL:
+        js_url = f"{STATUS_URL.rstrip('/')}/idlarr.user.js?token={TOKEN}"
+        script = (f'<span class="k">Userscript</span>'
+                  f'<span class="v on">{n_hosts} tracker{"" if n_hosts == 1 else "s"}</span>'
+                  f'<span class="sp">'
+                  f'<a class="lk pri" href="{esc(js_url)}">Install</a>'
+                  f'<button class="lk" id="cpjs" data-u="{esc(js_url)}">Copy URL</button>'
+                  f'</span>')
+    else:
+        script = ('<span class="k">Userscript</span>'
+                  '<span class="v off">STATUS_URL not set</span>'
+                  '<span class="sp"><span class="k">set it in .env, then restart</span></span>')
+
+    n_trk = len(load_config()["trackers"])
+    trackers_cell = (f'<span class="k">Trackers</span>'
+                     f'<span class="v on">{n_trk}</span>'
+                     f'<span class="sp"><button class="lk" id="addtrk">Add</button>'
+                     f'<button class="lk" id="importtrk">Import</button></span>')
+
+    tools = (f'<div class="cell">{trackers_cell}</div>'
+             f'<div class="cell">{signin}</div>'
+             f'<div class="cell">{script}</div>')
 
     return (PAGE
             .replace("__ROWS__", "".join(body) or
@@ -1730,7 +2419,7 @@ async def index(request: Request):
             .replace("__TICK__", tick)
             .replace("__LEGEND__", legend)
             .replace("__BANNER__", banner)
-            .replace("__AUTHFOOT__", authfoot)
+            .replace("__TOOLS__", tools)
             .replace("__AUTHMETHOD__", method)
             .replace("__STAMP__", stamp))
 

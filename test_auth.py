@@ -178,11 +178,13 @@ def test_everything_open_when_auth_is_off(client):
 
 
 def test_banner_shown_only_when_auth_is_off(client):
-    assert "No sign-in configured" in client.get("/").text
+    page = client.get("/").text
+    assert "No sign-in configured" in page                 # the banner
+    assert '<span class="v off">not configured</span>' in page   # the toolbar
     configure(client)
     page = client.get("/", auth=("jared", PW)).text
     assert "No sign-in configured" not in page
-    assert "Signed in as" in page
+    assert '<span class="v on">jared' in page
 
 
 PROTECTED = ["/api/status", "/api/history/alpha", "/api/auth"]
