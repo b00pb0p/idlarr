@@ -2515,7 +2515,14 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
 
     # --- sign-in: the form that used to be its own modal. Same element ids, so
     #     the handlers did not have to change.
-    sel = lambda v, t: f'<option value="{v}"{" selected" if method == v else ""}>{t}</option>'
+    # Default the dropdown to Forms when nothing is configured. Selecting the
+    # CURRENT method means "None" is pre-selected on a fresh install, so
+    # filling in a username and password and pressing Save posts method=none —
+    # the server clears an already-empty sign-in, the page reloads, and nothing
+    # has changed. A silent no-op on the one control whose whole job is to stop
+    # the dashboard being open.
+    shown = method if method != "none" else "forms"
+    sel = lambda v, t: f'<option value="{v}"{" selected" if shown == v else ""}>{t}</option>'
     signin = (
         _row("Status",
              "Anyone who can reach this page can reset a countdown or rewrite "

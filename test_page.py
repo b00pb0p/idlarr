@@ -214,3 +214,21 @@ def test_the_two_page_templates_stay_distinct():
     assert app.PAGE.count("</style></head><body>") == 1
     assert app.LOGIN_PAGE.count("</style></head><body>") == 1
     assert app.PAGE is not app.LOGIN_PAGE
+
+
+def test_signin_form_defaults_to_forms_when_nothing_is_configured(page):
+    """Pre-selecting the CURRENT method means "None" is selected on a fresh
+    install, so filling in credentials and pressing Save posts method=none and
+    silently changes nothing — on the one control that exists to stop the
+    dashboard being open."""
+    sel = re.search(r'<select id="amm">(.*?)</select>', page, re.S).group(1)
+    assert '<option value="forms" selected>' in sel
+    assert '<option value="none" selected>' not in sel
+
+
+def test_signin_form_keeps_the_configured_method_selected(client):
+    client.post("/api/auth", json={"method": "basic", "username": "jared",
+                                   "password": "correct-horse"})
+    sel = re.search(r'<select id="amm">(.*?)</select>',
+                    client.get("/").text, re.S).group(1)
+    assert '<option value="basic" selected>' in sel

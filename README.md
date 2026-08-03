@@ -364,8 +364,25 @@ docker run --rm -p 8090:8080 \
   -v /tmp/idlarr-demo/data:/data -v /tmp/idlarr-demo/config:/config \
   -e IDLARR_TOKEN=demo -e IDLARR_NOTIFY_URLS=ntfy://ntfy.sh/idlarr-demo \
   -e STATUS_URL=http://localhost:8090 -e TZ=America/Chicago \
-  ghcr.io/b00pb0p/idlarr:latest
+  ghcr.io/b00pb0p/idlarr:edge
 ```
+
+**`:edge`, not `:latest`.** `latest` follows releases, so it will not show
+anything merged since the last tag — you would be photographing an older app
+than the one you are documenting.
+
+No `python3` on the host — common on NAS distributions? Run the seeder inside
+the image, which has one. `--user 0` is needed so it can write the mount and
+chown it afterwards:
+
+```bash
+docker run --rm --user 0 -v "$PWD/tools:/tools" -v /tmp/idlarr-demo:/demo \
+  ghcr.io/b00pb0p/idlarr:edge python /tools/demo-seed.py /demo
+```
+
+Seed **before** starting the container. Docker creates a missing bind-mount
+source as an empty root-owned directory, so starting first gets you
+`No tracker config at /config/trackers.yml` and a database it cannot write.
 
 Set a sign-in from the page first, or the red banner dominates the shot. Run it
 rather than saving the HTML — the drawer fetches its history from `/api/history`,
