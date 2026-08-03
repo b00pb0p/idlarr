@@ -218,3 +218,102 @@ def test_needs_auth_when_configured(client, cfg, prowlarr):
     client.cookies.clear()
     assert client.post("/api/import", json={**BODY, "apply": True}).status_code == 401
     assert "realone" not in ids(cfg)
+
+
+# --------------------------------------------------- API hosts and subdomains
+#
+# Found in the field, not by reasoning: Prowlarr returns BroadcasTheNet as
+# api.broadcasthe.net. The exact-host dedupe treated that as a tracker the user
+# did not have and imported a duplicate — one account across two rows, both
+# countdowns wrong, and the new row matching a host no browser session exists
+# on, so it would have sat at `unknown` looking like broken detection.
+
+@pytest.mark.parametrize("a,b,want", [
+    ("api.broadcasthe.net", "broadcasthe.net", True),
+    ("broadcasthe.net", "api.broadcasthe.net", True),
+    ("tracker.example.com", "example.com", True),
+    ("example.com", "example.com", True),
+    ("EXAMPLE.com", "example.COM", True),
+    ("broadcasthe.net", "broadcasthe.org", False),
+    ("notbroadcasthe.net", "broadcasthe.net", False),   # suffix without a dot
+    ("", "broadcasthe.net", False),
+    ("broadcasthe.net", "", False),
+])
+def test_same_site(a, b, want):
+    assert app.same_site(a, b) is want
+
+
+@pytest.mark.parametrize("url,host,want_url,want_host", [
+    ("https://api.broadcasthe.net/", "api.broadcasthe.net",
+     "https://broadcasthe.net/", "broadcasthe.net"),
+    ("https://alpha.example/", "alpha.example",
+     "https://alpha.example/", "alpha.example"),
+    ("https://api.example.com/path", "api.example.com",
+     "https://example.com/path", "example.com"),
+])
+def test_api_hosts_become_browsable(url, host, want_url, want_host):
+    assert app.browsable(url, host) == (want_url, want_host)
+
+
+API_HOST = [{"name": "BroadcasTheNet", "protocol": "torrent", "privacy": "private",
+             "indexerUrls": ["https://api.broadcasthe.net/"]}]
+
+
+@pytest.fixture
+def apihost(monkeypatch):
+    monkeypatch.setattr(app, "_fetch_json", lambda url, headers: API_HOST)
+
+
+def test_api_host_is_recognised_as_already_configured(client, cfg, apihost):
+    """The real bug. `broadcasthe.net` is in the config; Prowlarr offers
+    `api.broadcasthe.net`; they are one tracker."""
+    app.add_tracker({"id": "btn", "name": "BroadcasTheNet",
+                     "url": "https://broadcasthe.net/", "host": "broadcasthe.net",
+                     "inactivity_days": 30, "verified": False,
+                     "notes": "", "auth_sel": ""})
+    c = client.post("/api/import", json=BODY).json()["candidates"]
+    assert [x["skip"] for x in c] == ["already configured"]
+
+
+def test_api_host_is_not_imported_twice(client, cfg, apihost):
+    app.add_tracker({"id": "btn", "name": "BroadcasTheNet",
+                     "url": "https://broadcasthe.net/", "host": "broadcasthe.net",
+                     "inactivity_days": 30, "verified": False,
+                     "notes": "", "auth_sel": ""})
+    assert client.post("/api/import", json={**BODY, "apply": True}).json()["added"] == []
+    assert ids(cfg).count("btn") == 1
+    assert "broadcasthenet" not in ids(cfg)
+
+
+def test_a_genuinely_new_api_host_imports_as_the_site(client, cfg, apihost):
+    """Nothing configured yet, so it IS new — but it must land as the site, not
+    as the API host. A row matching api.* never sees a browser session."""
+    client.post("/api/import", json={**BODY, "apply": True})
+    added = [t for t in yaml.safe_load(cfg.read_text())["trackers"]
+             if t["id"] == "broadcasthenet"][0]
+    assert added["host"] == "broadcasthe.net"
+    assert added["url"] == "https://broadcasthe.net/"
+
+
+def test_the_generated_match_is_for_the_site_not_the_api(client, cfg, apihost, monkeypatch):
+    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    client.post("/api/import", json={**BODY, "apply": True})
+    js = app.render_userscript("https://idlarr.test.internal")
+    assert "// @match        *://*.broadcasthe.net/*" in js
+    assert "api.broadcasthe.net" not in js
+
+
+SUBDOMAIN = [{"name": "Alpha Tracker", "protocol": "torrent", "privacy": "private",
+              "indexerUrls": ["https://www2.alpha.example/"]}]
+
+
+def test_a_non_api_subdomain_is_still_the_same_tracker(client, cfg, monkeypatch):
+    """`api.` is normalised away before comparison, so it does not exercise the
+    subdomain rule on its own. This does: the config holds alpha.example and
+    Prowlarr offers www2.alpha.example. Exact-host matching imports a duplicate.
+    """
+    monkeypatch.setattr(app, "_fetch_json", lambda url, headers: SUBDOMAIN)
+    c = client.post("/api/import", json=BODY).json()["candidates"]
+    assert [x["skip"] for x in c] == ["already configured"]
+    assert client.post("/api/import", json={**BODY, "apply": True}).json()["added"] == []
+    assert "alphatracker" not in ids(cfg)

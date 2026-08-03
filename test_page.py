@@ -128,9 +128,11 @@ def test_banner_button_targets_the_signin_section(page):
 
 # ---------------------------------------------------------------- test-notify
 
-def test_test_notify_takes_a_session_or_the_token(client):
+def test_test_notify_takes_a_session_or_the_token(client, monkeypatch):
     """It is a button in Settings now, and a fetch from the page sends a cookie,
     never a bearer header. The token path stays for scripts and the docs."""
+    monkeypatch.setattr(app, "NOTIFY_URLS", ["json://localhost/"])
+    monkeypatch.setattr(app, "dispatch", lambda *a: (True, ""))
     client.post("/api/auth", json={"method": "forms", "username": "jared",
                                    "password": "correct-horse"})
     assert client.post("/api/test-notify").status_code == 200      # session
@@ -139,6 +141,37 @@ def test_test_notify_takes_a_session_or_the_token(client):
     r = client.post("/api/test-notify",
                     headers={"Authorization": f"Bearer {app.TOKEN}"})
     assert r.status_code == 200
+
+
+def test_test_notify_sends_even_when_nothing_is_due(client, monkeypatch):
+    """THE bug. It used to run the daily check, which sends nothing when
+    nothing is due — so on a healthy install the test silently succeeded
+    without notifying, and could not tell working alerts from broken ones."""
+    sent = []
+    monkeypatch.setattr(app, "NOTIFY_URLS", ["json://localhost/"])
+    monkeypatch.setattr(app, "dispatch",
+                        lambda title, body, prio: (sent.append((title, body)), (True, ""))[1])
+    assert app.build_notification(app.statuses()) is None      # nothing due
+    assert client.post("/api/test-notify").status_code == 200
+    assert len(sent) == 1
+    assert "Test from Idlarr" in sent[0][1]
+
+
+def test_test_notify_reports_why_a_send_failed(client, monkeypatch):
+    """Apprise signals refusal by returning False and logging the reason. Not
+    surfacing it makes a bad token look identical to a delivered message."""
+    monkeypatch.setattr(app, "NOTIFY_URLS", ["json://localhost/"])
+    monkeypatch.setattr(app, "dispatch", lambda *a: (False, "403 forbidden"))
+    r = client.post("/api/test-notify")
+    assert r.status_code == 502
+    assert "403 forbidden" in r.json()["detail"]
+
+
+def test_test_notify_says_so_when_nothing_is_configured(client, monkeypatch):
+    monkeypatch.setattr(app, "NOTIFY_URLS", [])
+    r = client.post("/api/test-notify")
+    assert r.status_code == 400
+    assert "IDLARR_NOTIFY_URLS" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------- structure

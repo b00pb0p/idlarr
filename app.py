@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -774,6 +775,42 @@ def apprise_type(priority: str) -> str:
     return APPRISE_TYPE.get(priority, "info")
 
 
+def dispatch(title: str, body: str, priority: str) -> tuple[bool, str]:
+    """Send one message through Apprise. Returns (ok, reason).
+
+    The reason matters: Apprise reports a refused push by returning False and
+    logging why, so without capturing its log a bad token or a topic the server
+    will not accept is indistinguishable from a successful send.
+    """
+    try:
+        import apprise
+    except ImportError:
+        return False, "apprise is not installed"
+
+    seen: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            if record.levelno >= logging.WARNING:
+                seen.append(record.getMessage())
+
+    handler, logger = _Capture(), logging.getLogger("apprise")
+    logger.addHandler(handler)
+    try:
+        ap = apprise.Apprise()
+        for url in NOTIFY_URLS:
+            if not ap.add(url):
+                # Never print the URL itself: these contain credentials.
+                seen.append(f"rejected a URL (scheme '{url.split('://')[0]}')")
+        if not len(ap):
+            return False, "no usable notification URLs"
+        ok = bool(ap.notify(title=title, body=body,
+                            notify_type=apprise_type(priority)))
+    finally:
+        logger.removeHandler(handler)
+    return ok, ("" if ok else (seen[-1] if seen else "the provider refused it"))
+
+
 async def notify(rows: list[dict]) -> None:
     payload = build_notification(rows)
     if payload is None:
@@ -782,31 +819,14 @@ async def notify(rows: list[dict]) -> None:
     if not NOTIFY_URLS:
         print("[notify] IDLARR_NOTIFY_URLS is empty -- alert not sent")
         return
-
-    try:
-        import apprise
-    except ImportError:
-        print("[notify] apprise is not installed (pip install apprise)")
-        return
-
-    def _send() -> bool:
-        ap = apprise.Apprise()
-        for url in NOTIFY_URLS:
-            if not ap.add(url):
-                # Never print the URL itself: these contain credentials.
-                print(f"[notify] apprise rejected a URL (scheme '{url.split('://')[0]}')")
-        if not len(ap):
-            print("[notify] no usable notification URLs")
-            return False
-        return ap.notify(title=payload["title"], body=payload["body"],
-                         notify_type=apprise_type(payload["priority"]))
-
     try:
         # Apprise is synchronous; a slow provider must not stall the scheduler.
-        ok = await asyncio.to_thread(_send)
+        ok, reason = await asyncio.to_thread(
+            dispatch, payload["title"], payload["body"], payload["priority"])
         n = payload["body"].count("\n") + 1
-        print(f"[notify] {'sent' if ok else 'FAILED'} to {len(NOTIFY_URLS)} target(s), {n} item(s)")
-    except Exception as exc:   # never let a push failure kill the loop
+        print(f"[notify] {'sent' if ok else 'FAILED'} ({n} line(s))"
+              + ("" if ok else f": {reason}"))
+    except Exception as exc:
         print(f"[notify] FAILED: {exc}")
 
 
@@ -1141,6 +1161,36 @@ IMPORT_TIMEOUT = 10
 PRIVATE = {"private", "semiprivate", "semi-private"}
 
 
+def same_site(a: str, b: str) -> bool:
+    """True when two hosts belong to the same tracker.
+
+    Exact comparison is not enough. Prowlarr stores some indexers by their API
+    host — BroadcasTheNet comes back as `api.broadcasthe.net` — so an existing
+    `broadcasthe.net` looks like a different tracker and gets imported again.
+    That splits one account's history across two rows and leaves BOTH
+    countdowns wrong, which is the failure this service exists to prevent.
+
+    A subdomain relation in either direction is the same site here: the
+    userscript matches `*.domain`, which already covers both.
+    """
+    if not a or not b:
+        return False
+    a, b = a.lower().strip("."), b.lower().strip(".")
+    return a == b or a.endswith("." + b) or b.endswith("." + a)
+
+
+def browsable(url: str, host: str) -> tuple[str, str]:
+    """Rewrite an API host to the site you would actually log in on.
+
+    An `api.` host is not somewhere a browser session exists, so a row pointing
+    at one would never record an auth event and its link would go nowhere
+    useful — it would sit at `unknown` forever and read as broken detection.
+    """
+    if host.startswith("api."):
+        return re.sub(r"(//)api\.", r"\1", url, count=1), host[4:]
+    return url, host
+
+
 def _fetch_json(url: str, headers: dict) -> list:
     import urllib.error
     import urllib.request
@@ -1223,15 +1273,16 @@ async def import_indexers(payload: dict = Body(...)):
         if not item["name"]:
             continue
         tid = slugify(item["name"])
-        host = host_from_url(item["url"])
+        url, host = browsable(item["url"], host_from_url(item["url"]))
         if not tid or tid in seen:
             continue
         seen.add(tid)
-        # Match on host as well as id: the same tracker under a different
-        # display name would otherwise be added twice and split its history.
-        why = ("already configured" if (tid in known_ids or (host and host in known_hosts))
-               else "" if host else "no usable URL")
-        candidates.append({"id": tid, "name": item["name"], "url": item["url"],
+        # Match on host as well as id, and by SITE rather than exact string:
+        # the same tracker under a different display name, or stored by its API
+        # host, would otherwise be added twice and split its history.
+        known = tid in known_ids or any(same_site(host, k) for k in known_hosts)
+        why = "already configured" if known else "" if host else "no usable URL"
+        candidates.append({"id": tid, "name": item["name"], "url": url,
                            "host": host, "skip": why})
 
     if not payload.get("apply"):
@@ -1602,13 +1653,31 @@ async def auth_configure(request: Request, payload: dict = Body(...)):
 @app.post("/api/test-notify")
 async def test_notify(request: Request,
                       authorization: str | None = Header(default=None)):
-    """Bearer token OR a UI session. The token path is what scripts and the
-    old docs use; the session path is what makes the button in Settings work,
-    since a fetch from the page carries a cookie and not a bearer header."""
+    """Send a real test message. Bearer token OR a UI session.
+
+    It used to run the daily check, which sends NOTHING when nothing is due —
+    so on a healthy install the test quietly succeeded without notifying, and
+    could not tell "your alerts work" from "your alerts are broken". A test
+    that passes when the thing under test never ran is worse than no test.
+    This always sends, and returns the provider's own reason for a refusal
+    instead of swallowing it.
+    """
     if not (TOKEN and authorization == f"Bearer {TOKEN}") and not authed(request):
         raise HTTPException(401, "bad token")
-    await notify(statuses())
-    return {"ok": True}
+    if not NOTIFY_URLS:
+        raise HTTPException(400, "IDLARR_NOTIFY_URLS is empty — alerts have "
+                                 "nowhere to go. Set it in .env and restart.")
+
+    when = datetime.now(local_tz()).strftime("%d %b %Y %H:%M %Z")
+    body = (f"Test from Idlarr at {when}.\n"
+            f"Watching {len(load_config()['trackers'])} tracker(s). "
+            f"If you can read this, alerts will reach you.")
+    ok, reason = await asyncio.to_thread(dispatch, "Idlarr test", body, "default")
+    if not ok:
+        print(f"[notify] test FAILED: {reason}")
+        raise HTTPException(502, f"not accepted: {reason}")
+    print("[notify] test sent")
+    return {"ok": True, "destinations": len(NOTIFY_URLS)}
 
 
 # ---------------------------------------------------------------- view

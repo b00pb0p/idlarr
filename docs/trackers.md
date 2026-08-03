@@ -33,8 +33,16 @@ cost you a list on screen, not a rewritten config.
 | Jackett | `http://jackett.local:9117` | top of the Jackett dashboard |
 
 Public indexers and usenet are skipped — there is no account to lose. Trackers
-already in your config are skipped too, matched on **host** as well as id, so a
+already in your config are skipped too, matched on **site** as well as id, so a
 tracker Prowlarr names differently is not added twice.
+
+Matching is by site rather than by exact hostname, and API hosts are rewritten
+to the site you actually log in on. Prowlarr stores BroadcasTheNet as
+`api.broadcasthe.net`; that is one tracker with `broadcasthe.net`, not two. It
+matters more than it sounds: a duplicate splits one account's history across two
+rows and leaves **both** countdowns wrong, and a row matching an API host never
+sees a browser session, so it would sit at `unknown` forever looking like broken
+detection.
 
 **Limits are never imported.** Neither tool knows a tracker's inactivity policy,
 so everything arrives at 30 days and unconfirmed like any other new entry. A
