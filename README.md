@@ -27,13 +27,16 @@ one, it doesn't.
 
 - Docker and Docker Compose
 - A browser with [Violentmonkey](https://violentmonkey.github.io/) or Tampermonkey
-- Somewhere private to host it — Tailscale, a VPN, or reverse-proxy auth
+- Somewhere to host it. It has its own optional sign-in; behind Tailscale or a VPN is still the belt-and-braces answer
 - Somewhere to send notifications — [ntfy](https://ntfy.sh), Pushover, Discord, Telegram, or anything else [Apprise](https://github.com/caronc/apprise) supports
 
 FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
 
 ## How it works
 
+0. You install the userscript in one click from the status page. It is
+   generated from your tracker list, so there is nothing to fill in, and it
+   updates itself when you add a tracker.
 1. You visit a tracker in your normal browser.
 2. The userscript checks whether you're authenticated and POSTs `{tracker, kind}`
    to the service. Two event kinds:
@@ -57,7 +60,6 @@ chown -R 1001 data config
 BASE=https://raw.githubusercontent.com/b00pb0p/idlarr/main
 curl -fsSLO $BASE/trackers.example.yml
 curl -fsSLO $BASE/.env.example
-curl -fsSLO $BASE/idlarr.user.js
 ```
 
 The `chown` matters: the container runs as a non-root user and cannot create
@@ -65,7 +67,10 @@ those directories itself. If Docker creates them, they come out root-owned and
 startup fails with `unable to open database file`. The image runs as UID 1001;
 for a different one you must build from source (see `PUID` below).
 
-*(Cloned the repo instead? You already have all three — skip the `curl`s.)*
+*(Cloned the repo instead? You already have both — skip the `curl`s.)*
+
+There is no userscript to download: the service generates it from your config
+and serves it from the status page.
 
 **2. Config** — copy the example and edit it:
 
@@ -125,7 +130,7 @@ openssl rand -hex 32          # -> IDLARR_TOKEN
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `IDLARR_TOKEN` | **yes** | — | Shared secret for `/ping`. The service **refuses to start** without it. Must byte-match `TOKEN` in the userscript. |
+| `IDLARR_TOKEN` | **yes** | — | Shared secret for `/ping`. The service **refuses to start** without it. Baked into the generated userscript automatically. |
 | `IDLARR_NOTIFY_URLS` | **yes** | — | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs — ntfy, Pushover, Discord, Telegram, Signal and ~100 more. Compose aborts if unset. |
 | `STATUS_URL` | no | *(empty)* | Public URL of the status page. Appended to every alert so you can tap through. |
 | `TZ` | no | `UTC` | Drives the daily check and **all day counting** — set it to your own zone or countdowns can be a day out. |
@@ -337,9 +342,30 @@ last, so a tracker with no data can never outrank one that's expiring.
 Click a **name** to open that tracker in a new tab. Click anywhere else on the
 row to expand a drawer with three panels:
 
-- **controls** — limit, `confirm`, `immune` (with a reason field), `seen`, `undo`
+- **controls** — limit, `confirm`, `immune` (with a reason field), `seen`,
+  `undo`, `remove`
 - **alert schedule** — the exact date each rung fires, or why it won't
 - **auth history** — recent auth events, and whether each was observed or asserted
+
+**Add tracker** and the settings gear sit top right. Everything configurable
+lives behind the gear, in six sections:
+
+| | |
+|---|---|
+| **General** | timezone, check hour, last check, backup retention |
+| **Sign-in** | method, credentials, sign out |
+| **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
+| **Import** | Prowlarr or Jackett |
+| **Notifications** | destination count, and a **Send test** button |
+| **About** | version, database size, `/healthz` |
+
+The footer is a read-only status line — tracker count, sign-in state, userscript
+version, last check. Nothing there is clickable, which is deliberate: an earlier
+version mixed status and actions in fixed-width cells and the content overflowed
+the moment a label got long.
+
+On a phone the table stops being a table — each row becomes a labelled grid —
+and the settings nav becomes a scrolling tab strip.
 
 Limits written here go straight into `trackers.yml`, comments intact,
 hot-reloaded, no restart. `seen` is two-step on purpose.
@@ -421,13 +447,18 @@ between the two and produce a silent `404 unknown tracker`.
 ### A site the heuristic can't read
 
 Single-page apps often keep no logout control in the DOM until you open a user
-menu, which passive detection can't do. Point `authSel` at anything that only
-exists when you're authenticated — a per-account download link, an upload button,
-your username:
+menu, which passive detection can't do. Set `auth_sel` on that tracker to
+anything that only exists when you're authenticated — a per-account download
+link, an upload button, your username:
 
-```javascript
-    { host: 'example.cc', id: 'example', authSel: 'a[href*="/torrent?key="]' },
+```yaml
+  - id: example
+    name: Example
+    url: https://example.cc/browse
+    auth_sel: 'a[href*="/torrent?key="]'
 ```
+
+It goes straight into the generated userscript's `SITES` entry as `authSel`.
 
 A passkey in a download URL is stronger evidence than a logout link, since it
 cannot be rendered for an anonymous visitor. Note that such links usually only
@@ -489,10 +520,18 @@ round of guessing. Common outcomes:
 
 | What you see | What it means |
 |---|---|
-| `logoutFound: false`, `candidates` non-empty | the heuristic missed a convention — widen it, or set `authSel` |
-| `candidates: []` | no logout control in the DOM at all (common in single-page apps) — point `authSel` at something else that only exists when logged in |
+| `logoutFound: false`, `candidates` non-empty | the heuristic missed a convention — widen it, or set `auth_sel` |
+| `candidates: []` | no logout control in the DOM at all (common in single-page apps) — point `auth_sel` at something else that only exists when logged in |
 | `isAuthed: true` but nothing recorded | check the lines above it; a debounce or a `401` will say so |
 | `visiblePasswordField: true` | you're on a login page, or a change-password form |
+| `__idlarr` is not defined | the script isn't running here at all — see below |
+
+**If a tracker you just added does nothing**, the browser's copy of the script is
+probably older than your config. It updates on Violentmonkey's own schedule, not
+the moment you add a tracker. Force it from Violentmonkey's dashboard — the
+script's ⋮ menu, *Check for updates* — or reinstall from the status page footer.
+Compare the `@version` in the installed script against the one the service is
+serving; if they differ, that's the whole answer.
 
 ## Screenshot
 
@@ -531,9 +570,12 @@ point a test instance at your live `config/`: the status page **writes** to
 
 ## Things that will bite you
 
-- **The write endpoints have no auth.** `/api/mark`, `/api/unmark` and `/api/limit`
-  are all unauthenticated, and `/api/limit` writes to `trackers.yml`. Keep the
-  status page behind Tailscale or Caddy auth. Don't expose it raw.
+- **With no sign-in set, the write endpoints are open.** `/api/mark`,
+  `/api/unmark`, `/api/limit`, `/api/tracker` and `/api/import` all skip auth
+  until you configure one, and three of those rewrite `trackers.yml`. The
+  dangerous one is `/api/mark`: it resets a countdown, so the page then reads
+  `ok` while the account ages out. Set a login, keep it behind Tailscale or a
+  VPN, or both.
 - **The `seen` button is a bootstrap tool, not a workflow.** The week you tap it
   out of habit without logging in is the week this stops working. It's two-step
   in the UI for that reason, and every row shows whether its last auth was
@@ -543,13 +585,14 @@ point a test instance at your live `config/`: the status page **writes** to
   Works on Gazelle/UNIT3D and most PHP trackers. If a site redesigns, it silently
   stops recording `auth` — you'll get alerts you don't deserve. That's the safe
   failure direction, but check the console (`[idlarr]` logs) before assuming
-  the tracker is at fault. Use `authSel` to override per-site.
+  the tracker is at fault. Use `auth_sel` to override per-site.
 - **`trackers.yml` hot-reloads.** Edit it live; no restart.
 - **The database is backed up nightly** to `/data/backups/idlarr-YYYY-MM-DD.db`,
   14 days by default (`IDLARR_BACKUP_KEEP`). It is the only record of when each
   account was last seen — losing it risks no account, but resets every countdown
-  to `no data` until you re-visit all of them. To restore, stop the container,
-  copy a snapshot over `/data/idlarr.db`, start it again.
+  to `no data` until you re-visit all of them. See
+  [Restoring a backup](#restoring-a-backup); it has been tested, and there is one
+  surprise in it.
 - **The clock is `last auth`, not `last visit`.** Passing by while logged out
   doesn't count, and it shouldn't.
 

@@ -55,6 +55,8 @@ BACKUP_KEEP = int(os.environ.get("IDLARR_BACKUP_KEEP", 14))
 # the way you would with an *arr's config.xml.
 RESET_AUTH = os.environ.get("IDLARR_RESET_AUTH", "").strip().lower() in ("1", "true", "yes")
 
+IDLARR_VERSION = "1.1.0"
+
 KNOWN_SOFTWARE = {"gazelle": "Gazelle", "unit3d": "UNIT3D", "tbdev": "TBDev",
                   "custom": "Custom"}
 
@@ -1348,6 +1350,16 @@ def userscript_version(payload: str) -> str:
     return f"{USERSCRIPT_BASE_VERSION}.{get_state('userscript_rev', '1')}"
 
 
+def userscript_version_peek() -> str:
+    """What the last render produced, read-only.
+
+    Deliberately does NOT bump the counter: painting the status page must never
+    invalidate the script already installed in someone's browser.
+    """
+    rev = get_state("userscript_rev", "0") or "0"
+    return f"{USERSCRIPT_BASE_VERSION}.{rev}" if rev != "0" else "not served yet"
+
+
 def render_userscript(base_url: str) -> str:
     """Fill the committed template from live config. Raises on anything unfilled."""
     try:
@@ -1588,8 +1600,13 @@ async def auth_configure(request: Request, payload: dict = Body(...)):
 
 
 @app.post("/api/test-notify")
-async def test_notify(authorization: str | None = Header(default=None)):
-    require_token(authorization)
+async def test_notify(request: Request,
+                      authorization: str | None = Header(default=None)):
+    """Bearer token OR a UI session. The token path is what scripts and the
+    old docs use; the session path is what makes the button in Settings work,
+    since a fetch from the page carries a cookie and not a bearer header."""
+    if not (TOKEN and authorization == f"Bearer {TOKEN}") and not authed(request):
+        raise HTTPException(401, "bad token")
     await notify(statuses())
     return {"ok": True}
 
@@ -1825,32 +1842,85 @@ PAGE = """<!doctype html>
   .imlist .sk{color:var(--dim);font-size:9.5px;letter-spacing:.06em;white-space:nowrap}
   .imlist .new{color:var(--ok);font-size:9.5px;letter-spacing:.06em;white-space:nowrap}
 
-  /* Footer toolbar. Deliberately built like .legend — bordered cells, micro
-     uppercase labels — rather than as buttons trailing off the help text. */
-  .tools{display:flex;margin:16px 0 0;border:1px solid var(--line);
-    background:var(--head);flex-wrap:wrap}
-  .tools .cell{flex:1;min-width:262px;padding:11px 14px;display:flex;
-    align-items:center;gap:10px;border-right:1px solid var(--line)}
-  .tools .cell:last-child{border-right:0}
-  .tools .k{color:var(--dim);font-size:9.5px;letter-spacing:.15em;
-    text-transform:uppercase;white-space:nowrap}
-  .tools .v{font-family:'Azeret Mono',monospace;font-size:11.5px;
-    display:flex;align-items:center;gap:6px;white-space:nowrap}
-  .tools .v::before{content:'';width:6px;height:6px;border-radius:50%;
-    background:var(--dim);flex:none}
-  .tools .v.on::before{background:var(--ok);box-shadow:0 0 7px var(--ok)}
-  .tools .v.off::before{background:var(--critical);box-shadow:0 0 7px var(--critical)}
-  .tools .v.off{color:var(--critical)}
-  .tools .sp{margin-left:auto;display:flex;gap:6px}
+  /* Footer is read-only STATUS. It used to carry actions too, and that is
+     what made it overflow: fixed-width nowrap content competing for room in a
+     flex cell. Nothing here is interactive, so nothing can compete. */
+  .statusline{margin:14px 0 0;padding:11px 2px 0;border-top:1px solid var(--line);
+    color:var(--dim);font-family:'Azeret Mono',monospace;font-size:11px;
+    display:flex;gap:16px;flex-wrap:wrap}
+  .statusline b{color:var(--fg);font-weight:400}
+  .statusline .bad{color:var(--critical)}
+  .statusline .ok{color:var(--ok)}
+
+  .hbtn{display:flex;gap:7px;margin-left:14px;align-items:center}
+  .gear{background:var(--head);border:1px solid var(--line2);color:var(--fg);
+    cursor:pointer;font-size:14px;line-height:1;padding:5px 9px}
+  .gear:hover{border-color:var(--accent)}
+
+  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.66);display:none;z-index:40;
+    align-items:center;justify-content:center}
+  .sheet.on{display:flex}
+  .sheet .win{background:var(--head);border:1px solid var(--line2);position:relative;
+    width:min(790px,94vw);height:min(584px,88vh);display:flex;overflow:hidden}
+  .sheet nav{width:180px;border-right:1px solid var(--line);background:var(--bg);
+    padding:14px 0;flex:none}
+  .sheet nav button{display:block;width:100%;text-align:left;background:none;
+    border:0;border-left:2px solid transparent;color:var(--dim);font-family:inherit;
+    font-size:11px;letter-spacing:.14em;text-transform:uppercase;padding:11px 16px;
+    cursor:pointer}
+  .sheet nav button:hover{color:var(--fg)}
+  .sheet nav button.on{color:var(--fg);border-left-color:var(--accent);
+    background:var(--head)}
+  .sheet .pane{flex:1;overflow:auto;padding:20px 22px}
+  .sheet .pane section{display:none}
+  .sheet .pane section.on{display:block}
+  .sheet h4{margin:0 0 5px;font-size:13px;letter-spacing:.13em;text-transform:uppercase}
+  .sheet .sub{color:var(--dim);font-size:12px;margin:0 0 16px;line-height:1.55}
+  .sheet .row{display:flex;align-items:center;gap:14px;padding:12px 0;
+    border-bottom:1px solid var(--line)}
+  .sheet .row:last-child{border-bottom:0}
+  .sheet .row .lbl{flex:1;min-width:0}
+  .sheet .row .lbl b{display:block;font-weight:400;font-size:13.5px;color:var(--fg)}
+  .sheet .row .lbl span{color:var(--dim);font-size:11.5px;line-height:1.5;
+    display:block;margin-top:3px}
+  .sheet .row .val{font-family:'Azeret Mono',monospace;font-size:12.5px;color:var(--dim)}
+  .sheet .row .val.on{color:var(--ok)}
+  .sheet .row .val.off{color:var(--critical)}
+  .sheet input,.sheet select{background:var(--bg);border:1px solid var(--line2);
+    color:var(--fg);padding:7px 8px;font-family:inherit;font-size:13px}
+  .sheet input:focus,.sheet select:focus{outline:none;border-color:var(--accent)}
+  /* ONE fixed control column. Every control shares a left and right edge;
+     letting each size itself staggered them down the panel. */
+  .sheet .row .ctl2{width:200px;flex:none;display:flex;justify-content:flex-end;
+    gap:6px;align-items:center}
+  .sheet .row .ctl2>input,.sheet .row .ctl2>select{width:100%}
+  .sheet .row .ctl2>.val{white-space:normal;text-align:right}
+  .sheet .row .ctl2>button{flex:1}
+  .sheet .stack{margin:0 0 14px}
+  .sheet .stack input,.sheet .stack select{width:100%;margin-bottom:9px}
+  .sheet .e{color:var(--critical);font-size:12px;min-height:16px;margin:9px 0 0}
+  .sheet .e.good{color:var(--ok)}
+  .xclose{position:absolute;top:14px;right:16px;background:none;border:0;
+    color:var(--dim);font-size:18px;cursor:pointer;line-height:1;z-index:2}
+  .xclose:hover{color:var(--fg)}
+  .imlist{max-height:170px;overflow:auto;margin:2px 0 6px}
+  .imlist:empty{display:none}
+  .imlist .r{display:flex;gap:9px;align-items:baseline;padding:5px 0;
+    border-bottom:1px solid var(--line);font-size:12px}
+  .imlist .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .imlist .sk{color:var(--dim);font-size:10px;white-space:nowrap}
+  .imlist .new{color:var(--ok);font-size:10px;white-space:nowrap}
   @media(max-width:760px){
-    .tools .cell{border-right:0;border-bottom:1px solid var(--line);min-width:100%;
-      flex-wrap:wrap}
-    .tools .cell:last-child{border-bottom:0}
-    /* Actions drop to their own line. Label + value + two buttons is ~370px of
-       nowrap content, and a 360px phone leaves ~320px inside the page padding,
-       so without this the Userscript cell overflows instead of wrapping. */
-    .tools .sp{margin-left:0;width:100%;margin-top:7px}
+    .sheet .win{flex-direction:column;height:92vh}
+    .sheet nav{width:100%;display:flex;overflow-x:auto;padding:0;
+      border-right:0;border-bottom:1px solid var(--line)}
+    .sheet nav button{border-left:0;border-bottom:2px solid transparent;
+      white-space:nowrap;padding:12px 13px;width:auto}
+    .sheet nav button.on{border-left:0;border-bottom-color:var(--accent)}
+    .sheet .row{flex-wrap:wrap}
+    .sheet .row .ctl2{width:100%;justify-content:flex-start}
     .banner .sp{margin-left:0;width:100%}
+    .hbtn .lk{font-size:10px;padding:4px 7px}
   }
 </style></head><body><div class="wrap">
 
@@ -1860,7 +1930,8 @@ PAGE = """<!doctype html>
     <option value="left">left</option><option value="seen">last auth</option>
     <option value="lim">limit</option><option value="sw">software</option>
   </select><button id="msd" aria-label="reverse sort">&#8645;</button></div>
-  <div class="tick">__TICK__</div></div>
+  <div class="tick">__TICK__</div>
+  <div class="hbtn"><button class="lk" id="addtrk">+ Add tracker</button><button class="gear" id="gear" title="settings" aria-label="settings">&#9881;</button></div></div>
 __BANNER__
 <div class="legend">__LEGEND__</div>
 
@@ -1883,32 +1954,10 @@ tracker &middot; click a heading to sort<br>
 <b>&#9998;</b> = marked by hand, not observed &middot; the countdown runs on <b>auth</b> events only
 &middot; no request is ever made to a tracker.
 </div>
-<div class="tools">__TOOLS__</div>
+<div class="statusline">__STATUS__</div>
 </div>
 
-<div class="modal" id="am"><div class="box">
-  <h3>Sign-in</h3>
-  <p class="hint">Stored hashed in the database, not in a file. Changing it signs
-  every other browser out. Forgotten it? Restart with <b>IDLARR_RESET_AUTH=1</b>.</p>
-  <label for="amm">method</label>
-  <select id="amm">
-    <option value="forms">Forms &mdash; login page</option>
-    <option value="basic">Basic &mdash; browser prompt</option>
-    <option value="none">None &mdash; no sign-in</option>
-  </select>
-  <div id="amc">
-    <label for="amu">username</label><input id="amu" autocomplete="username">
-    <label for="amp">password</label>
-    <input id="amp" type="password" autocomplete="new-password" placeholder="8 characters minimum">
-  </div>
-  <div id="amcur" style="display:none">
-    <label for="amx">current password</label>
-    <input id="amx" type="password" autocomplete="current-password">
-  </div>
-  <div class="rowb"><button class="lk" id="amcancel">Cancel</button>
-    <button class="lk pri" id="amsave">Save</button></div>
-  <p class="e" id="ame"></p>
-</div></div>
+__SHEET__
 
 <div class="modal" id="tm"><div class="box">
   <h3>Add tracker</h3>
@@ -1930,24 +1979,6 @@ tracker &middot; click a heading to sort<br>
   <p class="e" id="tme"></p>
 </div></div>
 
-<div class="modal" id="im"><div class="box wide">
-  <h3>Import trackers</h3>
-  <p class="hint">Reads the indexer list from your own Prowlarr or Jackett &mdash;
-  it never contacts a tracker. Limits are <b>not</b> imported, because neither
-  tool knows them: everything arrives at 30 days, unconfirmed.</p>
-  <label for="ims">source</label>
-  <select id="ims"><option value="prowlarr">Prowlarr</option>
-    <option value="jackett">Jackett</option></select>
-  <label for="imu">url</label>
-  <input id="imu" placeholder="http://prowlarr.local:9696">
-  <label for="imk">api key</label>
-  <input id="imk" type="password" autocomplete="off">
-  <div class="imlist" id="imlist"></div>
-  <div class="rowb"><button class="lk" id="imcancel">Cancel</button>
-    <button class="lk" id="impreview">Preview</button>
-    <button class="lk pri" id="imapply" disabled>Import</button></div>
-  <p class="e" id="ime"></p>
-</div></div>
 
 <script>
 (function(){
@@ -2169,20 +2200,32 @@ tracker &middot; click a heading to sort<br>
      localStorage.setItem('idl_authban','none');ban.style.display='none';});
  }
 
- const am=document.getElementById('am'),ame=document.getElementById('ame');
+ // ---- settings sheet ---------------------------------------------------
+ const sheet=document.getElementById('sheet');
+ const ame=document.getElementById('ame');
  const amm=document.getElementById('amm'),amc=document.getElementById('amc');
- const amcur=document.getElementById('amcur');
- const openAuth=()=>{ame.textContent='';am.classList.add('on');
-   amcur.style.display=CURRENT_METHOD==='none'?'none':'';
-   amm.value=CURRENT_METHOD==='none'?'forms':CURRENT_METHOD;
-   amc.style.display=amm.value==='none'?'none':'';
-   (amm.value==='none'?amm:document.getElementById('amu')).focus();};
- const closeAuth=()=>am.classList.remove('on');
- amm.addEventListener('change',()=>{amc.style.display=amm.value==='none'?'none':'';});
- document.getElementById('amcancel').addEventListener('click',closeAuth);
- am.addEventListener('click',e=>{if(e.target===am)closeAuth();});
- document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAuth();});
- document.querySelectorAll('.js-authcfg').forEach(b=>b.addEventListener('click',openAuth));
+ const openSheet=to=>{sheet.classList.add('on');
+   const nb=to&&sheet.querySelector('nav button[data-s="'+to+'"]'); if(nb)nb.click();
+   const f=sheet.querySelector('section.on input,section.on select'); if(f)f.focus();};
+ const closeSheet=()=>sheet.classList.remove('on');
+ document.getElementById('gear').addEventListener('click',()=>openSheet());
+ document.getElementById('sx').addEventListener('click',closeSheet);
+ sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet();});
+ sheet.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{
+   sheet.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));
+   sheet.querySelectorAll('.pane section').forEach(x=>x.classList.remove('on'));
+   b.classList.add('on');
+   document.getElementById('s-'+b.dataset.s).classList.add('on');}));
+ // The banner lands you on the right section, not merely inside the panel.
+ document.querySelectorAll('.js-authcfg').forEach(b=>
+   b.addEventListener('click',()=>openSheet('signin')));
+ if(amm)amm.addEventListener('change',()=>{
+   amc.style.display=amm.value==='none'?'none':'';});
+
+ // ---- sign out ---------------------------------------------------------
+ const outb=document.getElementById('amout');
+ if(outb)outb.addEventListener('click',()=>fetch('/logout',{method:'POST'})
+   .then(()=>location.href='/login'));
 
  // ---- add tracker ------------------------------------------------------
  const tm=document.getElementById('tm'),tme=document.getElementById('tme');
@@ -2214,19 +2257,11 @@ tracker &middot; click a heading to sort<br>
  // concatenated into innerHTML raw.
  const hesc=s=>String(s==null?'':s).replace(/[&<>"']/g,
    c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const im=document.getElementById('im'),ime=document.getElementById('ime');
+ const ime=document.getElementById('ime');
  const imlist=document.getElementById('imlist'),imapply=document.getElementById('imapply');
  const imbody=()=>({source:document.getElementById('ims').value,
    url:document.getElementById('imu').value,
    api_key:document.getElementById('imk').value});
- const closeImp=()=>im.classList.remove('on');
- document.getElementById('importtrk').addEventListener('click',()=>{
-   ime.textContent='';imlist.innerHTML='';imapply.disabled=true;
-   imapply.textContent='Import';im.classList.add('on');
-   document.getElementById('imu').focus();});
- document.getElementById('imcancel').addEventListener('click',closeImp);
- im.addEventListener('click',e=>{if(e.target===im)closeImp();});
- document.addEventListener('keydown',e=>{if(e.key==='Escape')closeImp();});
 
  const impost=extra=>fetch('/api/import',{method:'POST',
    headers:{'Content-Type':'application/json'},
@@ -2256,6 +2291,16 @@ tracker &middot; click a heading to sort<br>
    location.reload();
  });
 
+ const ntest=document.getElementById('ntest'),nte=document.getElementById('nte');
+ if(ntest)ntest.addEventListener('click',async()=>{
+   nte.className='e';nte.textContent='sending\u2026';ntest.disabled=true;
+   const r=await fetch('/api/test-notify',{method:'POST'});
+   const d=await r.json().catch(()=>({}));
+   ntest.disabled=false;
+   if(r.ok){nte.className='e good';nte.textContent='sent \u2014 check your device';}
+   else{nte.textContent=d.detail||('failed ('+r.status+')');}
+ });
+
  const cpjs=document.getElementById('cpjs');
  if(cpjs)cpjs.addEventListener('click',()=>{
    const u=cpjs.dataset.u, done=()=>{const o=cpjs.textContent;
@@ -2266,10 +2311,6 @@ tracker &middot; click a heading to sort<br>
    else{const t=document.createElement('textarea');t.value=u;document.body.appendChild(t);
      t.select();try{document.execCommand('copy');done();}finally{t.remove();}}
  });
-
- const outb=document.getElementById('out');
- if(outb)outb.addEventListener('click',()=>fetch('/logout',{method:'POST'})
-   .then(()=>location.href='/login'));
 
  document.getElementById('amsave').addEventListener('click',async()=>{
    ame.textContent='';
@@ -2307,6 +2348,142 @@ def _ago(d) -> str:
 
 def esc(s) -> str:
     return html_escape(str(s), quote=True)
+
+
+def _row(label: str, hint: str, control: str) -> str:
+    """One settings row: label and help on the left, control in the fixed-width
+    column on the right. Every control shares that column — letting each size
+    itself is what staggered them down the panel."""
+    sub = f"<span>{hint}</span>" if hint else ""
+    return (f'<div class="row"><div class="lbl"><b>{label}</b>{sub}</div>'
+            f'<div class="ctl2">{control}</div></div>')
+
+
+def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
+    """The settings panel. Rendered here rather than in PAGE because most of it
+    is live state, and because the sections that carry forms need the current
+    values to be correct on first paint."""
+    cfg = load_config()
+    user = get_state("auth_user", "") or ""
+    last = get_state("last_check", "") or "not yet"
+    try:
+        db_kb = f"{DB_PATH.stat().st_size // 1024} KB"
+    except OSError:
+        db_kb = "unknown"
+
+    # --- general: read-only for now. These live in trackers.yml, and showing
+    #     them as editable controls that silently do nothing would be worse
+    #     than showing them as facts.
+    general = (
+        _row("Timezone", "All day counting is calendar days in this zone.",
+             f'<span class="val">{esc(cfg["timezone"])}</span>')
+        + _row("Daily check hour",
+               "When the check runs and alerts batch into one push.",
+               f'<span class="val">{cfg["check_hour"]:02d}:00</span>')
+        + _row("Last check", "", f'<span class="val">{esc(last)}</span>')
+        + _row("Backup retention", "Nightly snapshots kept in /data/backups.",
+               f'<span class="val">{BACKUP_KEEP} days</span>')
+        + '<p class="sub" style="margin:15px 0 0">Edit these in '
+          '<code>trackers.yml</code> and <code>.env</code> — both are read live, '
+          'so only the timezone needs a restart.</p>')
+
+    # --- sign-in: the form that used to be its own modal. Same element ids, so
+    #     the handlers did not have to change.
+    sel = lambda v, t: f'<option value="{v}"{" selected" if method == v else ""}>{t}</option>'
+    signin = (
+        _row("Status",
+             "Anyone who can reach this page can reset a countdown or rewrite "
+             "your limits." if method == "none" else
+             "The page and every write endpoint require this.",
+             f'<span class="val off">not configured</span>' if method == "none"
+             else f'<span class="val on">{esc(user)} &middot; {esc(method)}</span>')
+        + _row("Method", "Forms shows a login page; Basic uses the browser prompt.",
+               f'<select id="amm">{sel("forms", "Forms")}{sel("basic", "Basic")}'
+               f'{sel("none", "None")}</select>')
+        + f'<div id="amc">'
+          f'{_row("Username", "", f"""<input id="amu" value="{esc(user)}" autocomplete="username">""")}'
+          f'{_row("Password", "8 characters minimum.", """<input id="amp" type="password" autocomplete="new-password">""")}'
+          f'</div>'
+        + (_row("Current password", "Required to change or remove a sign-in.",
+                '<input id="amx" type="password" autocomplete="current-password">')
+           if method != "none" else '<input id="amx" type="hidden">')
+        + _row("", "Changing this signs every other browser out. Forgotten it? "
+                   "Restart once with <b>IDLARR_RESET_AUTH=1</b>.",
+               ('<button class="lk" id="amout">Sign out</button>' if method != "none" else "")
+               + '<button class="lk pri" id="amsave">Save</button>')
+        + '<p class="e" id="ame"></p>')
+
+    script = (
+        _row("Covers", "One @match and one SITES entry per tracker with a host.",
+             f'<span class="val on">{n_hosts} tracker'
+             f'{"" if n_hosts == 1 else "s"}</span>')
+        + _row("Endpoint", "From STATUS_URL. The script reports here.",
+               f'<span class="val">{esc(host_from_url(STATUS_URL)) or "not set"}</span>')
+        + (_row("Install", "Violentmonkey takes this link directly.",
+                f'<a class="lk pri" href="{esc(js_url)}">Install</a>'
+                f'<button class="lk" id="cpjs" data-u="{esc(js_url)}">Copy URL</button>')
+           if js_url else
+           _row("Install", "Set <b>STATUS_URL</b> in .env and restart — without it "
+                           "the generated script would have nowhere to report.",
+                '<span class="val off">unavailable</span>')))
+
+    imp = (
+        '<div class="stack">'
+        '<select id="ims"><option value="prowlarr">Prowlarr</option>'
+        '<option value="jackett">Jackett</option></select>'
+        '<input id="imu" placeholder="http://prowlarr.local:9696">'
+        '<input id="imk" type="password" placeholder="API key" autocomplete="off">'
+        '</div>'
+        '<div class="imlist" id="imlist"></div>'
+        + _row("", "Preview first. Nothing is written until you confirm.",
+               '<button class="lk" id="impreview">Preview</button>'
+               '<button class="lk pri" id="imapply" disabled>Import</button>')
+        + '<p class="e" id="ime"></p>')
+
+    notify = (
+        _row("Configured",
+             "" if NOTIFY_URLS else "Alerts have nowhere to go.",
+             f'<span class="val {"on" if NOTIFY_URLS else "off"}">'
+             f'{len(NOTIFY_URLS)} destination{"" if len(NOTIFY_URLS) == 1 else "s"}</span>')
+        + _row("Send a test", "Runs the daily check now and pushes the result.",
+               '<button class="lk" id="ntest">Send test</button>')
+        + '<p class="e" id="nte"></p>'
+        + '<p class="sub" style="margin:15px 0 0">Destinations are Apprise URLs '
+          'in <code>IDLARR_NOTIFY_URLS</code>. They carry credentials, so they '
+          'stay in <code>.env</code> and are never shown here.</p>')
+
+    about = (
+        _row("Version", "", f'<span class="val">{IDLARR_VERSION}</span>')
+        + _row("Trackers", "", f'<span class="val">{n_trk}</span>')
+        + _row("Database", "Backed up nightly.", f'<span class="val">{db_kb}</span>')
+        + _row("Uptime check",
+               "/healthz needs no credentials, so a monitor can reach it.",
+               '<a class="lk" href="/healthz" target="_blank" rel="noreferrer">/healthz</a>')
+        + '<p class="sub" style="margin:15px 0 0">Idlarr never contacts a tracker. '
+          'A userscript already running in your browser reports when you were '
+          'seen logged in; the service does the rest.</p>')
+
+    sections = [
+        ("general", "General", "Everything that applies to the whole install.", general),
+        ("signin", "Sign-in", "Stored hashed in the database, not in a file.", signin),
+        ("script", "Userscript", "Generated from your tracker list. Nothing to fill "
+         "in, and it updates itself when you add a tracker.", script),
+        ("import", "Import", "Reads your own Prowlarr or Jackett, never a tracker. "
+         "Limits are not imported — neither tool knows them — so everything "
+         "arrives at 30 days, unconfirmed.", imp),
+        ("notify", "Notifications", "Every alert goes through Apprise.", notify),
+        ("about", "About", "", about),
+    ]
+    nav = "".join(
+        f'<button{" class=\"on\"" if i == 0 else ""} data-s="{k}">{t}</button>'
+        for i, (k, t, _, _) in enumerate(sections))
+    panes = "".join(
+        f'<section{" class=\"on\"" if i == 0 else ""} id="s-{k}"><h4>{t}</h4>'
+        f'{f"<p class=\"sub\">{sub}</p>" if sub else ""}{body}</section>'
+        for i, (k, t, sub, body) in enumerate(sections))
+    return (f'<div class="sheet" id="sheet"><div class="win">'
+            f'<button class="xclose" id="sx" aria-label="close">&times;</button>'
+            f'<nav>{nav}</nav><div class="pane">{panes}</div></div></div>')
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -2374,44 +2551,28 @@ async def index(request: Request):
             'your limits.<span class="sp">'
             '<button class="lk pri js-authcfg">Set one up</button>'
             '<button class="lk" id="banx">Dismiss</button></span></div>')
-        signin = ('<span class="k">Sign-in</span><span class="v off">not configured</span>'
-                  '<span class="sp"><button class="lk pri js-authcfg">Configure</button>'
-                  '</span>')
     else:
         banner = ""
-        signin = (f'<span class="k">Sign-in</span>'
-                  f'<span class="v on">{esc(get_state("auth_user", "") or "")}'
-                  f' &middot; {esc(method)}</span>'
-                  f'<span class="sp"><button class="lk js-authcfg">Change</button>'
-                  f'<button class="lk" id="out">Sign out</button></span>')
 
-    # The userscript cell is the install path: a link Violentmonkey can take
-    # directly, so nothing is hand-edited. Without STATUS_URL the generated
-    # script would have no endpoint, so say that instead of offering a
-    # download that cannot work.
+    # The status line is read-only. Actions live in the header and the
+    # settings panel now — mixing the two in fixed-width cells is what made the
+    # old footer overflow.
     n_hosts = sum(1 for t in load_config()["trackers"] if t.get("host"))
-    if STATUS_URL:
-        js_url = f"{STATUS_URL.rstrip('/')}/idlarr.user.js?token={TOKEN}"
-        script = (f'<span class="k">Userscript</span>'
-                  f'<span class="v on">{n_hosts} tracker{"" if n_hosts == 1 else "s"}</span>'
-                  f'<span class="sp">'
-                  f'<a class="lk pri" href="{esc(js_url)}">Install</a>'
-                  f'<button class="lk" id="cpjs" data-u="{esc(js_url)}">Copy URL</button>'
-                  f'</span>')
-    else:
-        script = ('<span class="k">Userscript</span>'
-                  '<span class="v off">STATUS_URL not set</span>'
-                  '<span class="sp"><span class="k">set it in .env, then restart</span></span>')
-
     n_trk = len(load_config()["trackers"])
-    trackers_cell = (f'<span class="k">Trackers</span>'
-                     f'<span class="v on">{n_trk}</span>'
-                     f'<span class="sp"><button class="lk" id="addtrk">Add</button>'
-                     f'<button class="lk" id="importtrk">Import</button></span>')
+    js_url = (f"{STATUS_URL.rstrip('/')}/idlarr.user.js?token={TOKEN}"
+              if STATUS_URL else "")
 
-    tools = (f'<div class="cell">{trackers_cell}</div>'
-             f'<div class="cell">{signin}</div>'
-             f'<div class="cell">{script}</div>')
+    signin_bit = ('sign-in <b class="bad">off</b>' if method == "none"
+                  else f'sign-in <b class="ok">{esc(method)}</b>')
+    script_bit = (f'userscript <b>{esc(userscript_version_peek())}</b>' if js_url
+                  else 'userscript <b class="bad">no STATUS_URL</b>')
+    last = get_state("last_check", "") or "not yet"
+    status = (f'<span><b>{n_trk}</b> trackers</span>'
+              f'<span>{signin_bit}</span>'
+              f'<span>{script_bit}</span>'
+              f'<span>checked <b>{esc(last)}</b></span>')
+
+    sheet = settings_sheet(method, n_trk, n_hosts, js_url)
 
     return (PAGE
             .replace("__ROWS__", "".join(body) or
@@ -2419,7 +2580,8 @@ async def index(request: Request):
             .replace("__TICK__", tick)
             .replace("__LEGEND__", legend)
             .replace("__BANNER__", banner)
-            .replace("__TOOLS__", tools)
+            .replace("__STATUS__", status)
+            .replace("__SHEET__", sheet)
             .replace("__AUTHMETHOD__", method)
             .replace("__STAMP__", stamp))
 
