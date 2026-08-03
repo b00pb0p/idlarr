@@ -231,3 +231,29 @@ def test_route_explains_a_missing_status_url(monkeypatch):
     r = c.get(f"/idlarr.user.js?token={app.TOKEN}")
     assert r.status_code == 500
     assert "STATUS_URL" in r.json()["detail"]
+
+
+# ------------------------------------------------------------- packaging
+
+def test_every_dockerfile_copy_is_allowed_by_dockerignore():
+    """.dockerignore is deny-all plus an allow-list, so adding a COPY without a
+    matching exception fails the build with "not found" for a file that plainly
+    exists — six minutes into a multi-arch job, having already burned the arm64
+    emulation. Its own comment warns about this; a comment is not a guard.
+    """
+    root = Path(__file__).parent
+    ignore = (root / ".dockerignore").read_text().splitlines()
+    if not any(ln.strip() == "*" for ln in ignore):
+        pytest.skip(".dockerignore is not deny-all; this check does not apply")
+    allowed = {ln.strip()[1:] for ln in ignore if ln.strip().startswith("!")}
+
+    for line in (root / "Dockerfile").read_text().splitlines():
+        if not line.strip().upper().startswith("COPY "):
+            continue
+        parts = line.split()[1:]
+        for src in parts[:-1]:                      # last token is the destination
+            if src.startswith("--"):
+                continue
+            assert src in allowed, (
+                f"Dockerfile copies {src!r} but .dockerignore does not allow it — "
+                f"add '!{src}' or the build fails with 'not found'")

@@ -8,3 +8,6 @@
 *
 !requirements.txt
 !app.py
+# The TEMPLATE that /idlarr.user.js fills in from live config — not a static
+# asset, and not optional. Without it that route 500s.
+!idlarr.user.js
