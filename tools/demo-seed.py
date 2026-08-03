@@ -21,7 +21,10 @@ Run it live rather than saving the HTML: the drawer fetches its auth history
 from /api/history, which cannot work from a file:// page.
 """
 
+import base64
+import hashlib
 import os
+import secrets
 import shutil
 import sqlite3
 import sys
@@ -33,6 +36,22 @@ HERE = Path(__file__).resolve().parent
 # (id, days since last auth, days since last visit, source) -> intended state.
 # The ladder is in CLAUDE.md; these numbers are chosen to land one row on each
 # rung so a screenshot shows the whole range rather than a wall of green.
+DEMO_USER = "demo"
+DEMO_PASSWORD = "demo-password"
+
+# Must match app.hash_password(). test_demo_seed.py asserts the two agree, so a
+# format change there fails a test rather than producing a demo nobody can log
+# into.
+PBKDF2_ROUNDS = 600_000
+
+
+def _hash(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ROUNDS)
+    return (f"pbkdf2_sha256${PBKDF2_ROUNDS}$"
+            f"{base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}")
+
+
 PLAN = [
     ("nebula",     34,  34, "userscript"),   # expired  — 30d limit, 4 over
     ("ironclad",   57,  57, "userscript"),   # critical — 60d limit, 3 left
@@ -70,6 +89,23 @@ def main(target: Path) -> None:
             ON events (tracker_id, kind, ts DESC);
         CREATE TABLE IF NOT EXISTS state (k TEXT PRIMARY KEY, v TEXT);
     """)
+    # Seed the state a well-configured install would be in, so the demo boots
+    # looking right instead of needing a sign-in configured and the userscript
+    # fetched by hand before every screenshot. Sign-in OFF puts a red banner
+    # across the top and "sign-in off" in the status line — honest, but not
+    # what you want in the one image people look at.
+    for key, value in [
+        ("auth_method", "forms"),
+        ("auth_user", DEMO_USER),
+        ("auth_hash", _hash(DEMO_PASSWORD)),
+        ("session_secret", secrets.token_hex(32)),
+        # So the status line reads a version rather than "not served yet".
+        # A real fetch just bumps it again.
+        ("userscript_rev", "4"),
+        ("userscript_hash", "seeded"),
+    ]:
+        conn.execute("INSERT OR REPLACE INTO state (k,v) VALUES (?,?)", (key, value))
+
     now = datetime.now(timezone.utc)
     for tid, auth_d, visit_d, source in PLAN:
         # Three auth events apiece so an expanded drawer has a history to show.
@@ -98,8 +134,9 @@ def main(target: Path) -> None:
     print(f"demo instance in {target}")
     print(f"  config/trackers.yml  12 fictional trackers")
     print(f"  data/idlarr.db       {len(PLAN)} seeded, 2 left as `unknown`")
-    print("\nSet a sign-in from the page before capturing, or the red "
-          "'no sign-in configured' banner dominates the shot.")
+    print(f"  sign-in             {DEMO_USER} / {DEMO_PASSWORD}")
+    print("\nIt boots already signed-in-capable: no red banner, and the status "
+          "line\nreads a userscript version. Log in with the credentials above.")
 
 
 if __name__ == "__main__":

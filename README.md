@@ -384,9 +384,17 @@ Seed **before** starting the container. Docker creates a missing bind-mount
 source as an empty root-owned directory, so starting first gets you
 `No tracker config at /config/trackers.yml` and a database it cannot write.
 
-Set a sign-in from the page first, or the red banner dominates the shot. Run it
-rather than saving the HTML — the drawer fetches its history from `/api/history`,
-which cannot work from a `file://` page.
+It boots screenshot-ready — a sign-in already configured so there is no red
+banner, and a userscript version in the status line. Log in with
+**`demo` / `demo-password`**.
+
+Set `STATUS_URL` to the address you will actually browse. `localhost` is right
+only if you are on the machine running it; from anywhere else the Install link
+points at your own computer.
+
+Run it rather than saving the HTML: the drawer fetches its history from
+`/api/history`, which cannot work from a `file://` page — and an expanded drawer
+is the part of the page a table of rows does not show.
 
 ## Contributing
 
