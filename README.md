@@ -173,8 +173,8 @@ last, so a tracker with no data can never outrank one that's expiring.
 Click a **name** to open that tracker in a new tab. Click anywhere else on the
 row to expand a drawer with three panels:
 
-- **controls** — limit, `confirm`, `immune` (with a reason field), `seen`,
-  `undo`, `remove`
+- **controls** — limit, `confirm`, `immune` (with a reason field), notes,
+  `seen`, `undo`, `remove`
 - **alert schedule** — the exact date each rung fires, or why it won't
 - **auth history** — recent auth events, and whether each was observed or asserted
 
@@ -353,7 +353,23 @@ Diagnosis table, the stale-script case, and how to restore from a backup:
 
 If you contribute one, **screenshot a demo instance, not your own**. The status
 page lists every tracker you're a member of, and that is not something to publish.
-Point a throwaway container at `trackers.example.yml` and shoot that.
+
+`tools/demo-seed.py` builds one that looks like a real install — twelve
+fictional trackers, every state on the ladder represented, and enough auth
+history that an expanded drawer has something in it:
+
+```bash
+python3 tools/demo-seed.py /tmp/idlarr-demo    # chowns to 1001 for you
+docker run --rm -p 8090:8080 \
+  -v /tmp/idlarr-demo/data:/data -v /tmp/idlarr-demo/config:/config \
+  -e IDLARR_TOKEN=demo -e IDLARR_NOTIFY_URLS=ntfy://ntfy.sh/idlarr-demo \
+  -e STATUS_URL=http://localhost:8090 -e TZ=America/Chicago \
+  ghcr.io/b00pb0p/idlarr:latest
+```
+
+Set a sign-in from the page first, or the red banner dominates the shot. Run it
+rather than saving the HTML — the drawer fetches its history from `/api/history`,
+which cannot work from a `file://` page.
 
 ## Contributing
 

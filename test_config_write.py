@@ -265,3 +265,56 @@ def test_repeated_writes_accumulate(cfg):
     assert entry(cfg, "beta")["inactivity_days"] == 60
     assert len(yaml.safe_load(cfg.read_text())["trackers"]) == 7
     assert "A FAIL-SAFE PLACEHOLDER, NOT A FACT" in cfg.read_text()
+
+
+# ------------------------------------------------------------------- notes
+#
+# Notes were write-once until 2026-08-03: settable when adding a tracker from
+# the page and unreachable afterwards. Since `software` is derived from the
+# first word of notes, that also meant a wrong software column was permanent
+# without hand-editing the file.
+
+def test_sets_notes(cfg):
+    app.save_tracker_fields("beta", notes="UNIT3D. Vacation mode available.")
+    assert entry(cfg, "beta")["notes"] == "UNIT3D. Vacation mode available."
+
+
+def test_notes_edit_keeps_comments(cfg):
+    app.save_tracker_fields("beta", notes="Custom")
+    assert "EVERY inactivity_days BELOW IS A FAIL-SAFE PLACEHOLDER" in cfg.read_text()
+
+
+def test_notes_edit_leaves_siblings_alone(cfg):
+    before = {t["id"]: t for t in yaml.safe_load(cfg.read_text())["trackers"]
+              if t["id"] != "beta"}
+    app.save_tracker_fields("beta", notes="TBDev")
+    after = {t["id"]: t for t in yaml.safe_load(cfg.read_text())["trackers"]
+             if t["id"] != "beta"}
+    assert after == before
+
+
+def test_editing_notes_re_derives_software(cfg):
+    """The software column is the first word of notes. Editing one must move
+    the other, or the row keeps showing software the notes no longer claim."""
+    app._cfg_cache["data"] = None
+    assert {t["id"]: t["software"] for t in app.load_config()["trackers"]}["beta"] == "Gazelle"
+    app.save_tracker_fields("beta", notes="UNIT3D. Moved off Gazelle.")
+    assert {t["id"]: t["software"] for t in app.load_config()["trackers"]}["beta"] == "UNIT3D"
+
+
+def test_notes_with_awkward_characters_survive(cfg):
+    tricky = 'Custom. Uses a: colon, "quotes", and a # hash.'
+    app.save_tracker_fields("beta", notes=tricky)
+    assert entry(cfg, "beta")["notes"] == tricky
+
+
+def test_notes_can_be_cleared(cfg):
+    app.save_tracker_fields("beta", notes="")
+    assert entry(cfg, "beta")["notes"] == ""
+
+
+def test_notes_alone_is_enough_to_write(cfg):
+    """Every other field is None here; the early-return guard must not swallow
+    a notes-only update."""
+    app.save_tracker_fields("beta", notes="Changed")
+    assert entry(cfg, "beta")["notes"] == "Changed"

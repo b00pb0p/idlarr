@@ -1,0 +1,84 @@
+# Idlarr demo config — fictional trackers, for screenshots only.
+defaults:
+  inactivity_days: 30
+  alert_at_pct: 0.65
+  timezone: America/Chicago
+  check_hour: 9
+
+trackers:
+  - id: nebula
+    name: Nebula
+    url: https://nebula.example/
+    inactivity_days: 30
+    verified: true
+    notes: "Gazelle. Already lost this one once."
+  - id: ironclad
+    name: Ironclad
+    url: https://ironclad.example/
+    inactivity_days: 60
+    verified: true
+    notes: "UNIT3D"
+  - id: redshift
+    name: Redshift
+    url: https://redshift.example/
+    inactivity_days: 90
+    verified: true
+    notes: "TBDev. Seeding counts."
+  - id: papertrail
+    name: Paper Trail
+    url: https://papertrail.example/
+    inactivity_days: 365
+    verified: true
+    notes: "Custom"
+  - id: vinylvault
+    name: Vinyl Vault
+    url: https://vinylvault.example/
+    inactivity_days: 120
+    verified: true
+    notes: "Gazelle"
+  - id: cinephile
+    name: Cinephile
+    url: https://cinephile.example/
+    inactivity_days: 180
+    verified: true
+    notes: "UNIT3D. Vacation mode available."
+  - id: lossless
+    name: Lossless
+    url: https://lossless.example/
+    inactivity_days: 240
+    verified: true
+    notes: "Gazelle"
+  - id: retroroms
+    name: Retro ROMs
+    url: https://retroroms.example/
+    inactivity_days: 90
+    verified: false
+    notes: "Custom"
+  - id: docuwatch
+    name: Docuwatch
+    url: https://docuwatch.example/
+    inactivity_days: 60
+    verified: false
+    notes: "TBDev"
+  - id: animeattic
+    name: Anime Attic
+    url: https://animeattic.example/
+    inactivity_days: 30
+    verified: true
+    immune: true
+    immune_reason: "donated"
+    notes: "Gazelle"
+  - id: comixcrypt
+    name: Comix Crypt
+    url: https://comixcrypt.example/
+    inactivity_days: 30
+    verified: true
+    immune: true
+    immune_reason: "elite class"
+    notes: "UNIT3D"
+  - id: sportsball
+    name: Sportsball
+    url: https://sportsball.example/
+    inactivity_days: 45
+    verified: false
+    notes: "Custom"

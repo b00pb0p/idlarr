@@ -10,6 +10,10 @@ editable. The entry is appended to `trackers.yml` with its comments intact, and
 the generated userscript changes with it, so the browser picks up the new
 `@match` on Violentmonkey's next update check.
 
+Open a row to change its **limit**, mark it **confirmed** or **immune**, or edit
+its **notes** — the first word of which sets the software column, so correcting
+one corrects the other.
+
 To remove one, open its row and click **remove**, then confirm. Its **auth
 history stays in the database** on purpose: re-adding the same id restores the
 countdown rather than silently restarting it, which is the failure this whole
@@ -90,6 +94,30 @@ differs from the one you want the row to link to:
 There is no second file to keep in sync any more. The `@match` lines and the
 `SITES` array are generated from these entries, so an id can no longer drift
 between the two and produce a silent `404 unknown tracker`.
+
+### Editing by hand is not a fallback
+
+Both directions are live, and neither overwrites the other:
+
+| | |
+|---|---|
+| page → file | writes to `trackers.yml`, comments intact |
+| file → page | hot-reloaded on change, no restart |
+| file → userscript | the generated script's version bumps, so browsers pick it up on Violentmonkey's next update check |
+
+Some things are only reachable by hand, because the page deliberately does not
+expose them:
+
+| key | why it is not in the UI |
+|---|---|
+| `auth_sel` | a CSS selector — a text box for one would invite guesses, and a wrong selector means that tracker silently never records |
+| `host` | derived from `url`; overriding it is rare and easy to get wrong |
+| `alert_at_pct` | per-tracker alert timing. See the note about short limits in [Alert escalation](../README.md#alert-escalation) |
+| `software` | normally derived from the first word of `notes` |
+| the `defaults:` block | timezone, `check_hour`, and the fallback limit |
+
+Bulk edits are also just faster in an editor. Twenty trackers is twenty
+dialogs on the page and one search-and-replace in the file.
 
 ## A site the heuristic can't read
 

@@ -180,7 +180,8 @@ def _block_bounds(lines: list[str], tracker_id: str) -> tuple[int, int, str]:
 
 def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
                         verified: bool | None = None, immune: bool | None = None,
-                        immune_reason: str | None = None) -> None:
+                        immune_reason: str | None = None,
+                        notes: str | None = None) -> None:
     """Rewrite one tracker's inactivity_days / verified in trackers.yml.
 
     A surgical line edit, NOT a yaml.safe_dump round-trip. The comments in
@@ -191,7 +192,7 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
     Writes atomically via os.replace, and refuses to install a file that
     doesn't parse or that changes the tracker count.
     """
-    if all(v is None for v in (inactivity_days, verified, immune, immune_reason)):
+    if all(v is None for v in (inactivity_days, verified, immune, immune_reason, notes)):
         return
 
     with _write_lock:
@@ -220,6 +221,10 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
             upsert("verified", "true" if verified else "false")
         if immune is not None:
             upsert("immune", "true" if immune else "false")
+        if notes is not None:
+            # Also re-derives the software column, since that is the first word
+            # of notes unless an explicit `software:` key overrides it.
+            upsert("notes", json.dumps(str(notes)))
         if immune_reason is not None:
             # json.dumps produces a double-quoted scalar that is valid YAML and
             # escapes quotes/backslashes/newlines. The re-parse check below is
@@ -248,6 +253,8 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
             raise ValueError("refusing write: immune did not take")
         if immune_reason is not None and entry.get("immune_reason", "") != str(immune_reason):
             raise ValueError("refusing write: immune_reason did not take")
+        if notes is not None and entry.get("notes", "") != str(notes):
+            raise ValueError("refusing write: notes did not take")
 
         tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
         tmp.write_text(candidate)
@@ -1064,6 +1071,9 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
     verified = payload.get("verified")
     immune = payload.get("immune")
     immune_reason = payload.get("immune_reason")
+    notes = payload.get("notes")
+    if notes is not None:
+        notes = str(notes).strip()[:500]
 
     if immune is not None:
         immune = bool(immune)
@@ -1079,11 +1089,11 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
             raise HTTPException(400, "inactivity_days must be between 1 and 3650")
     if verified is not None:
         verified = bool(verified)
-    if all(v is None for v in (days, verified, immune, immune_reason)):
+    if all(v is None for v in (days, verified, immune, immune_reason, notes)):
         raise HTTPException(400, "nothing to update")
 
     try:
-        save_tracker_fields(tracker_id, days, verified, immune, immune_reason)
+        save_tracker_fields(tracker_id, days, verified, immune, immune_reason, notes)
     except (KeyError, ValueError) as exc:
         raise HTTPException(500, f"config write refused: {exc}")
 
@@ -1825,7 +1835,11 @@ PAGE = """<!doctype html>
   .reason input:focus{outline:none;border-color:var(--immune)}
   .msg{font-size:10px;color:var(--dim);min-height:14px;margin-top:9px;letter-spacing:.03em}
   .msg.bad{color:var(--critical)} .msg.good{color:var(--ok)} .msg.warn{color:var(--due)}
-  .note{margin-top:9px;font-size:10.5px;color:var(--dim);font-style:italic}
+  .note{margin-top:9px}
+  .note input{font:inherit;font-size:11px;width:100%;background:#0b0e10;
+    color:var(--dim);font-style:italic;border:1px solid var(--line);padding:5px 7px}
+  .note input:focus{outline:none;border-color:var(--accent);font-style:normal;
+    color:var(--fg)}
   .sched,.hist{font-family:'Azeret Mono',monospace;font-size:11px}
   .sched div,.hist div{display:flex;align-items:baseline;gap:10px;padding:5px 0;
     border-bottom:1px solid var(--line)}
@@ -2145,7 +2159,8 @@ __SHEET__
     +'<button class="del danger">remove</button></div>'
     +(imm?'<div class="reason"><input class="rsn" value="'+(d.immune_reason||'')
       +'" placeholder="why immune? e.g. donated, elite class"></div>':'')
-    +(!imm&&d.notes?'<div class="note">'+d.notes+'</div>':'')
+    +'<div class="note"><input class="nts" value="'+hesc(d.notes||'')
+      +'" placeholder="notes \u2014 first word sets the software column"></div>'
     +'<div class="msg"></div></div>'
     +'<div><div class="dh">alert schedule</div><div class="sched">'+schedule(d)+'</div></div>'
     +'<div><div class="dh">auth history</div><div class="hist">'
@@ -2198,6 +2213,16 @@ __SHEET__
          refresh(r);msg('reason saved','good');}).catch(e=>{msg(e.message,'bad');rsn.value=last;});};
      rsn.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();rsn.blur();}});
      rsn.addEventListener('blur',save);}
+
+   const nts=el.querySelector('.nts');
+   if(nts){let last=nts.value;
+     const save=()=>{if(nts.value===last)return;
+       post('/api/limit/'+d.id,{notes:nts.value}).then(r=>{last=r.notes;
+         // The software column is derived from notes, so repaint the row too.
+         refresh(r);paint(tr,r);msg('notes saved','good');})
+        .catch(e=>{msg(e.message,'bad');nts.value=last;});};
+     nts.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();nts.blur();}});
+     nts.addEventListener('blur',save);}
 
    // Two-step: one stray click here silently resets a countdown.
    const seenBtn=el.querySelector('.seen');let armed=false,t=null;
