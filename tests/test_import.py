@@ -222,11 +222,12 @@ def test_needs_auth_when_configured(client, cfg, prowlarr):
 
 # --------------------------------------------------- API hosts and subdomains
 #
-# Found in the field, not by reasoning: Prowlarr returns BroadcasTheNet as
-# api.broadcasthe.net. The exact-host dedupe treated that as a tracker the user
-# did not have and imported a duplicate — one account across two rows, both
-# countdowns wrong, and the new row matching a host no browser session exists
-# on, so it would have sat at `unknown` looking like broken detection.
+# Prowlarr returns some indexers by their API host rather than their site —
+# BroadcasTheNet comes back as api.broadcasthe.net, for example. An exact-host
+# dedupe treats that as a tracker you do not have and imports a duplicate: one
+# account across two rows, both countdowns wrong, and the new row matching a
+# host no browser session exists on, so it sits at `unknown` forever and reads
+# as broken detection. Found against a real Prowlarr, not by reasoning.
 
 @pytest.mark.parametrize("a,b,want", [
     ("api.broadcasthe.net", "broadcasthe.net", True),
@@ -265,8 +266,8 @@ def apihost(monkeypatch):
 
 
 def test_api_host_is_recognised_as_already_configured(client, cfg, apihost):
-    """The real bug. `broadcasthe.net` is in the config; Prowlarr offers
-    `api.broadcasthe.net`; they are one tracker."""
+    """A configured `broadcasthe.net` and Prowlarr's `api.broadcasthe.net`
+    are one tracker, not two."""
     app.add_tracker({"id": "btn", "name": "BroadcasTheNet",
                      "url": "https://broadcasthe.net/", "host": "broadcasthe.net",
                      "inactivity_days": 30, "verified": False,

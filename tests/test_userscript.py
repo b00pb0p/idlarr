@@ -47,7 +47,7 @@ def js():
 
 @pytest.mark.parametrize("url,want", [
     ("https://alpha.example/", "alpha.example"),
-    ("https://www.empornium.sx", "empornium.sx"),
+    ("https://www.some-tracker.net", "some-tracker.net"),
     ("http://beta.example/index.php", "beta.example"),
     ("https://a.b.c.example/browse?x=1", "a.b.c.example"),
     ("https://tracker.example:8443/", "tracker.example"),

@@ -1174,9 +1174,10 @@ PRIVATE = {"private", "semiprivate", "semi-private"}
 def same_site(a: str, b: str) -> bool:
     """True when two hosts belong to the same tracker.
 
-    Exact comparison is not enough. Prowlarr stores some indexers by their API
-    host — BroadcasTheNet comes back as `api.broadcasthe.net` — so an existing
-    `broadcasthe.net` looks like a different tracker and gets imported again.
+    Exact comparison is not enough. Prowlarr returns some indexers by their
+    API host rather than their site — BroadcasTheNet as `api.broadcasthe.net`,
+    for example — so a configured `broadcasthe.net` looks like a different
+    tracker and gets imported again.
     That splits one account's history across two rows and leaves BOTH
     countdowns wrong, which is the failure this service exists to prevent.
 
