@@ -2557,7 +2557,9 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
              "" if NOTIFY_URLS else "Alerts have nowhere to go.",
              f'<span class="val {"on" if NOTIFY_URLS else "off"}">'
              f'{len(NOTIFY_URLS)} destination{"" if len(NOTIFY_URLS) == 1 else "s"}</span>')
-        + _row("Send a test", "Runs the daily check now and pushes the result.",
+        + _row("Send a test",
+               "Sends a real message now, whether or not anything is due. "
+               "A failure reports the provider's own reason.",
                '<button class="lk" id="ntest">Send test</button>')
         + '<p class="e" id="nte"></p>'
         + '<p class="sub" style="margin:15px 0 0">Destinations are Apprise URLs '

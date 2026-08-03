@@ -302,7 +302,7 @@ start without it, and the service warns if it ends up empty anyway.
 | `POST /api/import` | Preview (default) or apply a Prowlarr/Jackett import |
 | `GET`/`POST /api/auth` | Read or change the UI login |
 | `POST /login` · `POST /logout` | Session in, session out |
-| `POST /api/test-notify` | Fire the check immediately (bearer auth) |
+| `POST /api/test-notify` | Send a test notification. Bearer token or a session |
 | `GET /healthz` | Health check — **always open**, so an uptime monitor needs no credentials |
 
 Everything above `/api/test-notify` sits behind the UI login **when one is
