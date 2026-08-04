@@ -2985,9 +2985,17 @@ __SHEET__
    const d=await r.json().catch(()=>({}));
    setSave.disabled=false;
    if(!r.ok){setErr.textContent=d.detail||('failed ('+r.status+')');return;}
-   setErr.className='e good';setErr.textContent='saved';
-   // Day counting and the row states are derived from these, so repaint.
-   setTimeout(()=>location.reload(),600);
+   setErr.className='e good';setErr.textContent='Saved';
+   setTimeout(()=>{if(setErr.textContent==='Saved')setErr.textContent='';},3000);
+   // Timezone and the alert threshold change day counting, so the rows behind
+   // the panel are now stale. Repaint them in place rather than reloading:
+   // a reload closes the panel, which makes changing two settings in a row
+   // needlessly tedious.
+   try{
+     const rows=await (await fetch('/api/status')).json();
+     rows.forEach(row=>{const tr=document.getElementById('t-'+row.id);
+       if(tr){tr.dataset.row=JSON.stringify(row);paint(tr,row);}});
+   }catch(e){/* the panel still saved; the table just repaints on next load */}
  });
 
  const cpjs=document.getElementById('cpjs');
