@@ -234,3 +234,29 @@ def test_a_changed_env_token_still_wins_over_the_remembered_one(fresh, monkeypat
     app.set_state("idlarr_token", "old-token")
     monkeypatch.setattr(app, "TOKEN", "new-token")
     assert app.get_token() == "new-token"
+
+
+# ------------------------------------------------------------- permissions
+
+def test_database_is_not_world_readable(fresh):
+    """SQLite creates files 0644. That handed any local user on a shared host
+    the tracker list, the API token, the session secret (enough to mint a
+    login) and the saved Prowlarr key. Encryption at rest needs a key you have
+    to manage; this needs nothing."""
+    import stat
+    app.init_db()
+    mode = stat.S_IMODE(app.DB_PATH.stat().st_mode)
+    assert mode & 0o077 == 0, f"database is {oct(mode)}, readable beyond owner"
+
+
+def test_backups_are_not_world_readable(fresh, monkeypatch):
+    """Backups carry exactly the same secrets as the live database, and they
+    are the copies most likely to travel."""
+    import stat
+    monkeypatch.setattr(app, "BACKUP_DIR", fresh / "backups")
+    monkeypatch.setattr(app, "BACKUP_KEEP", 3)
+    app.init_db()
+    dest = app.backup_db("2026-08-04")
+    assert dest is not None and dest.exists()
+    mode = stat.S_IMODE(dest.stat().st_mode)
+    assert mode & 0o077 == 0, f"backup is {oct(mode)}, readable beyond owner"

@@ -457,6 +457,18 @@ def db() -> sqlite3.Connection:
     return conn
 
 
+def _own_only(path: Path) -> None:
+    """chmod 0600. SQLite creates files 0644 by default, so the database and
+    every backup were world-readable — on a shared host that hands any local
+    user the full tracker list, the API token, the session secret (with which
+    they can mint a login) and the saved Prowlarr key. Cheap to close, and it
+    needs no key management, unlike encrypting at rest."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass          # best effort: some filesystems (fuse/shfs) ignore modes
+
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as conn:
@@ -474,6 +486,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS state (k TEXT PRIMARY KEY, v TEXT);
             """
         )
+    _own_only(DB_PATH)
 
 
 def record(tracker_id: str, kind: str, source: str = "userscript") -> None:
@@ -916,6 +929,7 @@ def backup_db(today: str) -> Path | None:
     try:
         with sqlite3.connect(DB_PATH) as src, sqlite3.connect(tmp) as dst:
             src.backup(dst)
+        _own_only(tmp)
         os.replace(tmp, dest)
     finally:
         if tmp.exists():
