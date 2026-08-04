@@ -1995,6 +1995,12 @@ PAGE = """<!doctype html>
   .sheet .pane section.on{display:block}
   .sheet h4{margin:0 0 5px;font-size:13px;letter-spacing:.13em;text-transform:uppercase}
   .sheet .sub{color:var(--dim);font-size:12px;margin:0 0 16px;line-height:1.55}
+  /* Command chips in help text: kept whole (never break mid-token) and set off
+     from prose, so when one wraps to its own line it reads as a called-out
+     command rather than a stray fragment. */
+  .sheet code,.sheet .sub code,.sheet .lbl code{font-family:'Azeret Mono',monospace;
+    font-size:.92em;background:var(--bg);border:1px solid var(--line2);
+    border-radius:3px;padding:1px 5px;white-space:nowrap;color:var(--fg)}
   .sheet .row{display:flex;align-items:center;gap:14px;padding:12px 0;
     border-bottom:1px solid var(--line)}
   .sheet .row:last-child{border-bottom:0}
@@ -2574,7 +2580,8 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
                 '<input id="amx" type="password" autocomplete="current-password">')
            if method != "none" else '<input id="amx" type="hidden">')
         + _row("", "Changing this signs every other browser out. Forgotten it? "
-                   "Restart once with <b>IDLARR_RESET_AUTH=1</b> set.",
+                   "Restart once with this set, then remove it: "
+                   "<code>IDLARR_RESET_AUTH=1</code>",
                ('<button class="lk" id="amout">Sign out</button>' if method != "none" else "")
                + '<button class="lk pri" id="amsave">Save</button>')
         + '<p class="e" id="ame"></p>')
