@@ -18,7 +18,11 @@ ARG PUID=1001
 RUN useradd -u ${PUID} -m idlarr && mkdir -p /data && chown idlarr /data
 USER idlarr
 
-ENV IDLARR_DB=/data/idlarr.db \
+# Set by publish.yml from the git tag, so the About panel cannot disagree with
+# the image you are actually running.
+ARG IDLARR_VERSION=dev
+ENV IDLARR_VERSION=${IDLARR_VERSION} \
+    IDLARR_DB=/data/idlarr.db \
     IDLARR_CONFIG=/config/trackers.yml \
     PORT=8080
 EXPOSE 8080

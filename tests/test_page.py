@@ -232,3 +232,33 @@ def test_signin_form_keeps_the_configured_method_selected(client):
     sel = re.search(r'<select id="amm">(.*?)</select>',
                     client.get("/").text, re.S).group(1)
     assert '<option value="basic" selected>' in sel
+
+
+# ---------------------------------------------------------------- version
+
+def test_version_is_not_hardcoded_in_the_source():
+    """It was, and it drifted on the very next release: v1.1.1 shipped
+    reporting 1.1.0, so a container that had updated correctly told its owner
+    it hadn't. It comes from the build now."""
+    src = (Path(__file__).resolve().parent.parent / "app.py").read_text()
+    assert 'IDLARR_VERSION = os.environ.get("IDLARR_VERSION"' in src
+    assert not re.search(r'^IDLARR_VERSION = "[\d.]+"', src, re.M)
+
+
+def test_the_build_chain_passes_the_version_through():
+    """Three files have to agree — app.py reads the variable, the Dockerfile
+    declares and exports it, and publish.yml supplies it. Breaking any one
+    leaves the About panel reporting `dev` on a real release."""
+    root = Path(__file__).resolve().parent.parent
+    dockerfile = (root / "Dockerfile").read_text()
+    assert "ARG IDLARR_VERSION" in dockerfile
+    assert "ENV IDLARR_VERSION=${IDLARR_VERSION}" in dockerfile
+
+    publish = (root / ".github" / "workflows" / "publish.yml").read_text()
+    builds = publish.count("uses: docker/build-push-action@v6")
+    passes = publish.count("build-args: IDLARR_VERSION=")
+    assert builds == passes, f"{builds} build steps but {passes} pass the version"
+
+
+def test_about_panel_reports_the_running_version(page, monkeypatch):
+    assert f'<span class="val">{app.IDLARR_VERSION}</span>' in page

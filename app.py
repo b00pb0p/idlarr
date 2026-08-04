@@ -56,7 +56,11 @@ BACKUP_KEEP = int(os.environ.get("IDLARR_BACKUP_KEEP", 14))
 # the way you would with an *arr's config.xml.
 RESET_AUTH = os.environ.get("IDLARR_RESET_AUTH", "").strip().lower() in ("1", "true", "yes")
 
-IDLARR_VERSION = "1.1.0"
+# Injected at image build time from the git tag (see the Dockerfile and
+# publish.yml). Hand-maintaining this drifted immediately: v1.1.1 shipped
+# reporting 1.1.0, so a correctly-updated container told its owner it had not
+# updated. "dev" is honest when running from source.
+IDLARR_VERSION = os.environ.get("IDLARR_VERSION", "dev")
 
 KNOWN_SOFTWARE = {"gazelle": "Gazelle", "unit3d": "UNIT3D", "tbdev": "TBDev",
                   "custom": "Custom"}

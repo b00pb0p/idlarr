@@ -65,6 +65,7 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: idlarr:smoke
+          build-args: IDLARR_VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -110,13 +111,22 @@ jobs:
           if [ "$code" != "401" ]; then
             echo "::error::unauthenticated /ping returned $code, expected 401"; exit 1
           fi
-          echo "smoke: 7 trackers, unauthenticated /ping 401"
+          # The About panel must report the version this image was built as.
+          # It was a hand-maintained constant and drifted immediately: v1.1.1
+          # shipped reporting 1.1.0, so a correctly-updated container told its
+          # owner it had not updated.
+          want='${{ steps.meta.outputs.version }}'
+          if ! curl -fsS localhost:8099/ | grep -q ">$want<"; then
+            echo "::error::page does not report version $want"; exit 1
+          fi
+          echo "smoke: 7 trackers, /ping 401, version $want"
 
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: IDLARR_VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
