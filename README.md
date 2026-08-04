@@ -336,6 +336,13 @@ cross-origin from tracker pages, where cookies do not apply.
   to `no data` until you re-visit all of them. See
   [Restoring a backup](docs/troubleshooting.md#restoring-a-backup); it has been tested, and there is one
   surprise in it.
+- **A backup contains every secret the service holds** — your tracker list, the
+  API token, the session secret, and a saved Prowlarr key. The database and its
+  backups are written `0600` so other local users cannot read them, but that
+  only protects them *on the box*. If you sync `/data` anywhere — an appdata
+  backup plugin, rsync, cloud storage — encrypt it at that layer. Idlarr does
+  not encrypt them itself: the key would have to live somewhere it could read
+  unattended, and a backup you cannot decrypt is not a backup.
 - **The clock is `last auth`, not `last visit`.** Passing by while logged out
   doesn't count, and it shouldn't.
 

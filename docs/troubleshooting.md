@@ -43,6 +43,10 @@ chown 1001 data/idlarr.db
 docker compose start
 ```
 
+`cp` creates the copy with your umask rather than the source's mode, so the
+restored file may land world-readable. Startup tightens it back to `0600`, but
+`chmod 600 data/idlarr.db` before starting closes the window.
+
 Startup logs the tracker count; the page should show your countdowns as of that
 snapshot. **Verified against a real deployment** — 23 trackers with every state
 and last-auth date intact.
