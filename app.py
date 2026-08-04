@@ -2146,9 +2146,13 @@ PAGE = """<!doctype html>
   .xclose{position:absolute;top:14px;right:16px;background:none;border:0;
     color:var(--dim);font-size:18px;cursor:pointer;line-height:1;z-index:2}
   .xclose:hover{color:var(--fg)}
-  .imlist{max-height:170px;overflow:auto;margin:2px 0 6px}
+  /* scrollbar-gutter reserves the track so content never sits under it; the
+     row's right padding is the fallback for engines without it. 10px was not
+     enough — desktop scrollbars run 15-17px, so "already configured" was still
+     clipped. */
+  .imlist{max-height:170px;overflow:auto;margin:2px 0 6px;scrollbar-gutter:stable}
   .imlist:empty{display:none}
-  .imlist .r{display:flex;gap:9px;align-items:baseline;padding:5px 10px 5px 0;
+  .imlist .r{display:flex;gap:9px;align-items:baseline;padding:5px 6px 5px 0;
     border-bottom:1px solid var(--line);font-size:12px}
   .imlist .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .imlist .sk{color:var(--dim);font-size:10px;white-space:nowrap}
