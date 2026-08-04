@@ -177,6 +177,11 @@ def load_config() -> dict:
                 "trackers": trackers,
                 "timezone": defaults.get("timezone", "UTC"),
                 "check_hour": int(defaults.get("check_hour", 9)),
+                # 0 disables. Nothing watches the watchdog otherwise: if this
+                # container dies, the output is silence, which is
+                # indistinguishable from "nothing is due".
+                "alive_push_days": int(defaults.get("alive_push_days", 0)),
+                "alert_at_pct": float(defaults.get("alert_at_pct", 0.65)),
             },
         )
     return _cfg_cache["data"]
@@ -343,6 +348,62 @@ def _entry_block(entry: dict, indent: str) -> list[str]:
 def _others(doc: dict, skip: str) -> dict:
     """Every tracker except one, keyed by id — for blast-radius checks."""
     return {t.get("id"): t for t in (doc.get("trackers") or []) if t.get("id") != skip}
+
+
+def save_default_field(key: str, value) -> None:
+    """Rewrite one key in the `defaults:` block of trackers.yml.
+
+    Same surgical-line-edit discipline as save_tracker_fields: never a yaml
+    dump, because the comments in that file are load-bearing. Validates the
+    result parses, that the key took, and that the TRACKER LIST is untouched —
+    a defaults edit that silently dropped an entry would be invisible until
+    that tracker's limit mattered.
+    """
+    allowed = {"timezone", "check_hour", "alert_at_pct", "inactivity_days",
+               "alive_push_days"}
+    if key not in allowed:
+        raise KeyError(f"not a settable default: {key}")
+
+    with _write_lock:
+        original = CONFIG_PATH.read_text()
+        lines = original.splitlines(keepends=True)
+
+        start = next((i for i, ln in enumerate(lines)
+                      if re.match(r"^defaults:\s*$", ln)), None)
+        if start is None:
+            raise ValueError("no `defaults:` block in the config")
+        end = len(lines)
+        for i in range(start + 1, len(lines)):
+            ln = lines[i]
+            if ln.strip() and not ln.startswith((" ", "\t")) and not ln.lstrip().startswith("#"):
+                end = i
+                break
+
+        rendered = json.dumps(value) if isinstance(value, str) else str(value)
+        pat = re.compile(rf"^(\s+){re.escape(key)}:\s*.*$")
+        for i in range(start + 1, end):
+            if lines[i].lstrip().startswith("#"):
+                continue
+            m = pat.match(lines[i])
+            if m:
+                lines[i] = f"{m.group(1)}{key}: {rendered}\n"
+                break
+        else:
+            lines.insert(start + 1, f"  {key}: {rendered}\n")
+
+        candidate = "".join(lines)
+        before = yaml.safe_load(original) or {}
+        after = yaml.safe_load(candidate) or {}
+        if (after.get("defaults") or {}).get(key) != value:
+            raise ValueError(f"refusing write: {key} did not take")
+        if (before.get("trackers") or []) != (after.get("trackers") or []):
+            raise ValueError("refusing write: it changed the tracker list")
+
+        tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
+        tmp.write_text(candidate)
+        os.replace(tmp, CONFIG_PATH)
+
+    _cfg_cache["data"] = None
 
 
 def add_tracker(entry: dict) -> None:
@@ -887,6 +948,45 @@ def dispatch(title: str, body: str, priority: str) -> tuple[bool, str]:
     return ok, ("" if ok else (seen[-1] if seen else "the provider refused it"))
 
 
+async def maybe_alive_push(cfg: dict, now_local: datetime) -> bool:
+    """Send a low-priority "still alive" push every `alive_push_days`.
+
+    Nothing else watches the watchdog. If this container dies, the daily check
+    and the nightly backup both stop and NEITHER absence is visible anywhere —
+    silence reads exactly like "nothing is due". A heartbeat inverts that: once
+    you expect one weekly, silence becomes a signal.
+
+    Returns True if a push was sent. Deliberately runs after the daily check,
+    so a day with a real alert does not also get a redundant heartbeat.
+    """
+    every = int(cfg.get("alive_push_days", 0))
+    if every <= 0 or now_local.hour < int(cfg.get("check_hour", 9)):
+        return False
+
+    last = get_state("last_alive_push", "") or ""
+    if last:
+        try:
+            when = datetime.fromisoformat(last)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=now_local.tzinfo)
+            if elapsed_days(now_local, when) < every:
+                return False
+        except ValueError:
+            pass          # unparseable -> treat as never sent
+
+    rows = statuses()
+    worst = min((r for r in rows if r["days_left"] is not None),
+                key=lambda r: r["days_left"], default=None)
+    body = (f"Idlarr is running. Watching {len(rows)} tracker(s).\n"
+            + (f"Closest: {worst['name']}, {worst['days_left']}d left."
+               if worst else "No countdowns running yet."))
+    ok, why = await asyncio.to_thread(dispatch, "Idlarr still alive", body, "default")
+    print(f"[alive] {'sent' if ok else 'FAILED'}" + ("" if ok else f": {why}"))
+    if ok:
+        set_state("last_alive_push", now_local.isoformat())
+    return ok
+
+
 async def notify(rows: list[dict]) -> None:
     payload = build_notification(rows)
     if payload is None:
@@ -963,6 +1063,12 @@ async def scheduler() -> None:
                     print(f"[backup] FAILED: {exc}")
                 await notify(statuses())
                 set_state("last_check", today)
+
+            # ---- still-alive heartbeat -------------------------------------
+            # Its whole job is to make silence meaningful: if these stop
+            # arriving, the container is down.
+            await maybe_alive_push(cfg, now_local)
+
         except Exception as exc:
             print(f"[check] error: {exc}")
         await asyncio.sleep(600)
@@ -1223,6 +1329,71 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
 
     row = next(r for r in statuses() if r["id"] == tracker_id)
     return clean(row)
+
+
+@app.post("/api/settings", dependencies=[Depends(require_ui)])
+async def update_settings(payload: dict = Body(...)):
+    """Edit the `defaults:` block from the settings panel.
+
+    Each value is range-checked here rather than trusted: these drive day
+    counting and alert timing, and a bad one is not a crash — it is a countdown
+    that reads plausibly and fires at the wrong time.
+    """
+    changed = {}
+
+    tz = payload.get("timezone")
+    if tz is not None:
+        try:
+            ZoneInfo(str(tz))
+        except Exception:
+            raise HTTPException(400, f"'{tz}' is not a known timezone")
+        changed["timezone"] = str(tz)
+
+    hour = payload.get("check_hour")
+    if hour is not None:
+        try:
+            hour = int(hour)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "check_hour must be a whole number")
+        if not 0 <= hour <= 23:
+            raise HTTPException(400, "check_hour must be between 0 and 23")
+        changed["check_hour"] = hour
+
+    pct = payload.get("alert_at_pct")
+    if pct is not None:
+        try:
+            pct = float(pct)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "alert_at_pct must be a number")
+        # Below 0.4 a 365-day tracker starts nagging 219 days early; above 0.95
+        # `due` never fires before `warn` does. Both make the rung useless.
+        if not 0.4 <= pct <= 0.95:
+            raise HTTPException(400, "alert_at_pct must be between 0.4 and 0.95")
+        changed["alert_at_pct"] = pct
+
+    alive = payload.get("alive_push_days")
+    if alive is not None:
+        try:
+            alive = int(alive)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "alive_push_days must be a whole number")
+        if not 0 <= alive <= 90:
+            raise HTTPException(400, "alive_push_days must be between 0 and 90")
+        changed["alive_push_days"] = alive
+
+    if not changed:
+        raise HTTPException(400, "nothing to update")
+    try:
+        for key, value in changed.items():
+            save_default_field(key, value)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(500, f"config write refused: {exc}")
+    except OSError as exc:
+        raise HTTPException(500, f"cannot write {CONFIG_PATH}: {exc}")
+
+    cfg = load_config()
+    return {k: cfg.get(k) for k in
+            ("timezone", "check_hour", "alert_at_pct", "alive_push_days")}
 
 
 @app.post("/api/tracker", dependencies=[Depends(require_ui)])
@@ -2588,6 +2759,24 @@ __SHEET__
    else{nte.textContent=d.detail||('failed ('+r.status+')');}
  });
 
+ // ---- general settings -------------------------------------------------
+ const setSave=document.getElementById('setSave'),setErr=document.getElementById('setErr');
+ if(setSave)setSave.addEventListener('click',async()=>{
+   setErr.className='e';setErr.textContent='saving\u2026';setSave.disabled=true;
+   const r=await fetch('/api/settings',{method:'POST',
+     headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({timezone:document.getElementById('setTz').value,
+       check_hour:document.getElementById('setHour').value,
+       alert_at_pct:document.getElementById('setPct').value,
+       alive_push_days:document.getElementById('setAlive').value})});
+   const d=await r.json().catch(()=>({}));
+   setSave.disabled=false;
+   if(!r.ok){setErr.textContent=d.detail||('failed ('+r.status+')');return;}
+   setErr.className='e good';setErr.textContent='saved';
+   // Day counting and the row states are derived from these, so repaint.
+   setTimeout(()=>location.reload(),600);
+ });
+
  const cpjs=document.getElementById('cpjs');
  if(cpjs)cpjs.addEventListener('click',()=>{
    const u=cpjs.dataset.u, done=()=>{const o=cpjs.textContent;
@@ -2658,21 +2847,38 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
     except OSError:
         db_kb = "unknown"
 
-    # --- general: read-only for now. These live in trackers.yml, and showing
-    #     them as editable controls that silently do nothing would be worse
-    #     than showing them as facts.
+    # --- general: editable, written back to the defaults block in
+    #     trackers.yml. Range-checked server-side in /api/settings — these
+    #     drive day counting and alert timing, so a bad value is not a crash,
+    #     it is a countdown that reads plausibly and fires at the wrong time.
+    alive = int(cfg.get("alive_push_days", 0))
+    alive_opts = "".join(
+        f'<option value="{v}"{" selected" if alive == v else ""}>{label}</option>'
+        for v, label in ((0, "Off"), (1, "Daily"), (7, "Weekly"), (14, "Fortnightly")))
     general = (
         _row("Timezone", "All day counting is calendar days in this zone.",
-             f'<span class="val">{esc(cfg["timezone"])}</span>')
+             f'<input id="setTz" value="{esc(cfg["timezone"])}">')
         + _row("Daily check hour",
-               "When the check runs and alerts batch into one push.",
-               f'<span class="val">{cfg["check_hour"]:02d}:00</span>')
+               "When the check runs and alerts batch into one push. 0-23.",
+               f'<input id="setHour" value="{cfg["check_hour"]}">')
+        + _row("Alert threshold",
+               "Fraction of a tracker's limit at which <em>due</em> fires. "
+               "0.4-0.95; lower means earlier nagging on long limits.",
+               f'<input id="setPct" value="{cfg.get("alert_at_pct", 0.65)}">')
+        + _row("Still-alive push",
+               "Nothing else watches the watchdog. If this container dies the "
+               "daily check stops and silence looks exactly like nothing being "
+               "due — a heartbeat makes that silence mean something.",
+               f'<select id="setAlive">{alive_opts}</select>')
+        + _row("", "", '<button class="lk pri" id="setSave">Save</button>')
+        + '<p class="e" id="setErr"></p>'
         + _row("Last check", "", f'<span class="val">{esc(last)}</span>')
-        + _row("Backup retention", "Nightly snapshots kept in /data/backups.",
+        + _row("Backup retention", "Nightly snapshots kept in /data/backups. "
+               "Set with <code>IDLARR_BACKUP_KEEP</code>.",
                f'<span class="val">{BACKUP_KEEP} days</span>')
-        + '<p class="sub" style="margin:15px 0 0">Edit these in '
-          '<code>trackers.yml</code> and <code>.env</code> — both are read live, '
-          'so only the timezone needs a restart.</p>')
+        + '<p class="sub" style="margin:15px 0 0">Written to '
+          '<code>trackers.yml</code>, which is hot-reloaded — only a timezone '
+          'change needs a restart to affect an already-running check.</p>')
 
     # --- sign-in: the form that used to be its own modal. Same element ids, so
     #     the handlers did not have to change.
