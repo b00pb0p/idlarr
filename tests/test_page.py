@@ -105,9 +105,10 @@ def test_rendering_the_page_never_bumps_the_userscript_version(client):
 def test_install_link_is_absent_without_status_url(client, monkeypatch):
     """A link that 500s is worse than no link. Say what to set instead."""
     monkeypatch.setattr(app, "STATUS_URL", "")
+    monkeypatch.setattr(app, "_ENV_STATUS_URL", "")
     page = client.get("/").text
     assert "idlarr.user.js?token=" not in page
-    assert "STATUS_URL" in page
+    assert "Status URL" in page
 
 
 def test_signed_in_page_offers_sign_out(client):
@@ -135,11 +136,14 @@ def test_test_notify_takes_a_session_or_the_token(client, monkeypatch):
     monkeypatch.setattr(app, "dispatch", lambda *a: (True, ""))
     client.post("/api/auth", json={"method": "forms", "username": "jared",
                                    "password": "correct-horse"})
-    assert client.post("/api/test-notify").status_code == 200      # session
+    # Session-based requests need JSON content-type (CSRF protection).
+    assert client.post("/api/test-notify",
+                       headers={"Content-Type": "application/json"}).status_code == 200
     client.cookies.clear()
-    assert client.post("/api/test-notify").status_code == 401
+    assert client.post("/api/test-notify",
+                       headers={"Content-Type": "application/json"}).status_code == 401
     r = client.post("/api/test-notify",
-                    headers={"Authorization": f"Bearer {app.TOKEN}"})
+                    headers={"Authorization": f"Bearer {app.get_token()}"})
     assert r.status_code == 200
 
 
@@ -169,9 +173,10 @@ def test_test_notify_reports_why_a_send_failed(client, monkeypatch):
 
 def test_test_notify_says_so_when_nothing_is_configured(client, monkeypatch):
     monkeypatch.setattr(app, "NOTIFY_URLS", [])
+    monkeypatch.setattr(app, "_ENV_NOTIFY_URLS", "")
     r = client.post("/api/test-notify")
     assert r.status_code == 400
-    assert "IDLARR_NOTIFY_URLS" in r.json()["detail"]
+    assert "notification" in r.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------- structure

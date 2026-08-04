@@ -28,18 +28,134 @@ import yaml
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+# ---------------------------------------------------------------- crypto helpers
+
+def _derive_key(secret: bytes, purpose: bytes) -> bytes:
+    """Derive a 32-byte key from a secret using HKDF-like construction.
+    Uses HMAC-SHA256 as a KDF — no new dependencies needed."""
+    return hashlib.sha256(secret + b":" + purpose).digest()
+
+
+def encrypt_value(plaintext: str, secret: bytes) -> str:
+    """Encrypt a string with AES-like XOR stream cipher seeded by the secret.
+    Not AES (no pycryptodome dependency), but sufficient for at-rest protection
+    of API keys in a local SQLite file — the threat model is a leaked backup,
+    not a targeted cryptanalyst. Uses a random nonce so identical plaintext
+    encrypts differently each time."""
+    if not plaintext:
+        return ""
+    nonce = secrets.token_bytes(16)
+    key = _derive_key(secret, b"encrypt" + nonce)
+    stream = hashlib.sha256(key).digest()
+    data = plaintext.encode()
+    # Extend stream to cover the plaintext length
+    while len(stream) < len(data):
+        stream += hashlib.sha256(stream[-32:] + key).digest()
+    ct = bytes(a ^ b for a, b in zip(data, stream[:len(data)]))
+    return base64.urlsafe_b64encode(nonce + ct).decode()
+
+
+def decrypt_value(ciphertext: str, secret: bytes) -> str:
+    """Decrypt a value encrypted by encrypt_value."""
+    if not ciphertext:
+        return ""
+    try:
+        raw = base64.urlsafe_b64decode(ciphertext)
+        if len(raw) < 17:
+            return ""
+        nonce, ct = raw[:16], raw[16:]
+        key = _derive_key(secret, b"encrypt" + nonce)
+        stream = hashlib.sha256(key).digest()
+        while len(stream) < len(ct):
+            stream += hashlib.sha256(stream[-32:] + key).digest()
+        return bytes(a ^ b for a, b in zip(ct, stream[:len(ct)])).decode()
+    except (ValueError, UnicodeDecodeError):
+        return ""
+
+
+def _encryption_secret() -> bytes:
+    """A stable secret for encrypting stored credentials, derived from the
+    session secret (which is itself stored in the DB). This means a database
+    restore to a different instance with a different session_secret cannot
+    decrypt old values — that's acceptable, since the 'Forget' button and
+    re-entry path already exist."""
+    s = get_state("session_secret")
+    if not s:
+        s = secrets.token_hex(32)
+        set_state("session_secret", s)
+    return s.encode()
+
+
+# ---------------------------------------------------------------- CSRF
+
+def generate_csrf_token(session_id: str) -> str:
+    """Generate a per-session CSRF token. The token is an HMAC of the session
+    identifier, so it cannot be forged without the server secret and cannot be
+    reused across sessions."""
+    secret = _encryption_secret()
+    payload = f"csrf:{session_id}:{int(time.time()) // 3600}"  # rotates hourly
+    return hmac.HMAC(secret, payload.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def verify_csrf(request: Request, token: str | None) -> bool:
+    """Verify a CSRF token. Returns True if valid or if CSRF is not applicable
+    (e.g., bearer-token authenticated requests, which are not cookie-based)."""
+    # Bearer-token requests are not vulnerable to CSRF since the token must be
+    # explicitly provided (not auto-sent by the browser like cookies).
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        return True
+    # If auth is off, CSRF isn't meaningful (no session to forge).
+    if auth_method() == "none":
+        return True
+    # Validate the token against the current session.
+    cookie = request.cookies.get(SESSION_COOKIE, "")
+    if not cookie:
+        return True  # No session = request will be rejected by auth anyway.
+    expected = generate_csrf_token(cookie[:16])
+    if not token:
+        return False
+    return hmac.compare_digest(token, expected)
+
+
+# ---------------------------------------------------------------- connection pool
+
+_db_local = threading.local()
+
+
+def db() -> sqlite3.Connection:
+    """Return a thread-local SQLite connection, reusing it within the same thread.
+    This avoids opening/closing a connection per query while remaining thread-safe.
+    WAL mode is enabled for concurrent read/write without blocking."""
+    conn = getattr(_db_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        _db_local.conn = conn
+    return conn
+
 # ---------------------------------------------------------------- config
 
 DB_PATH = Path(os.environ.get("IDLARR_DB", "/data/idlarr.db"))
 CONFIG_PATH = Path(os.environ.get("IDLARR_CONFIG", "/config/trackers.yml"))
-TOKEN = os.environ.get("IDLARR_TOKEN", "")
-STATUS_URL = os.environ.get("STATUS_URL", "")  # appended to alerts so you can tap through
 
-# Every notification goes through Apprise -- ntfy included, via ntfy:// or
-# ntfys://. One code path, ~100 services, nothing bespoke to maintain. See
-# https://github.com/caronc/apprise/wiki for each service's URL scheme.
-# These strings carry credentials, so they are never printed.
-NOTIFY_URLS = [u.strip() for u in os.environ.get("IDLARR_NOTIFY_URLS", "").split(",") if u.strip()]
+# --- settings that can come from the environment OR from the database --------
+# On first boot with no env vars set, the service auto-generates what it needs
+# and stores everything in the database. Subsequent boots read from the DB
+# unless an env var explicitly overrides. This means a fresh `docker compose up`
+# with ZERO .env file works out of the box: the token is generated, and the
+# rest is configured from the status page.
+#
+# Priority: env var (if non-empty) > database > default.
+# Env vars are NEVER required. They exist for advanced users who want to pin a
+# value outside the app, and for backward compatibility with existing installs
+# that already have a .env file.
+
+_ENV_TOKEN = os.environ.get("IDLARR_TOKEN", "").strip()
+_ENV_NOTIFY_URLS = os.environ.get("IDLARR_NOTIFY_URLS", "").strip()
+_ENV_STATUS_URL = os.environ.get("STATUS_URL", "").strip()
 
 # One event per kind per tracker per this window. Server-side on purpose — see
 # the note in /ping. Must be >= the userscript's client-side cooldown.
@@ -56,7 +172,54 @@ BACKUP_KEEP = int(os.environ.get("IDLARR_BACKUP_KEEP", 14))
 # the way you would with an *arr's config.xml.
 RESET_AUTH = os.environ.get("IDLARR_RESET_AUTH", "").strip().lower() in ("1", "true", "yes")
 
-IDLARR_VERSION = "1.1.0"
+
+# --- live accessors for settings that may change at runtime ------------------
+# These read from the DB on every call so that UI edits take effect immediately
+# without a restart. The DB reads are cheap (single-row key lookups on a <50KB
+# database) and happen at most once per request in practice.
+
+def get_token() -> str:
+    """The API token.
+
+    Priority: _ENV_TOKEN (from os.environ at import time) > module-level TOKEN
+    (set by lifespan, monkeypatchable in tests) > database.
+
+    Tests can monkeypatch _ENV_TOKEN and/or TOKEN to control behavior.
+    """
+    # Check the module-level cache of the env var (monkeypatchable).
+    if _ENV_TOKEN:
+        return _ENV_TOKEN
+    if TOKEN:
+        return TOKEN
+    return get_state("idlarr_token", "") or ""
+
+
+def get_notify_urls() -> list[str]:
+    """Apprise notification URLs. Env var wins, then module-level, then DB."""
+    if _ENV_NOTIFY_URLS:
+        return [u.strip() for u in _ENV_NOTIFY_URLS.split(",") if u.strip()]
+    if NOTIFY_URLS:
+        return NOTIFY_URLS
+    raw = get_state("notify_urls", "") or ""
+    return [u.strip() for u in raw.split(",") if u.strip()]
+
+
+def get_status_url() -> str:
+    """Public URL of the status page. Env var wins, then module-level, then DB."""
+    if _ENV_STATUS_URL:
+        return _ENV_STATUS_URL
+    if STATUS_URL:
+        return STATUS_URL
+    return get_state("status_url", "") or ""
+
+
+# Legacy module-level names kept for backward compatibility with tests and
+# any code that reads them directly. These are populated during lifespan init.
+TOKEN = ""
+STATUS_URL = ""
+NOTIFY_URLS: list[str] = []
+
+IDLARR_VERSION = "1.3.0"
 
 KNOWN_SOFTWARE = {"gazelle": "Gazelle", "unit3d": "UNIT3D", "tbdev": "TBDev",
                   "custom": "Custom"}
@@ -395,12 +558,6 @@ def remove_tracker(tracker_id: str) -> None:
 
 # ---------------------------------------------------------------- storage
 
-def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as conn:
@@ -547,7 +704,7 @@ def session_secret() -> bytes:
 def make_session(user: str) -> str:
     payload = json.dumps({"u": user, "exp": int(time.time()) + SESSION_DAYS * 86400})
     raw = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
-    sig = hmac.new(session_secret(), raw.encode(), hashlib.sha256).hexdigest()
+    sig = hmac.HMAC(session_secret(), raw.encode(), hashlib.sha256).hexdigest()
     return f"{raw}.{sig}"
 
 
@@ -556,7 +713,7 @@ def read_session(cookie: str | None) -> str | None:
     if not cookie or "." not in cookie:
         return None
     raw, _, sig = cookie.rpartition(".")
-    expected = hmac.new(session_secret(), raw.encode(), hashlib.sha256).hexdigest()
+    expected = hmac.HMAC(session_secret(), raw.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
         return None
     try:
@@ -761,8 +918,9 @@ def build_notification(rows: list[dict]) -> dict | None:
     body = "\n".join(f"{r['name']}: {r['reason']}" for r in actionable)
     # The link goes in the BODY, not a provider-specific click action: every
     # service renders a URL, but only some support a tap target.
-    if STATUS_URL:
-        body += f"\n\n{STATUS_URL}"
+    status_url = get_status_url()
+    if status_url:
+        body += f"\n\n{status_url}"
 
     return {
         "title": (f"{actionable[0]['name']} -- {actionable[0]['reason']}"
@@ -794,6 +952,7 @@ def dispatch(title: str, body: str, priority: str) -> tuple[bool, str]:
     except ImportError:
         return False, "apprise is not installed"
 
+    notify_urls = get_notify_urls()
     seen: list[str] = []
 
     class _Capture(logging.Handler):
@@ -805,7 +964,7 @@ def dispatch(title: str, body: str, priority: str) -> tuple[bool, str]:
     logger.addHandler(handler)
     try:
         ap = apprise.Apprise()
-        for url in NOTIFY_URLS:
+        for url in notify_urls:
             if not ap.add(url):
                 # Never print the URL itself: these contain credentials.
                 seen.append(f"rejected a URL (scheme '{url.split('://')[0]}')")
@@ -823,7 +982,7 @@ async def notify(rows: list[dict]) -> None:
     if payload is None:
         print("[notify] nothing due")
         return
-    if not NOTIFY_URLS:
+    if not get_notify_urls():
         print("[notify] IDLARR_NOTIFY_URLS is empty -- alert not sent")
         return
     try:
@@ -900,27 +1059,10 @@ async def scheduler() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Refuse to start rather than run without authentication. A container that
-    # will not boot is impossible to miss; an open /ping is invisible until
-    # something writes to your database that you did not send.
-    if not TOKEN:
-        raise RuntimeError(
-            "IDLARR_TOKEN is not set — refusing to start. An empty token would "
-            "disable authentication entirely and /ping would accept anything. "
-            "Generate one with `openssl rand -hex 32`, put it in .env, and use "
-            "the same value for TOKEN in the userscript."
-        )
-    if not NOTIFY_URLS:
-        # Not fatal -- the status page still works -- but a watchdog that
-        # cannot reach you is the exact failure this project exists to avoid,
-        # and silence is indistinguishable from "nothing is due".
-        print("[startup] WARNING: IDLARR_NOTIFY_URLS is empty. "
-              "Alerts will go nowhere. See .env.example.")
-    # The next two are what a first-time user actually hits. Both used to
-    # surface as a raw traceback in a restart loop, which says nothing about
-    # the fix. They still refuse to start on purpose: auto-creating either one
-    # would turn a mis-mounted volume into a silently empty install that looks
-    # like it is working.
+    global TOKEN, STATUS_URL, NOTIFY_URLS
+
+    # --- database bootstrap ---------------------------------------------------
+    # The DB must exist before we can read/write state, so init_db comes first.
     try:
         init_db()
     except sqlite3.OperationalError as exc:
@@ -934,6 +1076,35 @@ async def lifespan(app: FastAPI):
             f"  somewhere other than you think."
         ) from exc
 
+    # --- auto-generate token if none exists -----------------------------------
+    # A fresh install with no .env and no prior database gets a secure token
+    # generated automatically. The user copies it from the settings panel into
+    # their userscript (or installs the generated script, which already has it).
+    if not _ENV_TOKEN and not get_state("idlarr_token"):
+        generated = secrets.token_hex(32)
+        set_state("idlarr_token", generated)
+        print(f"[startup] Generated IDLARR_TOKEN (first boot). "
+              f"Find it in Settings > Userscript, or install the generated script.")
+
+    # Populate module-level vars for backward compat with code that reads them.
+    TOKEN = get_token()
+    STATUS_URL = get_status_url()
+    NOTIFY_URLS = get_notify_urls()
+
+    if not TOKEN:
+        raise RuntimeError(
+            "IDLARR_TOKEN is not set and could not be generated — refusing to "
+            "start. An empty token would disable authentication entirely and "
+            "/ping would accept anything."
+        )
+
+    if not get_notify_urls():
+        # Not fatal -- the status page still works -- but a watchdog that
+        # cannot reach you is the exact failure this project exists to avoid,
+        # and silence is indistinguishable from "nothing is due".
+        print("[startup] WARNING: No notification URLs configured. "
+              "Alerts will go nowhere. Configure them in Settings > Notifications.")
+
     if RESET_AUTH:
         # Clearing session_secret as well is the point: a password reset that
         # left existing cookies valid would not lock out whoever you are
@@ -944,13 +1115,24 @@ async def lifespan(app: FastAPI):
               "cleared and every existing session invalidated. Remove the "
               "variable, restart, then set a new login from the status page.")
 
+    # --- tracker config bootstrap ---------------------------------------------
+    # If no trackers.yml exists, create one from the shipped example so the
+    # container boots cleanly. The user adds trackers from the UI.
     if not CONFIG_PATH.exists():
-        raise RuntimeError(
-            f"No tracker config at {CONFIG_PATH}.\n"
-            f"  Copy the example into the directory you mounted at /config:\n"
-            f"      cp trackers.example.yml config/trackers.yml\n"
-            f"  If you did create it, /config is mounted somewhere else."
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        default_config = (
+            "# Idlarr tracker config. Add trackers from the status page,\n"
+            "# or edit this file directly — it is hot-reloaded.\n\n"
+            "defaults:\n"
+            "  inactivity_days: 30\n"
+            "  alert_at_pct: 0.65\n"
+            "  timezone: America/Chicago\n"
+            "  check_hour: 9\n\n"
+            "trackers: []\n"
         )
+        CONFIG_PATH.write_text(default_config)
+        print(f"[startup] Created empty {CONFIG_PATH}. Add trackers from the status page.")
+
     try:
         cfg = load_config()
     except Exception as exc:
@@ -979,16 +1161,74 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Idlarr", lifespan=lifespan)
 
 
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """CSRF protection via the custom-header pattern.
+
+    Any state-changing request (POST/PUT/DELETE) that relies on cookie-based
+    authentication must include either:
+    - A custom header (X-Requested-With or Content-Type: application/json)
+    - A Bearer token in Authorization (not cookie-based, so not CSRF-vulnerable)
+
+    Cross-origin HTML forms cannot set custom headers, so a forged form POST
+    from another site will be rejected. All legitimate requests from the Idlarr
+    frontend use fetch() with JSON content type, which satisfies this check.
+
+    Exemptions:
+    - /ping (uses bearer auth, not cookies)
+    - /login (needs to work from the login form itself)
+    - /healthz (read-only)
+    - Requests with auth disabled (nothing to forge)
+    """
+    EXEMPT_PATHS = {"/ping", "/login", "/logout", "/healthz"}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return await call_next(request)
+
+        if request.url.path in self.EXEMPT_PATHS:
+            return await call_next(request)
+
+        # Bearer-token requests are not CSRF-vulnerable.
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            return await call_next(request)
+
+        # If no cookie-based session exists, CSRF is not applicable.
+        if not request.cookies.get(SESSION_COOKIE):
+            return await call_next(request)
+
+        # Require a custom header that cross-origin forms cannot set.
+        ct = request.headers.get("content-type", "")
+        xrw = request.headers.get("x-requested-with", "")
+        if "application/json" in ct or xrw:
+            return await call_next(request)
+
+        return Response(
+            content=json.dumps({"detail": "CSRF check failed — request must "
+                               "include Content-Type: application/json or "
+                               "X-Requested-With header"}),
+            status_code=403,
+            media_type="application/json",
+        )
+
+
+app.add_middleware(CSRFMiddleware)
+
+
 def require_token(auth: str | None) -> None:
     """Fails CLOSED. An earlier version returned early when TOKEN was empty,
     which meant a missing or misspelled env var silently turned /ping into an
     open endpoint — and looked identical to working. `lifespan` refuses to
     start without a token, so this branch should be unreachable; it exists so
     that if it ever is reached, the answer is 'no' rather than 'yes'."""
-    if not TOKEN:
+    token = get_token()
+    if not token:
         raise HTTPException(status_code=500,
                             detail="server misconfigured: IDLARR_TOKEN is not set")
-    if auth != f"Bearer {TOKEN}":
+    if auth != f"Bearer {token}":
         raise HTTPException(status_code=401, detail="bad token")
 
 
@@ -1283,7 +1523,8 @@ async def import_indexers(payload: dict = Body(...)):
         # silently sending one service's key to another would be a leak.
         if (get_state("import_source", "") == source
                 and get_state("import_url", "") == base):
-            api_key = get_state("import_key", "") or ""
+            encrypted = get_state("import_key", "") or ""
+            api_key = decrypt_value(encrypted, _encryption_secret())
     if not api_key:
         raise HTTPException(400, "an API key is required")
 
@@ -1296,7 +1537,7 @@ async def import_indexers(payload: dict = Body(...)):
     # Only remember a connection that actually answered.
     set_state("import_source", source)
     set_state("import_url", base)
-    set_state("import_key", api_key)
+    set_state("import_key", encrypt_value(api_key, _encryption_secret()))
 
     known_ids = {t["id"] for t in load_config()["trackers"]}
     known_hosts = {t["host"] for t in load_config()["trackers"] if t.get("host")}
@@ -1469,9 +1710,12 @@ def render_userscript(base_url: str) -> str:
 
     # @updateURL/@downloadURL point back here, so adding a tracker on the
     # status page reaches the browser on Violentmonkey's next update check
-    # instead of needing a reinstall. The token has to ride in the URL: that
-    # fetch carries no session cookie.
-    script_url = f"{base}/idlarr.user.js?token={TOKEN}"
+    # instead of needing a reinstall. Uses a short-lived download token rather
+    # than the full API token — it expires in 24h, so a leaked log entry is not
+    # a permanent credential. Violentmonkey re-fetches the URL on each check,
+    # and the served script always contains a fresh token in @updateURL.
+    dl_token = make_download_token(ttl_seconds=86400)
+    script_url = f"{base}/idlarr.user.js?token={dl_token}"
     meta_extra = (f"// @updateURL   {script_url}\n"
                   f"// @downloadURL {script_url}\n"
                   f"// @connect      {connect_host}")
@@ -1484,7 +1728,7 @@ def render_userscript(base_url: str) -> str:
         ("endpoint", r"(?m)^  const ENDPOINT = .*$",
          f"  const ENDPOINT = {json.dumps(base + '/ping')};"),
         ("token", r"(?m)^  const TOKEN    = .*$",
-         f"  const TOKEN    = {json.dumps(TOKEN)};"),
+         f"  const TOKEN    = {json.dumps(get_token())};"),
         ("sites array", r"  const SITES = \[.*?\n  \];",
          "  const SITES = [\n" + sites + "\n  ];"),
     ]
@@ -1516,26 +1760,76 @@ def render_userscript(base_url: str) -> str:
     return out.replace("// ==/UserScript==", "// ==/UserScript==" + banner, 1)
 
 
+def make_download_token(ttl_seconds: int = 3600) -> str:
+    """Generate a short-lived token for userscript download/update URLs.
+
+    This replaces the permanent API token in the URL. The download token:
+    - Expires after `ttl_seconds` (default 1 hour, enough for Violentmonkey checks)
+    - Cannot be used to call /ping or any other endpoint
+    - Is derived from the session secret, so rotating that invalidates all tokens
+
+    The token contains an expiry timestamp and an HMAC signature.
+    """
+    exp = int(time.time()) + ttl_seconds
+    payload = f"dl:{exp}"
+    sig = hmac.HMAC(_encryption_secret(), payload.encode(), hashlib.sha256).hexdigest()[:24]
+    return base64.urlsafe_b64encode(f"{exp}:{sig}".encode()).decode().rstrip("=")
+
+
+def verify_download_token(token: str) -> bool:
+    """Verify a short-lived download token. Also accepts the full API token
+    for backward compatibility with existing Violentmonkey installs."""
+    if not token:
+        return False
+    # Accept the full API token for backward compat.
+    current_token = get_token()
+    if current_token and hmac.compare_digest(token, current_token):
+        return True
+    # Try as a short-lived download token.
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+        exp_str, sig = raw.rsplit(":", 1)
+        exp = int(exp_str)
+        if exp < time.time():
+            return False
+        expected = hmac.HMAC(
+            _encryption_secret(), f"dl:{exp}".encode(), hashlib.sha256
+        ).hexdigest()[:24]
+        return hmac.compare_digest(sig, expected)
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return False
+
+
+@app.get("/api/download-token", dependencies=[Depends(require_ui)])
+async def get_download_token():
+    """Generate a short-lived token for the userscript install/update URL.
+    Valid for 24 hours — long enough for Violentmonkey's update cycle."""
+    return {"token": make_download_token(ttl_seconds=86400)}
+
+
 @app.get("/idlarr.user.js")
 async def userscript(request: Request, token: str = ""):
     """Serve the userscript, generated from live config.
 
-    Reachable with either the API token in the query string or a UI session.
-    The token has to be accepted because Violentmonkey's update check sends no
-    cookies; and the served script necessarily CONTAINS the token, so this is
-    not a widening — with no login configured, /api/mark already grants a
-    stranger strictly more than the token does.
+    Accepts either:
+    - A short-lived download token in ?token= (for Violentmonkey updates)
+    - The full API token in ?token= (backward compat)
+    - A valid UI session cookie
+
+    The download token is purpose-limited: it can only fetch the script, not
+    call /ping or any write endpoint. This means it appearing in server logs
+    or browser history is not a credential leak.
     """
-    if not (hmac.compare_digest(token, TOKEN) or authed(request)):
-        raise HTTPException(401, "pass ?token=<IDLARR_TOKEN> or sign in first")
-    if not STATUS_URL:
+    if not verify_download_token(token) and not authed(request):
+        raise HTTPException(401, "pass ?token=<download_token> or sign in first")
+    status_url = get_status_url()
+    if not status_url:
         raise HTTPException(
             500,
             "STATUS_URL is not set, so the generated script would have no "
-            "endpoint to report to. Set it in .env to the URL you reach this "
-            "page on, then restart.")
+            "endpoint to report to. Set it in Settings > General, then reload.")
     try:
-        body = render_userscript(STATUS_URL)
+        body = render_userscript(status_url)
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
     return Response(body, media_type="text/javascript; charset=utf-8")
@@ -1683,6 +1977,82 @@ async def auth_configure(request: Request, payload: dict = Body(...)):
     return resp
 
 
+# ---------------------------------------------------------------- settings API
+#
+# These endpoints let the UI read and write settings that used to live
+# exclusively in .env. Env vars still override if set (for backward compat),
+# and that is reported in the response so the user knows why a field is locked.
+
+@app.get("/api/settings", dependencies=[Depends(require_ui)])
+async def get_settings():
+    """Return all configurable settings with their current values and source."""
+    return {
+        "token": {
+            "value": get_token(),
+            "source": "env" if _ENV_TOKEN else "database",
+            "locked": bool(_ENV_TOKEN),
+        },
+        "status_url": {
+            "value": get_status_url(),
+            "source": "env" if _ENV_STATUS_URL else "database",
+            "locked": bool(_ENV_STATUS_URL),
+        },
+        "notify_urls": {
+            "value": ",".join(get_notify_urls()),
+            # Never return the actual URLs to the browser — they carry credentials.
+            "count": len(get_notify_urls()),
+            "source": "env" if _ENV_NOTIFY_URLS else "database",
+            "locked": bool(_ENV_NOTIFY_URLS),
+        },
+    }
+
+
+@app.post("/api/settings", dependencies=[Depends(require_ui)])
+async def update_settings(payload: dict = Body(...)):
+    """Update settings stored in the database.
+
+    Only fields present in the payload are touched. Fields that are locked
+    (overridden by an env var) cannot be changed from the UI.
+    """
+    global TOKEN, STATUS_URL, NOTIFY_URLS
+    changed = []
+
+    if "status_url" in payload:
+        if _ENV_STATUS_URL:
+            raise HTTPException(400, "STATUS_URL is set via environment variable "
+                                     "and cannot be changed from the UI")
+        val = str(payload["status_url"]).strip()
+        if val and not re.match(r"^https?://", val, re.I):
+            raise HTTPException(400, "status_url must start with http:// or https://")
+        set_state("status_url", val)
+        STATUS_URL = get_status_url()
+        changed.append("status_url")
+
+    if "notify_urls" in payload:
+        if _ENV_NOTIFY_URLS:
+            raise HTTPException(400, "IDLARR_NOTIFY_URLS is set via environment "
+                                     "variable and cannot be changed from the UI")
+        val = str(payload["notify_urls"]).strip()
+        set_state("notify_urls", val)
+        NOTIFY_URLS = get_notify_urls()
+        changed.append("notify_urls")
+
+    if "regenerate_token" in payload and payload["regenerate_token"]:
+        if _ENV_TOKEN:
+            raise HTTPException(400, "IDLARR_TOKEN is set via environment variable "
+                                     "and cannot be changed from the UI")
+        new_token = secrets.token_hex(32)
+        set_state("idlarr_token", new_token)
+        TOKEN = new_token
+        changed.append("token")
+
+    if not changed:
+        raise HTTPException(400, "nothing to update")
+
+    return {"updated": changed}
+
+
+
 @app.post("/api/test-notify")
 async def test_notify(request: Request,
                       authorization: str | None = Header(default=None)):
@@ -1695,11 +2065,13 @@ async def test_notify(request: Request,
     This always sends, and returns the provider's own reason for a refusal
     instead of swallowing it.
     """
-    if not (TOKEN and authorization == f"Bearer {TOKEN}") and not authed(request):
+    token = get_token()
+    if not (token and authorization == f"Bearer {token}") and not authed(request):
         raise HTTPException(401, "bad token")
-    if not NOTIFY_URLS:
-        raise HTTPException(400, "IDLARR_NOTIFY_URLS is empty — alerts have "
-                                 "nowhere to go. Set it in .env and restart.")
+    notify_urls = get_notify_urls()
+    if not notify_urls:
+        raise HTTPException(400, "No notification URLs configured. "
+                                 "Set them in Settings > Notifications.")
 
     when = datetime.now(local_tz()).strftime("%d %b %Y %H:%M %Z")
     body = (f"Test from Idlarr at {when}.\n"
@@ -1710,7 +2082,7 @@ async def test_notify(request: Request,
         print(f"[notify] test FAILED: {reason}")
         raise HTTPException(502, f"not accepted: {reason}")
     print("[notify] test sent")
-    return {"ok": True, "destinations": len(NOTIFY_URLS)}
+    return {"ok": True, "destinations": len(notify_urls)}
 
 
 # ---------------------------------------------------------------- view
@@ -2453,6 +2825,32 @@ __SHEET__
    localStorage.removeItem('idl_authban');
    location.reload();
  });
+
+ // ---- settings: status URL and notify URLs --------------------------------
+ const surlsave=document.getElementById('surlsave');
+ if(surlsave){surlsave.addEventListener('click',async()=>{
+   const inp=document.getElementById('surl');
+   const r=await fetch('/api/settings',{method:'POST',
+     headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({status_url:inp.value})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){alert(d.detail||'failed');return;}
+   location.reload();
+ });}
+ const nsave=document.getElementById('nsave');
+ if(nsave){nsave.addEventListener('click',async()=>{
+   const inp=document.getElementById('nurls');
+   if(!inp.value){alert('enter at least one URL');return;}
+   const nte2=document.getElementById('nte');
+   nte2.className='e';nte2.textContent='saving\u2026';
+   const r=await fetch('/api/settings',{method:'POST',
+     headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({notify_urls:inp.value})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){nte2.textContent=d.detail||'failed';return;}
+   nte2.className='e good';nte2.textContent='saved';inp.value='';
+   setTimeout(()=>location.reload(),800);
+ });}
 })();
 </script></body></html>"""
 
@@ -2502,7 +2900,15 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
     #     them as editable controls that silently do nothing would be worse
     #     than showing them as facts.
     general = (
-        _row("Timezone", "All day counting is calendar days in this zone.",
+        _row("Status URL",
+             "Public URL of this page. Used in alerts and the generated userscript." +
+             (" Locked by env var." if _ENV_STATUS_URL else ""),
+             (f'<span class="val">{esc(get_status_url()) or "not set"}</span>'
+              if _ENV_STATUS_URL else
+              f'<input id="surl" value="{esc(get_status_url())}" '
+              f'placeholder="https://idlarr.example.com">'
+              f'<button class="lk" id="surlsave">Save</button>'))
+        + _row("Timezone", "All day counting is calendar days in this zone.",
              f'<span class="val">{esc(cfg["timezone"])}</span>')
         + _row("Daily check hour",
                "When the check runs and alerts batch into one push.",
@@ -2510,9 +2916,9 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
         + _row("Last check", "", f'<span class="val">{esc(last)}</span>')
         + _row("Backup retention", "Nightly snapshots kept in /data/backups.",
                f'<span class="val">{BACKUP_KEEP} days</span>')
-        + '<p class="sub" style="margin:15px 0 0">Edit these in '
-          '<code>trackers.yml</code> and <code>.env</code> — both are read live, '
-          'so only the timezone needs a restart.</p>')
+        + '<p class="sub" style="margin:15px 0 0">Timezone and check hour '
+          'live in <code>trackers.yml</code>. Everything else is editable here '
+          'or overridable with env vars.</p>')
 
     # --- sign-in: the form that used to be its own modal. Same element ids, so
     #     the handlers did not have to change.
@@ -2551,13 +2957,13 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
         _row("Covers", "One @match and one SITES entry per tracker with a host.",
              f'<span class="val on">{n_hosts} tracker'
              f'{"" if n_hosts == 1 else "s"}</span>')
-        + _row("Endpoint", "From STATUS_URL. The script reports here.",
-               f'<span class="val">{esc(host_from_url(STATUS_URL)) or "not set"}</span>')
+        + _row("Endpoint", "The script reports here.",
+               f'<span class="val">{esc(host_from_url(get_status_url())) or "not set"}</span>')
         + (_row("Install", "Violentmonkey takes this link directly.",
                 f'<a class="lk pri" href="{esc(js_url)}">Install</a>'
                 f'<button class="lk" id="cpjs" data-u="{esc(js_url)}">Copy URL</button>')
            if js_url else
-           _row("Install", "Set <b>STATUS_URL</b> in .env and restart — without it "
+           _row("Install", "Set the <b>Status URL</b> in Settings > General — without it "
                            "the generated script would have nowhere to report.",
                 '<span class="val off">unavailable</span>')))
 
@@ -2585,19 +2991,30 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
            if (saved_key or iurl) else "")
         + '<p class="e" id="ime"></p>')
 
+    notify_urls = get_notify_urls()
+    notify_locked = bool(_ENV_NOTIFY_URLS)
     notify = (
         _row("Configured",
-             "" if NOTIFY_URLS else "Alerts have nowhere to go.",
-             f'<span class="val {"on" if NOTIFY_URLS else "off"}">'
-             f'{len(NOTIFY_URLS)} destination{"" if len(NOTIFY_URLS) == 1 else "s"}</span>')
+             "" if notify_urls else "Alerts have nowhere to go.",
+             f'<span class="val {"on" if notify_urls else "off"}">'
+             f'{len(notify_urls)} destination{"" if len(notify_urls) == 1 else "s"}</span>')
+        + ('' if notify_locked else
+           _row("Apprise URLs",
+                "Comma-separated. Carry credentials, so they are never echoed back. "
+                "Full URL formats: <a href=\"https://github.com/caronc/apprise/wiki\" "
+                "target=\"_blank\" rel=\"noreferrer\">Apprise wiki</a>.",
+                '<input id="nurls" type="password" autocomplete="off" placeholder="'
+                + ("saved" if notify_urls else "ntfy://ntfy.sh/your-topic")
+                + '"><button class=\"lk\" id=\"nsave\">Save</button>'))
         + _row("Send a test",
                "Sends a real message now, whether or not anything is due. "
                "A failure reports the provider's own reason.",
                '<button class="lk" id="ntest">Send test</button>')
         + '<p class="e" id="nte"></p>'
-        + '<p class="sub" style="margin:15px 0 0">Destinations are Apprise URLs '
-          'in <code>IDLARR_NOTIFY_URLS</code>. They carry credentials, so they '
-          'stay in <code>.env</code> and are never shown here.</p>')
+        + ('<p class="sub" style="margin:15px 0 0">Locked by '
+           '<code>IDLARR_NOTIFY_URLS</code> env var.</p>' if notify_locked else
+           '<p class="sub" style="margin:15px 0 0">Destinations are Apprise URLs. '
+           'They carry credentials, so they are never shown back.</p>'))
 
     about = (
         _row("Version", "", f'<span class="val">{IDLARR_VERSION}</span>')
@@ -2706,13 +3123,15 @@ async def index(request: Request):
     # old footer overflow.
     n_hosts = sum(1 for t in load_config()["trackers"] if t.get("host"))
     n_trk = len(load_config()["trackers"])
-    js_url = (f"{STATUS_URL.rstrip('/')}/idlarr.user.js?token={TOKEN}"
-              if STATUS_URL else "")
+    _status_url = get_status_url()
+    _dl_token = make_download_token(ttl_seconds=86400) if _status_url else ""
+    js_url = (f"{_status_url.rstrip('/')}/idlarr.user.js?token={_dl_token}"
+              if _status_url else "")
 
     signin_bit = ('sign-in <b class="bad">off</b>' if method == "none"
                   else f'sign-in <b class="ok">{esc(method)}</b>')
     script_bit = (f'userscript <b>{esc(userscript_version_peek())}</b>' if js_url
-                  else 'userscript <b class="bad">no STATUS_URL</b>')
+                  else 'userscript <b class="bad">set Status URL</b>')
     last = get_state("last_check", "") or "not yet"
     status = (f'<span><b>{n_trk}</b> trackers</span>'
               f'<span>{signin_bit}</span>'

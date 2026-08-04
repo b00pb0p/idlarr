@@ -1,22 +1,27 @@
-FROM python:3.12-slim
+FROM python:3.13-alpine
+
+# Alpine has a much smaller attack surface than Debian slim — fewer OS-level
+# packages means fewer CVEs that have nothing to do with this application.
+RUN apk add --no-cache gcc musl-dev libffi-dev
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && apk del gcc musl-dev libffi-dev
 
 # idlarr.user.js is the TEMPLATE the /idlarr.user.js route fills in from live
-# config — it is not a static asset. Leave it out and that route 500s with
-# "cannot read the userscript template".
+# config — it is not a static asset.
 COPY app.py idlarr.user.js ./
 
-# Runs as a non-root user. PUID defaults to 1001 (the usual NAS/appdata
-# convention); override at build time if your host uses something else:
+# Runs as a non-root user. PUID defaults to 1001; override at build time:
 #   docker compose build --build-arg PUID=1000
-# Whatever you pick must own the ./data and ./config bind mounts on the host,
-# or startup dies with sqlite3.OperationalError: unable to open database file.
 ARG PUID=1001
-RUN useradd -u ${PUID} -m idlarr && mkdir -p /data && chown idlarr /data
+RUN adduser -D -u ${PUID} idlarr \
+    && mkdir -p /data /config \
+    && chown idlarr:idlarr /data /config
 USER idlarr
+
+VOLUME ["/data", "/config"]
 
 ENV IDLARR_DB=/data/idlarr.db \
     IDLARR_CONFIG=/config/trackers.yml \

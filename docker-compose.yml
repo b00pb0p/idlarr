@@ -6,34 +6,14 @@ services:
     ports:
       - "8099:8080"
     volumes:
-      # Pre-create both on the host and chown them to 1001. If Docker
-      # creates them they come out root-owned and the container cannot write
-      # its database — startup fails with "unable to open database file".
       - ./data:/data
       - ./config:/config
     environment:
-      # --- secrets: set these in a .env file beside this compose file --------
-      # ${VAR:?msg} makes compose abort loudly rather than start without them.
-      # That guard matters: an empty IDLARR_TOKEN disables auth entirely,
-      # so a typo'd variable would silently turn /ping into an open endpoint.
-      IDLARR_TOKEN: "${IDLARR_TOKEN:?set IDLARR_TOKEN in .env}"
-
-      # --- where your notifications go --------------------------------------
-      # Comma-separated Apprise URLs. ntfy, Pushover, Discord, Telegram,
-      # Signal, and ~100 more all go through here. Empty means alerts go
-      # nowhere, and startup says so.
-      IDLARR_NOTIFY_URLS: "${IDLARR_NOTIFY_URLS:?set IDLARR_NOTIFY_URLS in .env}"
-
-      # --- appended to every alert so you can tap through to the page -------
-      STATUS_URL: "${STATUS_URL:-}"
-
-      # --- non-secret settings ----------------------------------------------
       TZ: "${TZ:-UTC}"
-      # Emergency door for a forgotten UI password. Set it to 1 in .env, start
-      # once, then REMOVE it -- while it is set, every boot clears the login.
-      # The password itself is not here: it is set from the status page and
-      # stored hashed in the database.
-      IDLARR_RESET_AUTH: "${IDLARR_RESET_AUTH:-}"
-      # PUID is NOT here on purpose: it is a build argument, baked into the
-      # image. Setting it at runtime does nothing. chown data/ and config/ to
-      # 1001, or build from source with --build-arg PUID=<uid>.
+      # All other settings are auto-generated on first boot and configurable
+      # from the web UI. Set env vars here only to override/pin a value:
+      #
+      # IDLARR_TOKEN: ""          # auto-generated if empty
+      # IDLARR_NOTIFY_URLS: ""    # configure in Settings > Notifications
+      # STATUS_URL: ""            # configure in Settings > General
+      # IDLARR_RESET_AUTH: ""     # set to "1" to clear a forgotten password

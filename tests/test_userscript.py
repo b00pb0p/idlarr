@@ -35,6 +35,8 @@ def fresh():
     app.init_db()
     with app.db() as conn:
         conn.execute("DELETE FROM state")
+    # Set STATUS_URL in the DB so route tests can serve the userscript.
+    app.set_state("status_url", BASE)
     yield
 
 
@@ -79,7 +81,7 @@ def test_no_placeholder_survives(js, placeholder):
 
 def test_endpoint_and_token_come_from_config(js):
     assert f'const ENDPOINT = "{BASE}/ping";' in js
-    assert f'const TOKEN    = "{app.TOKEN}";' in js
+    assert f'const TOKEN    = "{app.get_token()}";' in js
 
 
 def test_connect_names_the_endpoint_host(js):
@@ -89,9 +91,10 @@ def test_connect_names_the_endpoint_host(js):
 
 
 def test_update_urls_point_back_at_the_service(js):
-    """Without these, adding a tracker means reinstalling by hand."""
-    assert f"// @updateURL   {BASE}/idlarr.user.js?token={app.TOKEN}" in js
-    assert f"// @downloadURL {BASE}/idlarr.user.js?token={app.TOKEN}" in js
+    """Without these, adding a tracker means reinstalling by hand.
+    Uses short-lived download tokens now, so check the prefix not the exact token."""
+    assert f"// @updateURL   {BASE}/idlarr.user.js?token=" in js
+    assert f"// @downloadURL {BASE}/idlarr.user.js?token=" in js
 
 
 def test_one_match_line_per_tracker(js):
@@ -205,7 +208,7 @@ def test_route_needs_the_token_or_a_session_once_auth_is_on(client):
     client.cookies.clear()
     assert client.get("/idlarr.user.js").status_code == 401
     assert client.get("/idlarr.user.js?token=wrong").status_code == 401
-    r = client.get(f"/idlarr.user.js?token={app.TOKEN}")
+    r = client.get(f"/idlarr.user.js?token={app.get_token()}")
     assert r.status_code == 200
     assert "PUT_IDLARR_TOKEN_HERE" not in r.text
 
@@ -219,7 +222,7 @@ def test_route_accepts_a_ui_session(client):
 
 
 def test_route_serves_javascript(client):
-    r = client.get(f"/idlarr.user.js?token={app.TOKEN}")
+    r = client.get(f"/idlarr.user.js?token={app.get_token()}")
     assert r.headers["content-type"].startswith("text/javascript")
 
 
@@ -227,8 +230,11 @@ def test_route_explains_a_missing_status_url(monkeypatch):
     """Serving a script whose ENDPOINT is empty would install fine and report
     nowhere. Refuse, and say what to set."""
     monkeypatch.setattr(app, "STATUS_URL", "")
+    monkeypatch.setattr(app, "_ENV_STATUS_URL", "")
+    # Also clear the DB value so nothing provides a status URL.
+    app.set_state("status_url", "")
     c = TestClient(app.app)
-    r = c.get(f"/idlarr.user.js?token={app.TOKEN}")
+    r = c.get(f"/idlarr.user.js?token={app.get_token()}")
     assert r.status_code == 500
     assert "STATUS_URL" in r.json()["detail"]
 

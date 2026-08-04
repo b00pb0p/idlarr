@@ -228,7 +228,7 @@ def test_ping_still_uses_the_bearer_token(client):
     client.cookies.clear()
     assert client.post("/ping", json={"tracker": "alpha"}).status_code == 401
     r = client.post("/ping", json={"tracker": "alpha"},
-                    headers={"Authorization": f"Bearer {app.TOKEN}"})
+                    headers={"Authorization": f"Bearer {app.get_token()}"})
     assert r.status_code == 200
 
 

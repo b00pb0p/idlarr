@@ -327,7 +327,12 @@ def test_a_working_connection_is_remembered(client, cfg, prowlarr):
     client.post("/api/import", json=BODY)
     assert app.get_state("import_source") == "prowlarr"
     assert app.get_state("import_url") == BODY["url"]
-    assert app.get_state("import_key") == "k"
+    # The key is stored encrypted, not plaintext.
+    stored = app.get_state("import_key")
+    assert stored != "k"  # must not be plaintext
+    assert stored  # but must be present
+    # Decrypting with the right secret gives back the original.
+    assert app.decrypt_value(stored, app._encryption_secret()) == "k"
 
 
 def test_a_failed_connection_is_not_remembered(client, cfg, monkeypatch):

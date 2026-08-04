@@ -414,6 +414,7 @@ def test_backup_leaves_no_tmp_file(backup_dir):
 def test_require_token_rejects_when_token_unset(monkeypatch):
     """The old code returned early here, silently disabling authentication."""
     monkeypatch.setattr(app, "TOKEN", "")
+    monkeypatch.setattr(app, "_ENV_TOKEN", "")
     with pytest.raises(app.HTTPException) as e:
         app.require_token("Bearer anything")
     assert e.value.status_code == 500
@@ -421,6 +422,7 @@ def test_require_token_rejects_when_token_unset(monkeypatch):
 
 def test_require_token_rejects_a_wrong_token(monkeypatch):
     monkeypatch.setattr(app, "TOKEN", "correct")
+    monkeypatch.setattr(app, "_ENV_TOKEN", "")
     with pytest.raises(app.HTTPException) as e:
         app.require_token("Bearer wrong")
     assert e.value.status_code == 401
@@ -428,12 +430,14 @@ def test_require_token_rejects_a_wrong_token(monkeypatch):
 
 def test_require_token_rejects_a_missing_header(monkeypatch):
     monkeypatch.setattr(app, "TOKEN", "correct")
+    monkeypatch.setattr(app, "_ENV_TOKEN", "")
     with pytest.raises(app.HTTPException):
         app.require_token(None)
 
 
 def test_require_token_accepts_the_right_token(monkeypatch):
     monkeypatch.setattr(app, "TOKEN", "correct")
+    monkeypatch.setattr(app, "_ENV_TOKEN", "")
     app.require_token("Bearer correct")          # must not raise
 
 
@@ -520,6 +524,7 @@ def test_many_items_batch_into_one_message():
 def test_status_url_is_in_the_body_not_a_click_action(monkeypatch):
     """Every service renders a URL in text; only some support tap targets."""
     monkeypatch.setattr(app, "STATUS_URL", "https://box.example/")
+    monkeypatch.setattr(app, "_ENV_STATUS_URL", "")
     p = app.build_notification([row()])
     assert p["body"].endswith("https://box.example/")
 
