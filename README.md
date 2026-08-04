@@ -102,7 +102,7 @@ docker compose up -d
 
 `latest` follows releases, `1.2` pins a minor, `edge` tracks `main`.
 
-**4. Userscript.** Install [Violentmonkey](https://violentmonkey.github.io/),
+**4. Userscript.** Install a userscript manager ([Violentmonkey](https://violentmonkey.github.io/), Tampermonkey, or Greasemonkey),
 open the status page, and click **Install** in the Userscript section of
 settings. The script is generated from your tracker list — nothing to fill in —
 and it updates itself when you add a tracker.

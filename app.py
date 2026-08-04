@@ -2574,7 +2574,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
                 '<input id="amx" type="password" autocomplete="current-password">')
            if method != "none" else '<input id="amx" type="hidden">')
         + _row("", "Changing this signs every other browser out. Forgotten it? "
-                   "Restart once with <b>IDLARR_RESET_AUTH=1</b>.",
+                   "Restart once with <b>IDLARR_RESET_AUTH=1</b> set.",
                ('<button class="lk" id="amout">Sign out</button>' if method != "none" else "")
                + '<button class="lk pri" id="amsave">Save</button>')
         + '<p class="e" id="ame"></p>')
@@ -2585,7 +2585,8 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
              f'{"" if n_hosts == 1 else "s"}</span>')
         + _row("Endpoint", "From STATUS_URL. The script reports here.",
                f'<span class="val">{esc(host_from_url(STATUS_URL)) or "not set"}</span>')
-        + (_row("Install", "Violentmonkey takes this link directly.",
+        + (_row("Install", "Any userscript manager (Violentmonkey, Tampermonkey, "
+                           "Greasemonkey) installs from this link.",
                 f'<a class="lk pri" href="{esc(js_url)}">Install</a>'
                 f'<button class="lk" id="cpjs" data-u="{esc(js_url)}">Copy URL</button>')
            if js_url else

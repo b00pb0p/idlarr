@@ -140,7 +140,7 @@ Tailscale or a VPN, or both. Do not expose it unauthenticated.
 `IDLARR_TOKEN` — an empty token would disable authentication entirely, which is
 indistinguishable from working until something writes to your database.
 
-**5. Userscript** — install [Violentmonkey](https://violentmonkey.github.io/),
+**5. Userscript** — install a userscript manager ([Violentmonkey](https://violentmonkey.github.io/), Tampermonkey, or Greasemonkey),
 then open the status page, click the settings gear, and click **Install** in the
 Userscript section.
 
@@ -150,7 +150,7 @@ and the `SITES` ids come from the same config `/ping` validates against, so they
 cannot disagree. There is nothing to edit.
 
 It also carries `@updateURL`, so **adding a tracker later reaches the browser on
-its own** — Violentmonkey picks it up on the next update check, no reinstall.
+its own** — your manager picks it up on its next update check, no reinstall.
 
 The link needs `STATUS_URL` set (step 3); without it the generated script would
 have nowhere to report and the route says so rather than serving one. If you'd

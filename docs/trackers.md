@@ -8,7 +8,7 @@ heuristic cannot read. All of this happens after you are running — see
 enough — the id is derived from the name and the host from the URL, both
 editable. The entry is appended to `trackers.yml` with its comments intact, and
 the generated userscript changes with it, so the browser picks up the new
-`@match` on Violentmonkey's next update check.
+`@match` on your manager's next update check.
 
 Open a row to change its **limit**, mark it **confirmed** or **immune**, or edit
 its **notes** — the first word of which sets the software column, so correcting
@@ -103,7 +103,7 @@ Both directions are live, and neither overwrites the other:
 |---|---|
 | page → file | writes to `trackers.yml`, comments intact |
 | file → page | hot-reloaded on change, no restart |
-| file → userscript | the generated script's version bumps, so browsers pick it up on Violentmonkey's next update check |
+| file → userscript | the generated script's version bumps, so browsers pick it up on your manager's next update check |
 
 Some things are only reachable by hand, because the page deliberately does not
 expose them:
