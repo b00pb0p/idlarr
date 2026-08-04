@@ -2031,11 +2031,19 @@ PAGE = """<!doctype html>
   .imlist .new{color:var(--ok);font-size:10px;white-space:nowrap}
   @media(max-width:760px){
     .sheet .win{flex-direction:column;height:92vh}
-    .sheet nav{width:100%;display:flex;overflow-x:auto;padding:0;
+    /* The nav becomes a horizontal scrolling strip, and the absolutely-placed
+       close button floats over its right end — landing on the last tab. Reserve
+       a gutter so tabs end before the corner, and give the button an opaque
+       background matching the nav so a tab scrolling under it is masked cleanly
+       rather than showing through. */
+    .sheet nav{width:100%;display:flex;overflow-x:auto;padding:0 46px 0 0;
       border-right:0;border-bottom:1px solid var(--line)}
     .sheet nav button{border-left:0;border-bottom:2px solid transparent;
       white-space:nowrap;padding:12px 13px;width:auto}
     .sheet nav button.on{border-left:0;border-bottom-color:var(--accent)}
+    .xclose{top:0;right:0;width:44px;height:45px;background:var(--bg);
+      border-bottom:1px solid var(--line);display:flex;align-items:center;
+      justify-content:center}
     .sheet .row{flex-wrap:wrap}
     .sheet .row .ctl2{width:100%;justify-content:flex-start}
     .banner .sp{margin-left:0;width:100%}
@@ -2603,8 +2611,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
                '<button class="lk" id="impreview">Preview</button>'
                '<button class="lk pri" id="imapply" disabled>Import</button>')
         + (_row("Saved connection",
-                "Stored in the database in plaintext, and included in the "
-                "nightly backup. Forget it if that is not what you want.",
+                "Kept in the database (plaintext). Forget to remove.",
                 '<button class="lk" id="imforget">Forget</button>')
            if (saved_key or iurl) else "")
         + '<p class="e" id="ime"></p>')
