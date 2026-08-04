@@ -65,10 +65,28 @@ IDLARR_VERSION = os.environ.get("IDLARR_VERSION", "dev")
 KNOWN_SOFTWARE = {"gazelle": "Gazelle", "unit3d": "UNIT3D", "tbdev": "TBDev",
                   "custom": "Custom"}
 
-# Written on first run when no config exists. Deliberately carries the same
-# fail-safe warning as trackers.example.yml: a limit nobody has confirmed is a
-# guess, and a guess that is too high is the one that loses the account.
-DEFAULT_CONFIG = """# Idlarr config. Hot-reloaded — no container restart needed.
+def default_config() -> str:
+    """The config written on first run when none exists.
+
+    The timezone comes from the TZ environment variable, NOT a hardcoded UTC.
+    local_tz() reads this file, not the environment, so hardcoding UTC here
+    would silently count days in the wrong zone for anyone who set TZ in
+    compose — and counting in a zone behind the user's makes days_left too
+    large, which fires every alert LATE. That is the unsafe direction, and it
+    is invisible: nothing looks wrong, the countdown is just quietly generous.
+
+    Carries the same fail-safe warning as trackers.example.yml, so a generated
+    config still shouts that 30d is a placeholder rather than a fact.
+    """
+    tz = (os.environ.get("TZ") or "UTC").strip() or "UTC"
+    try:
+        ZoneInfo(tz)
+    except Exception:
+        print(f"[startup] TZ={tz!r} is not a known timezone — using UTC in the "
+              f"generated config. Fix `timezone:` in trackers.yml, or day "
+              f"counting will be off for you.")
+        tz = "UTC"
+    return f"""# Idlarr config. Hot-reloaded — no container restart needed.
 #
 # Add trackers from the status page (+ Add tracker), import them from Prowlarr
 # or Jackett, or write them here by hand. See docs/trackers.md.
@@ -82,11 +100,12 @@ DEFAULT_CONFIG = """# Idlarr config. Hot-reloaded — no container restart neede
 defaults:
   inactivity_days: 30
   alert_at_pct: 0.65
-  timezone: UTC
+  timezone: {tz}
   check_hour: 9
 
 trackers:
 """
+
 
 _cfg_cache = {"mtime": 0.0, "data": None}
 
@@ -1006,7 +1025,7 @@ async def lifespan(app: FastAPI):
     if not CONFIG_PATH.exists():
         try:
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            CONFIG_PATH.write_text(DEFAULT_CONFIG)
+            CONFIG_PATH.write_text(default_config())
         except OSError as exc:
             raise RuntimeError(
                 f"No tracker config at {CONFIG_PATH}, and it could not be "

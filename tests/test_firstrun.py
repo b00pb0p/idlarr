@@ -90,7 +90,7 @@ def test_the_generated_token_reaches_the_userscript(fresh, monkeypatch):
     monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
     app.set_state("idlarr_token", "abc123")
     app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    app.CONFIG_PATH.write_text(app.DEFAULT_CONFIG)
+    app.CONFIG_PATH.write_text(app.default_config())
     app._cfg_cache["data"] = None
     js = app.render_userscript("https://idlarr.test.internal")
     assert 'const TOKEN    = "abc123";' in js
@@ -102,11 +102,11 @@ def test_default_config_is_valid_and_empty(fresh):
     """A bare `trackers:` key parses as None; load_config normalises it to an
     empty list. Assert the contract the app actually relies on, not the raw
     parse — they legitimately differ."""
-    doc = yaml.safe_load(app.DEFAULT_CONFIG)
+    doc = yaml.safe_load(app.default_config())
     assert doc["trackers"] in (None, [])
     assert doc["defaults"]["inactivity_days"] == 30
     app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    app.CONFIG_PATH.write_text(app.DEFAULT_CONFIG)
+    app.CONFIG_PATH.write_text(app.default_config())
     app._cfg_cache["data"] = None
     assert app.load_config()["trackers"] == []
 
@@ -114,12 +114,12 @@ def test_default_config_is_valid_and_empty(fresh):
 def test_default_config_keeps_the_fail_safe_warning(fresh):
     """A generated config must carry the same warning as the shipped example:
     an unconfirmed limit is a guess, and a guess too high loses the account."""
-    assert "FAIL-SAFE PLACEHOLDER" in app.DEFAULT_CONFIG
+    assert "FAIL-SAFE PLACEHOLDER" in app.default_config()
 
 
 def test_an_auto_created_config_still_loads(fresh):
     app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    app.CONFIG_PATH.write_text(app.DEFAULT_CONFIG)
+    app.CONFIG_PATH.write_text(app.default_config())
     app._cfg_cache["data"] = None
     cfg = app.load_config()
     assert cfg["trackers"] == []
@@ -131,7 +131,7 @@ def test_empty_config_shows_a_first_run_banner_naming_the_path(fresh, monkeypatc
     empty install that looks healthy; naming the resolved path on screen is
     what makes 'empty because new' distinguishable from 'empty because wrong'."""
     app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    app.CONFIG_PATH.write_text(app.DEFAULT_CONFIG)
+    app.CONFIG_PATH.write_text(app.default_config())
     app._cfg_cache["data"] = None
     monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
     page = TestClient(app.app).get("/").text
@@ -141,7 +141,7 @@ def test_empty_config_shows_a_first_run_banner_naming_the_path(fresh, monkeypatc
 
 def test_the_banner_disappears_once_a_tracker_exists(fresh, monkeypatch):
     app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    app.CONFIG_PATH.write_text(app.DEFAULT_CONFIG)
+    app.CONFIG_PATH.write_text(app.default_config())
     app._cfg_cache["data"] = None
     app.add_tracker({"id": "alpha", "name": "Alpha", "url": "https://a.example/",
                      "host": "a.example", "inactivity_days": 30,
@@ -172,7 +172,7 @@ def test_second_add_also_works(fresh):
     """Appending to a list that was empty a moment ago is a different code path
     from appending to one that already had entries."""
     app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    app.CONFIG_PATH.write_text(app.DEFAULT_CONFIG)
+    app.CONFIG_PATH.write_text(app.default_config())
     app._cfg_cache["data"] = None
     for tid in ("alpha", "beta"):
         app.add_tracker({"id": tid, "name": tid.title(),
@@ -181,3 +181,31 @@ def test_second_add_also_works(fresh):
                          "notes": "", "auth_sel": ""})
     assert [t["id"] for t in app.load_config()["trackers"]] == ["alpha", "beta"]
     assert "FAIL-SAFE PLACEHOLDER" in app.CONFIG_PATH.read_text()
+
+
+# --------------------------------------------------------------- timezone
+
+def test_generated_config_uses_TZ_not_a_hardcoded_utc(fresh, monkeypatch):
+    """local_tz() reads the CONFIG FILE, not the environment. A hardcoded UTC
+    in the generated config silently counts days in the wrong zone for anyone
+    who set TZ — and a zone behind the user's makes days_left too large, firing
+    every alert LATE. Invisible, and in the unsafe direction."""
+    monkeypatch.setenv("TZ", "America/Chicago")
+    assert yaml.safe_load(app.default_config())["defaults"]["timezone"] == "America/Chicago"
+
+
+def test_generated_config_falls_back_to_utc_for_a_bad_tz(fresh, monkeypatch):
+    """A nonsense TZ must not produce a config that cannot load — ZoneInfo
+    would raise on every request."""
+    monkeypatch.setenv("TZ", "Not/AZone")
+    assert yaml.safe_load(app.default_config())["defaults"]["timezone"] == "UTC"
+
+
+def test_the_generated_timezone_actually_drives_day_counting(fresh, monkeypatch):
+    """End to end: write the generated config, then confirm local_tz() returns
+    the zone TZ asked for. Pins the whole chain rather than the string."""
+    monkeypatch.setenv("TZ", "America/Chicago")
+    app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    app.CONFIG_PATH.write_text(app.default_config())
+    app._cfg_cache["data"] = None
+    assert str(app.local_tz()) == "America/Chicago"
