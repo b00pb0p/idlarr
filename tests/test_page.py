@@ -365,3 +365,21 @@ def test_dead_drawer_styles_are_gone(page):
     css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
     for sel in ("  .ctl{", "  .field{", "  .note{", "  .reason{", "  .ctl2r{"):
         assert sel not in css, f"dead rule still present: {sel.strip()}"
+
+
+def test_healthz_reports_the_build_version(client, monkeypatch):
+    """CI reads the version from here rather than scraping the About panel.
+    Grepping HTML coupled the build check to markup, so a layout change could
+    fail the release for no real reason — and the failure could not say why."""
+    monkeypatch.setattr(app, "IDLARR_VERSION", "1.2.3")
+    body = client.get("/healthz").json()
+    assert body["version"] == "1.2.3"
+    assert body["ok"] is True
+    assert "trackers" in body
+
+
+def test_healthz_version_matches_what_the_about_panel_shows(client):
+    """Two surfaces, one value. If they can disagree, one of them is lying."""
+    shown = client.get("/healthz").json()["version"]
+    page = client.get("/").text
+    assert f'<span class="val">{shown}</span>' in page

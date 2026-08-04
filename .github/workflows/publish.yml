@@ -121,9 +121,28 @@ jobs:
           # It was a hand-maintained constant and drifted immediately: v1.1.1
           # shipped reporting 1.1.0, so a correctly-updated container told its
           # owner it had not updated.
+          #
+          # Read it from /healthz, not by scraping the page. Grepping HTML for
+          # ">edge<" coupled CI to the About panel's markup, and `curl | grep`
+          # failed identically whether the page 500'd, the container died, or
+          # the string moved — a check that cannot say why it failed.
           want='${{ steps.meta.outputs.version }}'
-          if ! curl -fsS localhost:8099/ | grep -q ">$want<"; then
-            echo "::error::page does not report version $want"; exit 1
+          got=$(python3 -c "import json;print(json.load(open('/tmp/smoke/healthz.json')).get('version',''))")
+          if [ "$got" != "$want" ]; then
+            echo "::error::image reports version '$got', expected '$want'"
+            echo "--- IDLARR_VERSION inside the container ---"
+            docker exec smoke sh -c 'echo "IDLARR_VERSION=$IDLARR_VERSION"' || true
+            echo "--- container log ---"; docker logs smoke 2>&1 | tail -30
+            exit 1
+          fi
+
+          # The page must still render — a 500 here would otherwise only show
+          # up as a user complaint.
+          page=$(curl -s -o /dev/null -w '%{http_code}' localhost:8099/ || echo 000)
+          if [ "$page" != "200" ]; then
+            echo "::error::GET / returned $page (expected 200)"
+            docker logs smoke 2>&1 | tail -30
+            exit 1
           fi
           echo "smoke: $count trackers, /ping 401, version $want"
 

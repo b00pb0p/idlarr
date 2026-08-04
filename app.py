@@ -1863,7 +1863,8 @@ async def healthz():
     """Stays open on purpose. Open item 1 wants an uptime monitor pointed here,
     and a monitor that needs credentials is a monitor that will not get set up.
     It discloses a tracker count and nothing else."""
-    return {"ok": True, "trackers": len(load_config()["trackers"])}
+    return {"ok": True, "version": IDLARR_VERSION,
+            "trackers": len(load_config()["trackers"])}
 
 
 # ---------------------------------------------------------------- userscript
