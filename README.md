@@ -172,8 +172,8 @@ last, so a tracker with no data can never outrank one that's expiring.
 Click a **name** to open that tracker in a new tab. Click anywhere else on the
 row to expand a drawer with three panels:
 
-- **controls** — limit, `confirm`, `immune` (with a reason field), notes,
-  `seen`, `undo`, `remove`
+- **controls** — limit, `confirm`, `immune` (with a reason field), **snooze**,
+  **alert at**, notes, `seen`, `undo`, `remove`
 - **alert schedule** — the exact date each rung fires, or why it won't
 - **auth history** — recent auth events, and whether each was observed or asserted
 
@@ -182,7 +182,7 @@ lives behind the gear, in six sections:
 
 | | |
 |---|---|
-| **General** | timezone, check hour, last check, backup retention |
+| **General** | timezone, check hour, alert threshold, still-alive push, config download |
 | **Sign-in** | method, credentials, sign out |
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
 | **Import** | Prowlarr or Jackett |
@@ -222,6 +222,7 @@ Relative to each tracker's inactivity limit:
 | Remaining | State | Priority | Reaches you as |
 |---|---|---|---|
 | immune | immune | — | never alerts |
+| snoozed (date in future) | snoozed | — | never alerts, expires by itself |
 | > 35% | ok | — | silent |
 | ≤ 35% (or past `alert_at_pct`) | due | `default` | *info* |
 | ≤ 14 days | warn | `high` | *warning* |
@@ -231,6 +232,25 @@ Relative to each tracker's inactivity limit:
 
 The right-hand column is the Apprise severity, which each service renders in its
 own way — a colour in Discord, a priority level in Pushover, a tag in ntfy.
+
+## Still-alive push
+
+Nothing else watches the watchdog. If this container dies, the daily check and
+the nightly backup both stop — and **silence is exactly what a healthy quiet
+day looks like**. You would not find out until an account was gone.
+
+Turn on a heartbeat in *Settings → General → Still-alive push*: daily, weekly or
+fortnightly. It sends one low-priority message — *"Idlarr is running. Watching
+23 trackers. Closest: Anthelion, 4 days left."* Once you expect one every
+Monday, its absence means something.
+
+Off by default. Unrequested notifications are how people learn to ignore the
+ones that matter. It runs after the daily check and only when nothing was due,
+so a day with a real alert never also gets a heartbeat, and a failed send is not
+recorded as sent — otherwise one lost push would silence the next one too.
+
+The alternative, if you already run monitoring: point an uptime monitor at
+`/healthz`, which needs no credentials for exactly this reason.
 
 Alerts batch into **one message per day**, not one per tracker. A dozen separate
 pushes is how someone starts ignoring them. It repeats daily while anything is
@@ -299,6 +319,8 @@ start without it, and the service warns if it ends up empty anyway.
 | `POST /api/tracker` | Add a tracker, appends to trackers.yml |
 | `DELETE /api/tracker/{id}` | Remove one. Auth history is kept |
 | `POST /api/import` | Preview (default) or apply a Prowlarr/Jackett import |
+| `GET /api/config` | Download `trackers.yml` as it is on disk |
+| `POST /api/settings` | Edit the `defaults:` block — timezone, check hour, thresholds |
 | `GET`/`POST /api/auth` | Read or change the UI login |
 | `POST /login` · `POST /logout` | Session in, session out |
 | `POST /api/test-notify` | Send a test notification. Bearer token or a session |

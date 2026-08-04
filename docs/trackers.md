@@ -119,6 +119,19 @@ expose them:
 Bulk edits are also just faster in an editor. Twenty trackers is twenty
 dialogs on the page and one search-and-replace in the file.
 
+# Alerting earlier on a short limit
+
+The `due` rung fires at `alert_at_pct` of a tracker's limit — 65% by default.
+On a short limit that is often past `warn` already, so `due` never fires: at 30
+days, 65% is day 20 and `warn` starts at day 16.
+
+Lower it for that tracker alone with **alert at** in the row drawer, or
+`alert_at_pct` in the config. Accepted range is 0.4 to 0.95.
+
+Do **not** lower it globally to fix a short tracker. At 0.4 a 365-day tracker
+starts nagging 219 days before it matters, and alerts you learn to ignore are
+worse than no alerts.
+
 ## A site the heuristic can't read
 
 Single-page apps often keep no logout control in the DOM until you open a user
@@ -143,6 +156,26 @@ appear on torrent-listing pages — point that tracker's `url` at its browse pag
 recorded events stay in the database, so re-adding the same `id` later resumes
 the old countdown rather than starting fresh.
 
+
+# Snooze
+
+Trackers with a **vacation mode**, or an account you have parked deliberately.
+Open the row, set a date under **snooze**, and it stops alerting until then.
+
+The countdown keeps running and stays on screen — you still want to know when
+the account actually expires while deciding whether to extend. Only the alerts
+are suppressed.
+
+**It expires by itself.** That is the whole reason to use snooze rather than
+`immune`: an immune tracker stays immune until you remember to undo it, and
+forgetting means an account you still care about is silently no longer watched.
+A snooze that runs out simply resumes counting.
+
+Clear the date to resume immediately. A snooze longer than a year is refused —
+past that you want `immune`, which says so on the row instead of hiding a
+countdown behind a date nobody will revisit. A date the service cannot parse is
+ignored rather than honoured, so a typo keeps alerting instead of silently
+muting.
 
 # Immune trackers
 
