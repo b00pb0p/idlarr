@@ -19,7 +19,7 @@ import sqlite3
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -153,6 +153,10 @@ def load_config() -> dict:
             # its row (and its link, and the reason) but never alerts.
             merged.setdefault("immune", False)
             merged.setdefault("immune_reason", "")
+            # ISO date. Suppresses alerts until it passes, then evaluation
+            # returns to normal on its own — the point of a snooze over
+            # `immune` is that forgetting to undo it is not a silent failure.
+            merged.setdefault("snooze_until", "")
             # The status page shows tracker software as its own column. It has
             # always lived as the first word of `notes` ("Gazelle. Already lost
             # once."), so derive it rather than making the user restate it. An
@@ -232,7 +236,9 @@ def _block_bounds(lines: list[str], tracker_id: str) -> tuple[int, int, str]:
 def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
                         verified: bool | None = None, immune: bool | None = None,
                         immune_reason: str | None = None,
-                        notes: str | None = None) -> None:
+                        notes: str | None = None,
+                        snooze_until: str | None = None,
+                        alert_at_pct: float | None = None) -> None:
     """Rewrite one tracker's inactivity_days / verified in trackers.yml.
 
     A surgical line edit, NOT a yaml.safe_dump round-trip. The comments in
@@ -243,7 +249,8 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
     Writes atomically via os.replace, and refuses to install a file that
     doesn't parse or that changes the tracker count.
     """
-    if all(v is None for v in (inactivity_days, verified, immune, immune_reason, notes)):
+    if all(v is None for v in (inactivity_days, verified, immune, immune_reason,
+                               notes, snooze_until, alert_at_pct)):
         return
 
     with _write_lock:
@@ -272,6 +279,10 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
             upsert("verified", "true" if verified else "false")
         if immune is not None:
             upsert("immune", "true" if immune else "false")
+        if alert_at_pct is not None:
+            upsert("alert_at_pct", str(float(alert_at_pct)))
+        if snooze_until is not None:
+            upsert("snooze_until", json.dumps(str(snooze_until)))
         if notes is not None:
             # Also re-derives the software column, since that is the first word
             # of notes unless an explicit `software:` key overrides it.
@@ -306,6 +317,10 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
             raise ValueError("refusing write: immune_reason did not take")
         if notes is not None and entry.get("notes", "") != str(notes):
             raise ValueError("refusing write: notes did not take")
+        if snooze_until is not None and str(entry.get("snooze_until", "")) != str(snooze_until):
+            raise ValueError("refusing write: snooze_until did not take")
+        if alert_at_pct is not None and float(entry.get("alert_at_pct", -1)) != float(alert_at_pct):
+            raise ValueError("refusing write: alert_at_pct did not take")
 
         tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
         tmp.write_text(candidate)
@@ -832,6 +847,25 @@ def evaluate(tracker: dict, now: datetime | None = None) -> dict:
                    reason=tracker.get("immune_reason") or "Exempt from inactivity pruning.")
         return out
 
+    # Snoozed: vacation mode is on, or the account is parked. Alerts are
+    # suppressed but the COUNTDOWN IS STILL SHOWN — you still want to know when
+    # the account actually expires while deciding whether to extend. Unlike
+    # `immune` this expires by itself, so forgetting to undo it cannot silently
+    # stop watching an account you still care about.
+    snooze = str(tracker.get("snooze_until") or "").strip()
+    if snooze:
+        try:
+            until = date.fromisoformat(snooze)
+        except ValueError:
+            until = None
+        if until and until >= now.astimezone(local_tz()).date():
+            if auth is not None:
+                out["days_since"] = elapsed_days(now, auth)
+                out["days_left"] = inactivity_days - out["days_since"]
+            out.update(state="snoozed", priority=None,
+                       reason=f"Snoozed until {until.isoformat()}.")
+            return out
+
     # Visited recently but not authenticated => session died. Independent of the limit.
     stale_session = (
         visit is not None
@@ -869,10 +903,13 @@ def evaluate(tracker: dict, now: datetime | None = None) -> dict:
 
 
 def statuses(now: datetime | None = None) -> list[dict]:
-    order = {"expired": 0, "session": 1, "critical": 2, "warn": 3, "due": 4,
-             "unknown": 5, "ok": 6, "immune": 7}
+    """Worst first. Uses the module-level RANK rather than a local copy: this
+    had its own duplicate ordering dict, so adding a state updated the page and
+    silently left server-side sorting behind — and a KeyError here takes the
+    whole status page down."""
     rows = [evaluate(t, now) for t in load_config()["trackers"]]
-    return sorted(rows, key=lambda r: (order[r["state"]], r["days_left"] if r["days_left"] is not None else 9999))
+    return sorted(rows, key=lambda r: (RANK[r["state"]],
+                                       r["days_left"] if r["days_left"] is not None else 9999))
 
 
 def build_notification(rows: list[dict]) -> dict | None:
@@ -1272,6 +1309,7 @@ def clean(r: dict) -> dict:
         "days_since": r["days_since"], "days_left": r["days_left"],
         "inactivity_days": r["inactivity_days"], "verified": bool(r["verified"]),
         "immune": bool(r.get("immune")), "immune_reason": r.get("immune_reason", ""),
+        "snooze_until": str(r.get("snooze_until") or ""),
         "reason": r["reason"], "auth_source": r.get("auth_source", ""),
         "software": r.get("software", ""), "url": r.get("url", ""),
         "notes": r.get("notes", ""), "alert_at_pct": float(r.get("alert_at_pct", 0.65)),
@@ -1305,6 +1343,21 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
     if notes is not None:
         notes = str(notes).strip()[:500]
 
+    snooze = payload.get("snooze_until")
+    if snooze is not None:
+        snooze = str(snooze).strip()
+        if snooze:
+            try:
+                until = date.fromisoformat(snooze)
+            except ValueError:
+                raise HTTPException(400, "snooze_until must be a date, YYYY-MM-DD")
+            # A year is already far beyond any vacation mode. Longer than that
+            # you want `immune`, which says so on the row instead of hiding a
+            # countdown behind a date nobody will revisit.
+            if until > date.today() + timedelta(days=365):
+                raise HTTPException(400, "snooze cannot exceed a year — use immune instead")
+            snooze = until.isoformat()
+
     if immune is not None:
         immune = bool(immune)
     if immune_reason is not None:
@@ -1319,16 +1372,46 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
             raise HTTPException(400, "inactivity_days must be between 1 and 3650")
     if verified is not None:
         verified = bool(verified)
-    if all(v is None for v in (days, verified, immune, immune_reason, notes)):
+    pct = payload.get("alert_at_pct")
+    if pct is not None:
+        try:
+            pct = float(pct)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "alert_at_pct must be a number")
+        if not 0.4 <= pct <= 0.95:
+            raise HTTPException(400, "alert_at_pct must be between 0.4 and 0.95")
+
+    if all(v is None for v in (days, verified, immune, immune_reason, notes,
+                               snooze, pct)):
         raise HTTPException(400, "nothing to update")
 
     try:
-        save_tracker_fields(tracker_id, days, verified, immune, immune_reason, notes)
+        save_tracker_fields(tracker_id, days, verified, immune, immune_reason,
+                            notes, snooze, pct)
     except (KeyError, ValueError) as exc:
         raise HTTPException(500, f"config write refused: {exc}")
 
     row = next(r for r in statuses() if r["id"] == tracker_id)
     return clean(row)
+
+
+@app.get("/api/config", dependencies=[Depends(require_ui)])
+async def download_config():
+    """Download trackers.yml as it is on disk.
+
+    Byte-for-byte, comments included — the per-tracker notes about seeding,
+    user class and vacation mode are the part worth keeping, and a yaml dump
+    would drop every one of them.
+    """
+    try:
+        body = CONFIG_PATH.read_text()
+    except OSError as exc:
+        raise HTTPException(500, f"cannot read {CONFIG_PATH}: {exc}")
+    stamp = datetime.now(local_tz()).strftime("%Y-%m-%d")
+    return Response(
+        body, media_type="text/yaml; charset=utf-8",
+        headers={"Content-Disposition":
+                 f'attachment; filename="trackers-{stamp}.yml"'})
 
 
 @app.post("/api/settings", dependencies=[Depends(require_ui)])
@@ -2037,6 +2120,7 @@ PAGE = """<!doctype html>
     --fg:#dbe3e7;--dim:#727f88;--dim2:#8e9aa3;
     --ok:#43a06b;--due:#c2a136;--warn:#d2802f;--critical:#e0553f;--expired:#a52c4e;
     --immune:#6572a0;--session:#2f96b4;--unknown:#5d6870;--accent:#e0553f;
+    --snoozed:#7a6a94;
   }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--fg);
@@ -2145,6 +2229,11 @@ PAGE = """<!doctype html>
   .reason input:focus{outline:none;border-color:var(--immune)}
   .msg{font-size:10px;color:var(--dim);min-height:14px;margin-top:9px;letter-spacing:.03em}
   .msg.bad{color:var(--critical)} .msg.good{color:var(--ok)} .msg.warn{color:var(--due)}
+  .ctl2r{display:flex;gap:10px;margin-top:9px;flex-wrap:wrap}
+  .ctl2r .field{flex:1;min-width:132px}
+  .ctl2r input{font:inherit;font-size:11.5px;width:100%;background:#0b0e10;
+    color:var(--fg);border:1px solid var(--line);padding:4px 6px}
+  .ctl2r input:focus{outline:none;border-color:var(--accent)}
   .note{margin-top:9px}
   .note input{font:inherit;font-size:11px;width:100%;background:#0b0e10;
     color:var(--dim);font-style:italic;border:1px solid var(--line);padding:5px 7px}
@@ -2411,8 +2500,9 @@ __SHEET__
  const CURRENT_METHOD='__AUTHMETHOD__';
  const tb=document.querySelector('tbody');
  const LABEL={ok:'days left',due:'days left',warn:'days left',critical:'days left',
-   expired:'days over',session:'re-auth',immune:'exempt',unknown:'no data'};
- const RANK={expired:0,session:1,critical:2,warn:3,due:4,unknown:5,ok:6,immune:7};
+   expired:'days over',session:'re-auth',immune:'exempt',unknown:'no data',
+   snoozed:'days left'};
+ const RANK={expired:0,session:1,critical:2,warn:3,due:4,unknown:5,ok:6,snoozed:7,immune:8};
 
  const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify(b||{})}).then(async r=>{const d=await r.json().catch(()=>({}));
@@ -2478,6 +2568,11 @@ __SHEET__
     +'<button class="imm'+(imm?' on':'')+'">'+(imm?'\\u25cf immune':'immune')+'</button>'
     +'<button class="seen">seen</button><button class="undo danger">undo</button>'
     +'<button class="del danger">remove</button></div>'
+    +'<div class="ctl2r"><label class="field"><span>snooze</span>'
+    +'<input class="snz" type="date" value="'+hesc(d.snooze_until||'')+'"></label>'
+    +'<label class="field"><span>alert at</span>'
+    +'<input class="pct" type="text" inputmode="decimal" size="4" value="'
+    +(d.alert_at_pct||0.65)+'"></label></div>'
     +(imm?'<div class="reason"><input class="rsn" value="'+hesc(d.immune_reason||'')
       +'" placeholder="why immune? e.g. donated, elite class"></div>':'')
     +'<div class="note"><input class="nts" value="'+hesc(d.notes||'')
@@ -2534,6 +2629,26 @@ __SHEET__
          refresh(r);msg('reason saved','good');}).catch(e=>{msg(e.message,'bad');rsn.value=last;});};
      rsn.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();rsn.blur();}});
      rsn.addEventListener('blur',save);}
+
+   const snz=el.querySelector('.snz');
+   if(snz){let last=snz.value;
+     const save=()=>{if(snz.value===last)return;
+       post('/api/limit/'+d.id,{snooze_until:snz.value}).then(r=>{last=r.snooze_until||'';
+         refresh(r);paint(tr,r);
+         msg(r.snooze_until?('snoozed until '+r.snooze_until+' \u2014 no alerts until then')
+                           :'snooze cleared','good');
+       }).catch(e=>{msg(e.message,'bad');snz.value=last;});};
+     snz.addEventListener('change',save);}
+
+   const pct=el.querySelector('.pct');
+   if(pct){let last=pct.value;
+     const save=()=>{if(pct.value===last)return;
+       post('/api/limit/'+d.id,{alert_at_pct:pct.value}).then(r=>{
+         last=String(r.alert_at_pct);refresh(r);
+         msg('alert threshold saved','good');
+       }).catch(e=>{msg(e.message,'bad');pct.value=last;});};
+     pct.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();pct.blur();}});
+     pct.addEventListener('blur',save);}
 
    const nts=el.querySelector('.nts');
    if(nts){let last=nts.value;
@@ -2807,9 +2922,9 @@ __SHEET__
 
 LABELS = {"ok": "days left", "due": "days left", "warn": "days left",
           "critical": "days left", "expired": "days over", "session": "re-auth",
-          "unknown": "no data", "immune": "days idle"}
+          "unknown": "no data", "immune": "days idle", "snoozed": "days left"}
 RANK = {"expired": 0, "session": 1, "critical": 2, "warn": 3, "due": 4,
-        "unknown": 5, "ok": 6, "immune": 7}
+        "unknown": 5, "ok": 6, "snoozed": 7, "immune": 8}
 
 
 def _pct(r: dict) -> float:
@@ -2873,6 +2988,10 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
         + _row("", "", '<button class="lk pri" id="setSave">Save</button>')
         + '<p class="e" id="setErr"></p>'
         + _row("Last check", "", f'<span class="val">{esc(last)}</span>')
+        + _row("Your config",
+               "Download <code>trackers.yml</code> exactly as it is on disk, "
+               "comments and all.",
+               '<a class="lk" href="/api/config" download>Download</a>')
         + _row("Backup retention", "Nightly snapshots kept in /data/backups. "
                "Set with <code>IDLARR_BACKUP_KEEP</code>.",
                f'<span class="val">{BACKUP_KEEP} days</span>')
@@ -3023,7 +3142,8 @@ async def index(request: Request):
 
     legend = "".join(
         f'<div style="--c:var(--{s})"><b>{counts.get(s, 0)}</b><span>{s}</span></div>'
-        for s in ("expired", "session", "critical", "warn", "due", "unknown", "ok", "immune"))
+        for s in ("expired", "session", "critical", "warn", "due", "unknown", "ok",
+                  "snoozed", "immune"))
 
     body = []
     for r, p in zip(rows, payloads):
@@ -3050,7 +3170,7 @@ async def index(request: Request):
             f'<td class="seen">{_ago(r["days_since"])}</td>'
             f'<td class="n">{big}</td>'
             f'<td class="lim">{r["inactivity_days"]}d</td>'
-            f'<td class="el"><div class="meter{"" if not r["immune"] else " none"}">'
+            f'<td class="el"><div class="meter{"" if not (r["immune"] or r["state"] == "snoozed") else " none"}">'
             f'<i style="--p:{0 if r["immune"] else max(3, _pct(r)):.0f}%"></i></div></td></tr>')
 
     stamp = datetime.now(local_tz()).strftime("%d %b %Y · %H:%M %Z").upper()

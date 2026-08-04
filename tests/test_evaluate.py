@@ -531,16 +531,28 @@ def test_status_url_is_in_the_body_not_a_click_action(monkeypatch):
 
 def test_statuses_sorts_worst_first():
     order = {"expired": 0, "session": 1, "critical": 2, "warn": 3,
-             "due": 4, "unknown": 5, "ok": 6, "immune": 7}
+             "due": 4, "unknown": 5, "ok": 6, "snoozed": 7, "immune": 8}
     assert sorted(order, key=order.get)[0] == "expired"
     assert sorted(order, key=order.get)[-1] == "immune"
 
 
 def test_every_state_has_a_sort_rank_and_label():
     """A state missing from either dict is a KeyError at render time."""
-    states = {"expired", "session", "critical", "warn", "due", "unknown", "ok", "immune"}
+    states = {"expired", "session", "critical", "warn", "due", "unknown", "ok",
+              "snoozed", "immune"}
     assert states <= set(app.LABELS), f"unlabelled: {states - set(app.LABELS)}"
     assert states == set(app.RANK), f"unranked: {states ^ set(app.RANK)}"
+
+    # The page has its OWN LABEL and RANK maps in JavaScript. They are a
+    # separate copy, and a state missing from them renders "undefined" or sorts
+    # to the wrong end — invisible in the Python tests above.
+    import re
+    js_label = set(re.findall(r"(\w+):'", re.search(r"const LABEL=\{(.*?)\};",
+                                                    app.PAGE, re.S).group(1)))
+    js_rank = set(re.findall(r"(\w+):\d", re.search(r"const RANK=\{(.*?)\}",
+                                                    app.PAGE).group(1)))
+    assert states <= js_label, f"missing from the page's LABEL: {states - js_label}"
+    assert states == js_rank, f"page RANK disagrees: {states ^ js_rank}"
 
 
 def test_state_names_are_valid_css_identifiers():
