@@ -2281,18 +2281,6 @@ PAGE = """<!doctype html>
   @media(max-width:940px){.d{grid-template-columns:1fr}}
   .dh{font-size:8.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
     font-weight:700;margin-bottom:10px}
-  .ctl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .field{display:flex;align-items:stretch;border:1px solid var(--line2);background:#0b0e10}
-  .field span{font-size:8.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);
-    padding:0 10px;display:grid;place-items:center;font-weight:700}
-  .field input{font:inherit;font-family:'Azeret Mono',monospace;font-size:13px;width:56px;
-    background:transparent;color:var(--c);border:0;border-left:1px solid var(--line2);
-    padding:7px 9px;text-align:right}
-  .field input:focus{outline:none;background:rgba(255,255,255,.03)}
-  .field em{font-style:normal;font-family:'Azeret Mono',monospace;font-size:11px;
-    color:var(--dim);padding:0 9px;display:grid;place-items:center}
-  .field.off{opacity:.38}
-  .field.off input{color:var(--dim);cursor:not-allowed}
   button{font-family:Archivo;font-size:9px;font-weight:700;letter-spacing:.15em;
     text-transform:uppercase;background:transparent;color:var(--dim2);
     border:1px solid var(--line2);padding:8px 12px;cursor:pointer;transition:.15s}
@@ -2301,22 +2289,32 @@ PAGE = """<!doctype html>
   button.on{color:var(--accent);border-color:var(--accent);background:rgba(224,85,63,.09)}
   button.arm{color:var(--expired);border-color:var(--expired);background:rgba(165,44,78,.14)}
   button.danger:hover{color:var(--expired);border-color:var(--expired)}
-  .reason{margin-top:10px}
-  .reason input{font:inherit;font-size:11.5px;width:100%;background:#0b0e10;color:var(--fg);
-    border:1px solid var(--line2);padding:8px 10px}
-  .reason input:focus{outline:none;border-color:var(--immune)}
   .msg{font-size:10px;color:var(--dim);min-height:14px;margin-top:9px;letter-spacing:.03em}
   .msg.bad{color:var(--critical)} .msg.good{color:var(--ok)} .msg.warn{color:var(--due)}
-  .ctl2r{display:flex;gap:10px;margin-top:9px;flex-wrap:wrap}
-  .ctl2r .field{flex:1;min-width:132px}
-  .ctl2r input{font:inherit;font-size:11.5px;width:100%;background:#0b0e10;
-    color:var(--fg);border:1px solid var(--line);padding:4px 6px}
-  .ctl2r input:focus{outline:none;border-color:var(--accent)}
-  .note{margin-top:9px}
-  .note input{font:inherit;font-size:11px;width:100%;background:#0b0e10;
-    color:var(--dim);font-style:italic;border:1px solid var(--line);padding:5px 7px}
-  .note input:focus{outline:none;border-color:var(--accent);font-style:normal;
-    color:var(--fg)}
+  /* Controls are sized to their CONTENT and share a left edge. Stretching
+     each one to the column width put a three-digit day count in a 200px box. */
+  .a2 .r{display:flex;align-items:center;gap:9px;padding:6px 0;
+    border-bottom:1px solid var(--line)}
+  .a2 .r:last-child{border-bottom:0}
+  .a2 label{width:74px;flex:none;color:var(--dim);font-size:9px;
+    letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+  .a2 .c{flex:1;min-width:0;display:flex;align-items:center;gap:7px}
+  .a2 .c input,.a2 .c select{background:#0b0e10;border:1px solid var(--line2);
+    color:var(--fg);padding:5px 7px;font-family:inherit;font-size:12px}
+  .a2 .c input:focus,.a2 .c select:focus{outline:none;border-color:var(--accent)}
+  .a2 .c input:disabled{opacity:.4;cursor:not-allowed}
+  .a2 .w-num{width:62px;text-align:right}
+  select.w-num{text-align:left}
+  .a2 .w-date{width:142px}
+  .a2 .w-grow{flex:1;min-width:0}
+  .a2 .c em{font-style:normal;color:var(--dim);font-size:10px;white-space:nowrap}
+  .a2 .c em b{font-weight:400;color:var(--dim2)}
+  .a2 .lk.mini{padding:5px 8px;font-size:8px}
+  @media(max-width:940px){
+    .a2 label{width:66px}
+    /* Space is dearer than the hint on a phone. */
+    .a2 .c em{display:none}
+  }
   .sched,.hist{font-family:'Azeret Mono',monospace;font-size:11px}
   .sched div,.hist div{display:flex;align-items:baseline;gap:10px;padding:5px 0;
     border-bottom:1px solid var(--line)}
@@ -2387,16 +2385,24 @@ PAGE = """<!doctype html>
     tr.drawer{display:block}
     tr.drawer td{display:block}
     .d{grid-template-columns:1fr;gap:16px;padding:14px 12px}
-    .ctl{gap:6px}
-    .foot{font-size:9.5px}
+      .foot{font-size:9.5px}
   }
   .banner{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:13px 0 0;
     padding:9px 13px;border:1px solid var(--critical);background:#251619;font-size:12px}
   .banner b{color:var(--critical);letter-spacing:.04em}
   .banner .sp{margin-left:auto;display:flex;gap:7px}
-  .lk{background:var(--bg);border:1px solid var(--line2);color:var(--fg);
-    font-family:inherit;font-size:11px;padding:4px 10px;cursor:pointer}
-  .lk:hover{border-color:var(--accent)}
+  /* Used on BOTH <button> and <a>. A bare button{} rule elsewhere sets
+     uppercase/9px/bold, which anchors never inherit — so every .lk must state
+     its own metrics or the two render as different controls side by side.
+     inline-flex + line-height is what makes their heights match. */
+  .lk{display:inline-flex;align-items:center;justify-content:center;
+    box-sizing:border-box;background:var(--bg);border:1px solid var(--line2);
+    color:var(--fg);font-family:Archivo,system-ui,sans-serif;font-size:9px;
+    font-weight:700;letter-spacing:.15em;text-transform:uppercase;
+    line-height:1;padding:8px 12px;cursor:pointer;text-decoration:none;
+    white-space:nowrap;transition:.15s}
+  .lk:hover{border-color:var(--accent);color:var(--fg)}
+  .lk:disabled{opacity:.35;cursor:not-allowed}
   .lk.pri{background:var(--accent);border-color:var(--accent);color:#fff}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;
     align-items:center;justify-content:center;z-index:30}
@@ -2636,29 +2642,44 @@ __SHEET__
  function drawer(tr){
    const d=JSON.parse(tr.dataset.row), imm=!!d.immune;
    const el=document.createElement('tr'); el.className='drawer';
+   // Labelled rows: label + a control sized to its content, sharing a left
+   // edge. Previously every control filled the column width, so a three-digit
+   // day count sat in a 200px box beside a date picker.
+   const pctOpts=(sel)=>{let o='';
+     for(let v=40;v<100;v+=5)o+='<option value="'+(v/100).toFixed(2)+'"'
+       +(Math.abs(sel-v/100)<0.001?' selected':'')+'>'+v+'%</option>';
+     return o;};
    el.innerHTML='<td colspan="8"><div class="d" style="--c:var(--'+d.state+')">'
-    +'<div><div class="dh">controls</div><div class="ctl">'
-    +'<label class="field'+(imm?' off':'')+'"><span>limit</span>'
-    +'<input class="lim" type="text" inputmode="numeric" value="'+d.inactivity_days+'"'
-    +(imm?' disabled':'')+'><em>d</em></label>'
-    +'<button class="chk'+(d.verified?' on':'')+'"'+(imm?' disabled':'')+'>'
-    +(d.verified?'\\u2713 confirmed':'confirm')+'</button>'
-    +'<button class="imm'+(imm?' on':'')+'">'+(imm?'\\u25cf immune':'immune')+'</button>'
-    +'<button class="seen">seen</button><button class="undo danger">undo</button>'
-    +'<button class="del danger">remove</button></div>'
-    +'<div class="ctl2r"><label class="field"><span>snooze</span>'
-    +'<input class="snz" type="date" value="'+hesc(d.snooze_until||'')+'"></label>'
-    +'<label class="field"><span>alert at</span>'
-    +'<input class="pct" type="text" inputmode="decimal" size="4" value="'
-    +(d.alert_at_pct||0.65)+'"></label></div>'
-    +(imm?'<div class="reason"><input class="rsn" value="'+hesc(d.immune_reason||'')
-      +'" placeholder="why immune? e.g. donated, elite class"></div>':'')
-    +'<div class="note"><input class="nts" value="'+hesc(d.notes||'')
-      +'" placeholder="notes \u2014 first word sets the software column"></div>'
-    +'<div class="msg"></div></div>'
+    +'<div><div class="dh">controls</div><div class="a2">'
+    +'<div class="r"><label>Limit</label><div class="c">'
+    +'<input class="lim w-num" type="text" inputmode="numeric" value="'
+    +d.inactivity_days+'"'+(imm?' disabled':'')+'><em>days</em></div></div>'
+    +'<div class="r"><label>Alert at</label><div class="c">'
+    +'<select class="pct w-num">'+pctOpts(d.alert_at_pct||0.65)+'</select>'
+    +'<em>of the limit before <b>due</b> fires</em></div></div>'
+    +'<div class="r"><label>Snooze</label><div class="c">'
+    +'<input class="snz w-date" type="date" value="'+hesc(d.snooze_until||'')+'">'
+    +'<button class="lk mini snzclr"'+(d.snooze_until?'':' style="display:none"')
+    +'>Clear</button></div></div>'
+    +'<div class="r"><label>Notes</label><div class="c">'
+    +'<input class="nts w-grow" value="'+hesc(d.notes||'')
+    +'" placeholder="first word sets the software column"></div></div>'
+    +'<div class="r"><label>State</label><div class="c">'
+    +'<button class="lk chk'+(d.verified?' pri':'')+'"'+(imm?' disabled':'')+'>'
+    +(d.verified?'✓ Confirmed':'Confirm')+'</button>'
+    +'<button class="lk imm'+(imm?' pri':'')+'">'+(imm?'● Immune':'Immune')+'</button>'
+    +'</div></div>'
+    +(imm?'<div class="r"><label>Reason</label><div class="c">'
+      +'<input class="rsn w-grow" value="'+hesc(d.immune_reason||'')
+      +'" placeholder="why immune? e.g. donated, elite class"></div></div>':'')
+    +'<div class="r"><label>Actions</label><div class="c">'
+    +'<button class="lk seen">Seen</button>'
+    +'<button class="lk undo">Undo</button>'
+    +'<button class="lk del">Remove</button></div></div>'
+    +'</div><div class="msg"></div></div>'
     +'<div><div class="dh">alert schedule</div><div class="sched">'+schedule(d)+'</div></div>'
     +'<div><div class="dh">auth history</div><div class="hist">'
-    +'<div><span>loading\\u2026</span></div></div></div></div></td>';
+    +'<div><span>loading…</span></div></div></div></div></td>';
    tr.after(el); tr.classList.add('open');
 
    const msg=(t,c)=>{const m=el.querySelector('.msg');m.textContent=t;
@@ -2716,17 +2737,22 @@ __SHEET__
          msg(r.snooze_until?('snoozed until '+r.snooze_until+' \u2014 no alerts until then')
                            :'snooze cleared','good');
        }).catch(e=>{msg(e.message,'bad');snz.value=last;});};
-     snz.addEventListener('change',save);}
+     snz.addEventListener('change',()=>{save();
+       const c=el.querySelector('.snzclr');
+       if(c)c.style.display=snz.value?'':'none';});
+     const clr=el.querySelector('.snzclr');
+     if(clr)clr.addEventListener('click',()=>{
+       // An empty date input does not read as "not snoozed", so clearing is
+       // an explicit action rather than something you have to discover.
+       snz.value='';clr.style.display='none';save();});}
 
    const pct=el.querySelector('.pct');
    if(pct){let last=pct.value;
-     const save=()=>{if(pct.value===last)return;
+     pct.addEventListener('change',()=>{
        post('/api/limit/'+d.id,{alert_at_pct:pct.value}).then(r=>{
-         last=String(r.alert_at_pct);refresh(r);
+         last=String(r.alert_at_pct);refresh(r);paint(tr,r);
          msg('alert threshold saved','good');
-       }).catch(e=>{msg(e.message,'bad');pct.value=last;});};
-     pct.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();pct.blur();}});
-     pct.addEventListener('blur',save);}
+       }).catch(e=>{msg(e.message,'bad');pct.value=last;});});}
 
    const nts=el.querySelector('.nts');
    if(nts){let last=nts.value;

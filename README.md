@@ -313,13 +313,14 @@ start without it, and the service warns if it ends up empty anyway.
 | `POST /ping` | Userscript ingest (bearer auth) |
 | `POST /api/mark/{id}` | Manual "I just logged in" |
 | `POST /api/unmark/{id}` | Remove the most recent auth event |
-| `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune`, writes trackers.yml |
+| `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune` / `snooze_until` / `alert_at_pct` / `notes`, writes trackers.yml |
 | `GET /api/history/{id}` | Recent auth events, newest first (drawer) |
 | `GET /idlarr.user.js` | The userscript, generated from live config. `?token=` or a session |
 | `POST /api/tracker` | Add a tracker, appends to trackers.yml |
 | `DELETE /api/tracker/{id}` | Remove one. Auth history is kept |
 | `POST /api/import` | Preview (default) or apply a Prowlarr/Jackett import |
 | `GET /api/config` | Download `trackers.yml` as it is on disk |
+| `POST /api/config` | Replace `trackers.yml`. Validates first, backs up what was there |
 | `POST /api/settings` | Edit the `defaults:` block — timezone, check hour, thresholds |
 | `GET`/`POST /api/auth` | Read or change the UI login |
 | `POST /login` · `POST /logout` | Session in, session out |
@@ -358,6 +359,13 @@ cross-origin from tracker pages, where cookies do not apply.
   to `no data` until you re-visit all of them. See
   [Restoring a backup](docs/troubleshooting.md#restoring-a-backup); it has been tested, and there is one
   surprise in it.
+- **Your tracker list can be downloaded and restored** from *Settings →
+  General*. The download is the file as it is on disk, comments included.
+  Restoring **replaces** it — the current file is saved beside it as
+  `trackers.yml.<timestamp>.bak` first, and anything that does not validate is
+  refused before a single byte is written. Removed trackers keep their auth
+  history, so restoring an older config resumes those countdowns rather than
+  restarting them.
 - **A backup contains every secret the service holds** — your tracker list, the
   API token, the session secret, and a saved Prowlarr key. The database and its
   backups are written `0600` so other local users cannot read them, but that

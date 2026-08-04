@@ -331,3 +331,37 @@ def test_no_css_selector_is_defined_twice_in_the_base_stylesheet():
         seen[sel] = seen.get(sel, 0) + 1
     dupes = {s: n for s, n in seen.items() if n > 1}
     assert not dupes, f"selectors defined more than once in the base stylesheet: {dupes}"
+
+
+# ---------------------------------------------------------------- the drawer
+#
+# The drawer is built client-side, so its controls never appear in the served
+# HTML — only in the script that renders them. These assert the script still
+# creates every control its own handlers query, which is the failure the
+# element-id test above cannot see.
+
+@pytest.mark.parametrize("cls", [
+    "lim", "pct", "snz", "snzclr", "nts", "rsn",   # inputs
+    "chk", "imm", "seen", "undo", "del",           # buttons
+    "a2", "msg", "sched", "hist",                  # structure
+])
+def test_drawer_builds_every_control_its_handlers_query(page, cls):
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    assert f"class=\"{cls}" in script or f"'{cls}" in script or f'.{cls}' in script, cls
+
+
+def test_drawer_alert_threshold_is_a_percent_select_not_a_decimal(page):
+    """It shipped as a raw 0.65 text input while the global setting was already
+    a percent dropdown — the same control asking for two different units."""
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    assert "pctOpts" in script
+    assert "'%</option>'" in script or "+'%</option>'" in script
+    assert 'inputmode="decimal"' not in script
+
+
+def test_dead_drawer_styles_are_gone(page):
+    """.ctl/.field/.note/.reason were orphaned by the drawer redesign. A
+    duplicated .imlist block drifted this exact way before."""
+    css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+    for sel in ("  .ctl{", "  .field{", "  .note{", "  .reason{", "  .ctl2r{"):
+        assert sel not in css, f"dead rule still present: {sel.strip()}"
