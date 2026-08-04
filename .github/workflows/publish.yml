@@ -98,9 +98,15 @@ jobs:
           # Assert on a NUMBER, not just a 200. A config that failed to load
           # could still answer {"ok":true,"trackers":0} and look healthy —
           # every silent bug in this project's history looked healthy.
+          #
+          # The expected number is DERIVED from the example file, not hardcoded.
+          # A hardcoded 7 breaks with a confusing "expected 7, got 8" the moment
+          # anyone adds a tracker to the example — which is the friction that
+          # invites weakening this to ">= 1" and losing partial-load detection.
+          want_trackers=$(grep -c '^  - id:' trackers.example.yml)
           count=$(python3 -c "import json;print(json.load(open('/tmp/smoke/healthz.json'))['trackers'])")
-          if [ "$count" != "7" ]; then
-            echo "::error::expected 7 trackers from trackers.example.yml, got $count"; exit 1
+          if [ "$count" != "$want_trackers" ]; then
+            echo "::error::trackers.example.yml defines $want_trackers trackers, /healthz reports $count"; exit 1
           fi
 
           # /ping must fail CLOSED. An earlier build accepted every request
@@ -119,7 +125,7 @@ jobs:
           if ! curl -fsS localhost:8099/ | grep -q ">$want<"; then
             echo "::error::page does not report version $want"; exit 1
           fi
-          echo "smoke: 7 trackers, /ping 401, version $want"
+          echo "smoke: $count trackers, /ping 401, version $want"
 
       - uses: docker/build-push-action@v6
         with:
