@@ -66,8 +66,12 @@ jobs:
           load: true
           tags: idlarr:smoke
           build-args: IDLARR_VERSION=${{ steps.meta.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # SEPARATE cache scope from the multi-arch push below. Sharing one
+          # scope meant this amd64-only build overwrote the cache each run, so
+          # the arm64 half of the release build was always cold and recompiled
+          # every wheel under emulation — a 2.5 minute job became 14.
+          cache-from: type=gha,scope=smoke-amd64
+          cache-to: type=gha,mode=max,scope=smoke-amd64
 
       - name: Boot the image and verify it serves
         run: |
@@ -154,5 +158,7 @@ jobs:
           build-args: IDLARR_VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Its own scope, so the amd64-only smoke build cannot evict the arm64
+          # layers this one depends on.
+          cache-from: type=gha,scope=release-multiarch
+          cache-to: type=gha,mode=max,scope=release-multiarch
