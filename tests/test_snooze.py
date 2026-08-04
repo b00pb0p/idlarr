@@ -202,3 +202,63 @@ def test_config_download_needs_auth_when_configured(client):
                                    "password": "correct-horse"})
     client.cookies.clear()
     assert client.get("/api/config").status_code == 401
+
+
+# --------------------------------------------------------- config restore
+#
+# Replacing trackers.yml is the most destructive operation here: it overwrites
+# the source of truth for every countdown. It validates hard and backs up first.
+
+def test_restore_replaces_and_backs_up(client, cfg):
+    new_cfg = ("defaults:\n  inactivity_days: 30\n  timezone: UTC\n"
+               "  check_hour: 9\n\ntrackers:\n  - id: solo\n    name: Solo\n"
+               "    url: https://solo.example/\n    inactivity_days: 60\n")
+    r = client.post("/api/config", json={"yaml": new_cfg})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["before"] == 7 and body["after"] == 1
+    assert [t["id"] for t in yaml.safe_load(cfg.read_text())["trackers"]] == ["solo"]
+    # the previous file must still exist, or a bad restore is unrecoverable
+    backups = list(cfg.parent.glob(f"{cfg.name}.*.bak"))
+    assert len(backups) == 1
+    assert len(yaml.safe_load(backups[0].read_text())["trackers"]) == 7
+
+
+@pytest.mark.parametrize("bad,why", [
+    ("not: [valid", "unparseable YAML"),
+    ("- just\n- a\n- list\n", "top level is not a mapping"),
+    ("trackers: 5\n", "trackers is not a list"),
+    ("trackers:\n  - name: no id\n", "tracker without an id"),
+    ("trackers:\n  - id: 'Bad Id!'\n", "unusable id"),
+    ("trackers:\n  - id: dup\n  - id: dup\n", "duplicate ids"),
+    ("trackers:\n  - id: a\n    inactivity_days: 0\n", "limit out of range"),
+    ("trackers:\n  - id: a\n    inactivity_days: soon\n", "limit not a number"),
+    ("defaults:\n  timezone: Not/AZone\ntrackers: []\n", "bad timezone"),
+    ("", "empty"),
+])
+def test_restore_refuses_bad_input(client, cfg, bad, why):
+    before = cfg.read_text()
+    assert client.post("/api/config", json={"yaml": bad}).status_code == 400, why
+    assert cfg.read_text() == before, f"wrote anyway: {why}"
+
+
+def test_restore_keeps_events_so_history_survives(client, cfg):
+    """Removed trackers keep their events, so restoring an older config
+    restores its history rather than silently restarting those countdowns."""
+    app.record("alpha", "auth")
+    client.post("/api/config", json={
+        "yaml": "trackers:\n  - id: solo\n    name: Solo\n"})
+    with app.db() as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE tracker_id='alpha'").fetchone()["c"]
+    assert n == 1
+
+
+def test_restore_needs_auth_when_configured(client, cfg):
+    client.post("/api/auth", json={"method": "forms", "username": "jared",
+                                   "password": "correct-horse"})
+    client.cookies.clear()
+    before = cfg.read_text()
+    assert client.post("/api/config",
+                       json={"yaml": "trackers: []\n"}).status_code == 401
+    assert cfg.read_text() == before

@@ -1414,6 +1414,84 @@ async def download_config():
                  f'attachment; filename="trackers-{stamp}.yml"'})
 
 
+@app.post("/api/config", dependencies=[Depends(require_ui)])
+async def upload_config(payload: dict = Body(...)):
+    """Replace trackers.yml wholesale, after validating it and backing up what
+    is there now.
+
+    This is the most destructive operation in the service: it overwrites the
+    source of truth for every countdown. So it validates hard and refuses on
+    anything it does not understand, rather than writing a file that parses but
+    means something different.
+
+    Removed trackers keep their events — `events` is append-only apart from
+    drop_last_auth() — so restoring an older config restores its history rather
+    than silently restarting those countdowns.
+    """
+    body = payload.get("yaml")
+    if not isinstance(body, str) or not body.strip():
+        raise HTTPException(400, "no config content")
+    if len(body) > 1_000_000:
+        raise HTTPException(400, "config is implausibly large")
+
+    try:
+        doc = yaml.safe_load(body)
+    except yaml.YAMLError as exc:
+        raise HTTPException(400, f"not valid YAML: {exc}")
+    if not isinstance(doc, dict):
+        raise HTTPException(400, "top level must be a mapping with a `trackers:` key")
+
+    trackers = doc.get("trackers")
+    if trackers is None:
+        trackers = []
+    if not isinstance(trackers, list):
+        raise HTTPException(400, "`trackers:` must be a list")
+
+    seen = set()
+    for i, t in enumerate(trackers):
+        if not isinstance(t, dict):
+            raise HTTPException(400, f"tracker #{i + 1} is not a mapping")
+        tid = str(t.get("id", "")).strip().lower()
+        if not ID_OK.match(tid):
+            raise HTTPException(400, f"tracker #{i + 1} has an unusable id: {tid!r}")
+        if tid in seen:
+            raise HTTPException(400, f"duplicate tracker id: {tid!r}")
+        seen.add(tid)
+        days = t.get("inactivity_days", (doc.get("defaults") or {}).get("inactivity_days", 30))
+        try:
+            days = int(days)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{tid}: inactivity_days must be a whole number")
+        if not 1 <= days <= 3650:
+            raise HTTPException(400, f"{tid}: inactivity_days must be 1-3650")
+
+    tz = (doc.get("defaults") or {}).get("timezone")
+    if tz is not None:
+        try:
+            ZoneInfo(str(tz))
+        except Exception:
+            raise HTTPException(400, f"defaults.timezone: '{tz}' is not a known timezone")
+
+    before = len(load_config()["trackers"])
+    stamp = datetime.now(local_tz()).strftime("%Y%m%d-%H%M%S")
+    backup = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.{stamp}.bak")
+    try:
+        with _write_lock:
+            if CONFIG_PATH.exists():
+                backup.write_text(CONFIG_PATH.read_text())
+            tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
+            tmp.write_text(body)
+            os.replace(tmp, CONFIG_PATH)
+        _cfg_cache["data"] = None
+        after = len(load_config()["trackers"])
+    except OSError as exc:
+        raise HTTPException(500, f"cannot write {CONFIG_PATH}: {exc}")
+
+    print(f"[config] replaced: {before} -> {after} tracker(s), "
+          f"previous saved as {backup.name}")
+    return {"before": before, "after": after, "backup": backup.name}
+
+
 @app.post("/api/settings", dependencies=[Depends(require_ui)])
 async def update_settings(payload: dict = Body(...)):
     """Edit the `defaults:` block from the settings panel.
@@ -2874,6 +2952,26 @@ __SHEET__
    else{nte.textContent=d.detail||('failed ('+r.status+')');}
  });
 
+ // ---- restore a config ------------------------------------------------
+ const cfgUp=document.getElementById('cfgUp'),cfgFile=document.getElementById('cfgFile');
+ if(cfgUp){
+   cfgUp.addEventListener('click',()=>cfgFile.click());
+   cfgFile.addEventListener('change',async()=>{
+     const f=cfgFile.files[0]; if(!f)return;
+     const err=document.getElementById('setErr');
+     err.className='e';err.textContent='reading '+f.name+'\u2026';
+     const text=await f.text();
+     const r=await fetch('/api/config',{method:'POST',
+       headers:{'Content-Type':'application/json'},body:JSON.stringify({yaml:text})});
+     const d=await r.json().catch(()=>({}));
+     cfgFile.value='';
+     if(!r.ok){err.textContent=d.detail||('failed ('+r.status+')');return;}
+     err.className='e good';
+     err.textContent=d.before+' \u2192 '+d.after+' trackers; previous saved as '+d.backup;
+     setTimeout(()=>location.reload(),1200);
+   });
+ }
+
  // ---- general settings -------------------------------------------------
  const setSave=document.getElementById('setSave'),setErr=document.getElementById('setErr');
  if(setSave)setSave.addEventListener('click',async()=>{
@@ -2969,17 +3067,33 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
     alive = int(cfg.get("alive_push_days", 0))
     alive_opts = "".join(
         f'<option value="{v}"{" selected" if alive == v else ""}>{label}</option>'
-        for v, label in ((0, "Off"), (1, "Daily"), (7, "Weekly"), (14, "Fortnightly")))
+        for v, label in ((0, "Off"), (1, "Daily"), (7, "Weekly"), (30, "Monthly")))
+
+    # Hours are shown in both notations rather than behind a 12/24 preference:
+    # one setting to serve one number is not worth the surface, and a reader
+    # who thinks in either format gets an unambiguous answer.
+    hour_now = int(cfg["check_hour"])
+    hour_opts = "".join(
+        f'<option value="{h}"{" selected" if hour_now == h else ""}>'
+        f'{h:02d}:00 &nbsp;&middot;&nbsp; {(h % 12) or 12} {"am" if h < 12 else "pm"}'
+        f'</option>' for h in range(24))
+
+    # Percent, not a bare fraction. 0.65 asks the reader to convert; "65%" does
+    # not. The stored value stays a float, so nothing downstream changes.
+    pct_now = float(cfg.get("alert_at_pct", 0.65))
+    pct_opts = "".join(
+        f'<option value="{v/100:.2f}"{" selected" if abs(pct_now - v/100) < 0.001 else ""}>'
+        f'{v}%</option>' for v in range(40, 100, 5))
     general = (
         _row("Timezone", "All day counting is calendar days in this zone.",
              f'<input id="setTz" value="{esc(cfg["timezone"])}">')
         + _row("Daily check hour",
-               "When the check runs and alerts batch into one push. 0-23.",
-               f'<input id="setHour" value="{cfg["check_hour"]}">')
+               "When the check runs and alerts batch into one push.",
+               f'<select id="setHour">{hour_opts}</select>')
         + _row("Alert threshold",
-               "Fraction of a tracker's limit at which <em>due</em> fires. "
-               "0.4-0.95; lower means earlier nagging on long limits.",
-               f'<input id="setPct" value="{cfg.get("alert_at_pct", 0.65)}">')
+               "How much of a tracker's limit may pass before <em>due</em> "
+               "fires. Lower means earlier nagging on long limits.",
+               f'<select id="setPct">{pct_opts}</select>')
         + _row("Still-alive push",
                "Nothing else watches the watchdog. If this container dies the "
                "daily check stops and silence looks exactly like nothing being "
@@ -2990,8 +3104,12 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
         + _row("Last check", "", f'<span class="val">{esc(last)}</span>')
         + _row("Your config",
                "Download <code>trackers.yml</code> exactly as it is on disk, "
-               "comments and all.",
-               '<a class="lk" href="/api/config" download>Download</a>')
+               "comments and all. Restoring replaces it — the current file is "
+               "saved alongside as a <code>.bak</code> first.",
+               '<a class="lk" href="/api/config" download>Download</a>'
+               '<button class="lk" id="cfgUp">Restore\u2026</button>'
+               '<input type="file" id="cfgFile" accept=".yml,.yaml,text/yaml" '
+               'style="display:none">')
         + _row("Backup retention", "Nightly snapshots kept in /data/backups. "
                "Set with <code>IDLARR_BACKUP_KEEP</code>.",
                f'<span class="val">{BACKUP_KEEP} days</span>')
