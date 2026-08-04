@@ -1291,6 +1291,10 @@ async def import_indexers(payload: dict = Body(...)):
     try:
         found = await asyncio.to_thread(fetch, base, api_key)
     except ValueError as exc:
+        # Log it as well as returning it. Only the browser saw this before, so
+        # "the import failed" left nothing in the logs to look at — and the
+        # person reporting it is rarely the person reading them.
+        print(f"[import] {source} FAILED: {exc}")
         raise HTTPException(502, str(exc))
 
     # Only remember a connection that actually answered.
@@ -1332,6 +1336,14 @@ async def import_indexers(payload: dict = Body(...)):
             added.append(c["id"])
         except (KeyError, ValueError) as exc:
             failed.append({"id": c["id"], "error": str(exc)})
+        except OSError as exc:
+            # Read-only or wrongly-owned /config. Uncaught this became a bare
+            # 500, which says nothing about the mount that caused it.
+            failed.append({"id": c["id"],
+                           "error": f"cannot write {CONFIG_PATH}: {exc}"})
+    if failed:
+        print(f"[import] {len(added)} added, {len(failed)} failed: "
+              + "; ".join(f"{f['id']}: {f['error']}" for f in failed))
     return {"source": source, "added": added, "failed": failed,
             "skipped": [c["id"] for c in candidates if c["skip"]]}
 
@@ -2412,9 +2424,20 @@ __SHEET__
    location.reload();});
 
  imapply.addEventListener('click',async()=>{
-   ime.textContent='';imapply.disabled=true;
+   ime.textContent='';ime.className='e';imapply.disabled=true;
    const r=await impost({apply:true}); const d=await r.json().catch(()=>({}));
    if(!r.ok){ime.textContent=d.detail||('failed ('+r.status+')');imapply.disabled=false;return;}
+   // The response says what happened per tracker. Reloading regardless made a
+   // total failure look exactly like success: the page came back with nothing
+   // added and no reason given anywhere.
+   const added=(d.added||[]).length, failed=d.failed||[];
+   if(failed.length){
+     ime.textContent=added+' added, '+failed.length+' failed \u2014 '
+       +failed.map(f=>hesc(f.id)+': '+hesc(f.error)).join('; ');
+     imapply.disabled=false;return;}
+   if(!added){
+     ime.textContent='nothing added \u2014 every tracker found is already configured';
+     imapply.disabled=false;return;}
    location.reload();
  });
 

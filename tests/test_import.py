@@ -372,3 +372,34 @@ def test_the_key_is_never_sent_back_to_the_browser(client, cfg, prowlarr):
     assert secret not in page
     assert "saved &mdash; leave blank to reuse" in page
     assert BODY["url"] in page          # the URL is fine to show
+
+
+def test_import_failures_are_logged_not_only_returned(client, cfg, monkeypatch, capsys):
+    """The person who hits the error is rarely the person reading the logs.
+    Returning the reason only to the browser leaves nothing to diagnose from."""
+    monkeypatch.setattr(app, "_fetch_json",
+                        lambda u, h: (_ for _ in ()).throw(ValueError("connection refused")))
+    assert client.post("/api/import", json=BODY).status_code == 502
+    assert "connection refused" in capsys.readouterr().out
+
+
+def test_a_write_failure_is_reported_per_tracker_not_as_a_500(client, cfg, prowlarr, monkeypatch):
+    """A read-only or wrongly-owned /config is the likeliest difference between
+    two installs. Uncaught it became a bare 500 that named nothing."""
+    def refuse(entry):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(app, "add_tracker", refuse)
+    r = client.post("/api/import", json={**BODY, "apply": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"] == []
+    assert len(body["failed"]) == 3
+    assert "cannot write" in body["failed"][0]["error"]
+
+
+def test_write_failures_are_logged(client, cfg, prowlarr, monkeypatch, capsys):
+    monkeypatch.setattr(app, "add_tracker",
+                        lambda e: (_ for _ in ()).throw(ValueError("refusing write")))
+    client.post("/api/import", json={**BODY, "apply": True})
+    out = capsys.readouterr().out
+    assert "0 added, 3 failed" in out and "refusing write" in out
