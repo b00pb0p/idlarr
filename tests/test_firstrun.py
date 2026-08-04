@@ -209,3 +209,28 @@ def test_the_generated_timezone_actually_drives_day_counting(fresh, monkeypatch)
     app.CONFIG_PATH.write_text(app.default_config())
     app._cfg_cache["data"] = None
     assert str(app.local_tz()) == "America/Chicago"
+
+
+def test_an_explicit_token_is_remembered_so_losing_env_is_survivable(fresh, monkeypatch):
+    """An existing install whose .env goes missing must NOT mint a new token —
+    the userscript already in the browser carries the old one and would 401 on
+    every tracker, silently. Storing the explicit token on first boot makes the
+    env var's disappearance survivable."""
+    monkeypatch.setattr(app, "TOKEN", "my-real-token")
+    assert not app.get_state("idlarr_token")
+    # what lifespan does on boot
+    if not app.get_state("idlarr_token"):
+        app.set_state("idlarr_token", app.TOKEN if app.TOKEN else "generated")
+    assert app.get_state("idlarr_token") == "my-real-token"
+    # now .env vanishes
+    monkeypatch.setattr(app, "TOKEN", "")
+    assert app.get_token() == "my-real-token"
+    app.require_token("Bearer my-real-token")          # still accepted
+
+
+def test_a_changed_env_token_still_wins_over_the_remembered_one(fresh, monkeypatch):
+    """Remembering must not pin the old value: rotating IDLARR_TOKEN has to
+    take effect, or a deliberate rotation would silently do nothing."""
+    app.set_state("idlarr_token", "old-token")
+    monkeypatch.setattr(app, "TOKEN", "new-token")
+    assert app.get_token() == "new-token"

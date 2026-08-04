@@ -986,11 +986,19 @@ async def lifespan(app: FastAPI):
     # failure is still closed — but by guaranteeing a token exists rather than
     # by refusing to run. get_token() reads env first, so setting IDLARR_TOKEN
     # still wins and nothing is silently overridden.
-    if not TOKEN and not get_state("idlarr_token"):
-        set_state("idlarr_token", secrets.token_hex(32))
-        print("[startup] No IDLARR_TOKEN set — generated one and saved it to "
-              "the database. Install the userscript from the status page and it "
-              "will carry the right token automatically.")
+    if not get_state("idlarr_token"):
+        if TOKEN:
+            # Remember an explicitly-set token. Without this, an install whose
+            # .env later goes missing generates a BRAND NEW token, and the
+            # userscript already deployed in the browser starts 401ing on every
+            # tracker — silently, which is the failure this service prevents.
+            # Storing it means the env var disappearing is survivable.
+            set_state("idlarr_token", TOKEN)
+        else:
+            set_state("idlarr_token", secrets.token_hex(32))
+            print("[startup] No IDLARR_TOKEN set — generated one and saved it "
+                  "to the database. Install the userscript from the status page "
+                  "and it will carry the right token automatically.")
 
     # Belt and braces: if a token still cannot be obtained, refuse to start.
     # An open /ping is invisible; a container that will not boot is not.
