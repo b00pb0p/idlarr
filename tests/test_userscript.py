@@ -187,7 +187,7 @@ def test_missing_template_raises_something_readable(monkeypatch, tmp_path):
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(app, "STATUS_URL", BASE)
+    monkeypatch.setattr(app, "status_url", lambda: BASE)
     return TestClient(app.app)
 
 
@@ -226,11 +226,11 @@ def test_route_serves_javascript(client):
 def test_route_explains_a_missing_status_url(monkeypatch):
     """Serving a script whose ENDPOINT is empty would install fine and report
     nowhere. Refuse, and say what to set."""
-    monkeypatch.setattr(app, "STATUS_URL", "")
+    monkeypatch.setattr(app, "status_url", lambda: "")
     c = TestClient(app.app)
     r = c.get(f"/idlarr.user.js?token={app.TOKEN}")
     assert r.status_code == 500
-    assert "STATUS_URL" in r.json()["detail"]
+    assert "status page URL" in r.json()["detail"]
 
 
 # ------------------------------------------------------------- packaging

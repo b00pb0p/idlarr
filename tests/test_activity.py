@@ -96,7 +96,7 @@ def test_a_failed_heartbeat_is_recorded(cfg, monkeypatch):
 
 
 def test_the_panel_shows_never_before_anything_has_run(cfg, monkeypatch):
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     page = TestClient(app.app).get("/").text
     assert "Daily check" in page and "Nightly backup" in page
     # The activity row must not reuse the settings row's label, or the panel
@@ -107,7 +107,7 @@ def test_the_panel_shows_never_before_anything_has_run(cfg, monkeypatch):
 
 
 def test_the_panel_shows_outcomes_once_recorded(cfg, monkeypatch):
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     app.note_activity("backup", False, "disk full")
     page = TestClient(app.app).get("/").text
     assert "disk full" in page
@@ -117,7 +117,7 @@ def test_the_panel_shows_outcomes_once_recorded(cfg, monkeypatch):
 def test_detail_is_escaped(cfg, monkeypatch):
     """Failure text comes from exceptions and provider responses, which are not
     ours to trust."""
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     app.note_activity("backup", False, '<img src=x onerror=alert(1)>')
     page = TestClient(app.app).get("/").text
     assert "<img src=x" not in page

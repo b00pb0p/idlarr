@@ -149,7 +149,7 @@ def test_the_new_tracker_reaches_the_userscript(cfg, monkeypatch):
     """The whole point of the two features together: adding a tracker changes
     the generated script, so the browser picks it up on the next update check."""
     app.init_db()                        # the version counter lives in `state`
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     app.add_tracker(dict(NEW))
     js = app.render_userscript("https://idlarr.test.internal")
     assert "// @match        *://*.new.example/*" in js

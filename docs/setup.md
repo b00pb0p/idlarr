@@ -92,6 +92,11 @@ class** is exempt, and whether the site has a **vacation mode**.
 cp .env.example .env
 ```
 
+**Three of these only seed the config.** `STATUS_URL`, `TZ` and
+`IDLARR_BACKUP_KEEP` are copied into `trackers.yml` on first run and ignored
+after that — you change them in **Settings → General**, and startup says so
+when it migrates one. Everything else is read every time.
+
 `IDLARR_TOKEN` is optional — leave it blank and one is generated on first boot,
 stored in the database, and baked into the userscript you install from the page.
 Set it only to pin a specific value; an explicit token always wins. To generate
@@ -101,11 +106,11 @@ one yourself: `openssl rand -hex 32`.
 |---|---|---|---|
 | `IDLARR_TOKEN` | no | *(generated)* | Shared secret for `/ping`. Generated on first boot if unset and baked into the generated userscript. An explicit value always wins. |
 | `IDLARR_NOTIFY_URLS` | no | *(empty)* | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs — ntfy, Pushover, Discord, Telegram, Signal and ~100 more. Optional so a first run can boot, but **set it**: with it empty nothing can reach you. |
-| `STATUS_URL` | no | *(empty)* | Public URL of the status page. Appended to every alert so you can tap through. |
-| `TZ` | no | `UTC` | Drives the daily check and **all day counting** — set it to your own zone or countdowns can be a day out. |
+| `STATUS_URL` | seeds once | *(empty)* | Public URL of the status page. Copied into `trackers.yml` on first run, then set in **Settings → General**. |
+| `TZ` | seeds once | `UTC` | Copied into `trackers.yml` on first run, then set in **Settings → General**. Drives **all day counting** — a wrong zone shifts every countdown. |
 | `PUID` | build only | `1001` | **Build argument, not a runtime variable.** The published image always runs as 1001; `chown` your `data/` and `config/` to match. To use a different UID you must build from source: `docker compose build --build-arg PUID=1000`. |
 | `IDLARR_RESET_AUTH` | no | *(unset)* | Set to `1` to clear the UI login on the next boot — the only way back in from a forgotten password. **Remove it afterwards**, or every boot clears it again. |
-| `IDLARR_BACKUP_KEEP` | legacy | — | **Moved to Settings → General.** A value set here is copied into `trackers.yml` on the next start, then ignored. Safe to delete. |
+| `IDLARR_BACKUP_KEEP` | seeds once | `14` | Copied into `trackers.yml` on first run, then set in **Settings → General**. Safe to delete. |
 | `IDLARR_BACKUP_DIR` | no | `/data/backups` | Where those snapshots go. |
 | `IDLARR_DEDUPE_HOURS` | no | `12` | One event per tracker per kind per this window. Must be ≥ the userscript's `COOLDOWN`. |
 
@@ -168,7 +173,7 @@ cannot disagree. There is nothing to edit.
 It also carries `@updateURL`, so **adding a tracker later reaches the browser on
 its own** — your manager picks it up on its next update check, no reinstall.
 
-The link needs `STATUS_URL` set (step 3); without it the generated script would
+The link needs a status page URL (Settings → General); without it the generated script would
 have nowhere to report and the route says so rather than serving one. If you'd
 rather install by hand — no status page access, or you want to read it first —
 the URL is:

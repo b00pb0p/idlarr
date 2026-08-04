@@ -33,7 +33,24 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 DB_PATH = Path(os.environ.get("IDLARR_DB", "/data/idlarr.db"))
 CONFIG_PATH = Path(os.environ.get("IDLARR_CONFIG", "/config/trackers.yml"))
 TOKEN = os.environ.get("IDLARR_TOKEN", "")
-STATUS_URL = os.environ.get("STATUS_URL", "")  # appended to alerts so you can tap through
+_ENV_STATUS_URL = os.environ.get("STATUS_URL", "").strip()
+STATUS_URL = _ENV_STATUS_URL      # startup default, before the config loads
+
+
+def status_url() -> str:
+    """Public URL of the status page — appended to alerts, and the endpoint the
+    generated userscript reports to.
+
+    Config is authoritative; STATUS_URL seeds it once, same as TZ and
+    backup_keep. Getting this wrong points the script's @connect at the wrong
+    host and tracker CSP silently kills every ping, so being able to fix it
+    from the panel — rather than by editing compose and recreating the
+    container — matters more here than for most settings.
+    """
+    try:
+        return str(load_config().get("status_url", "") or "")
+    except Exception:
+        return _ENV_STATUS_URL
 
 # Every notification goes through Apprise -- ntfy included, via ntfy:// or
 # ntfys://. One code path, ~100 services, nothing bespoke to maintain. See
@@ -203,6 +220,7 @@ def load_config() -> dict:
                 "alive_push_days": int(defaults.get("alive_push_days", 0)),
                 "alert_at_pct": float(defaults.get("alert_at_pct", 0.65)),
                 "backup_keep": int(defaults.get("backup_keep", 14)),
+                "status_url": str(defaults.get("status_url", "") or ""),
             },
         )
     return _cfg_cache["data"]
@@ -392,7 +410,7 @@ def save_default_field(key: str, value) -> None:
     that tracker's limit mattered.
     """
     allowed = {"timezone", "check_hour", "alert_at_pct", "inactivity_days",
-               "alive_push_days", "backup_keep"}
+               "alive_push_days", "backup_keep", "status_url"}
     if key not in allowed:
         raise KeyError(f"not a settable default: {key}")
 
@@ -969,8 +987,9 @@ def build_notification(rows: list[dict]) -> dict | None:
     body = "\n".join(f"{r['name']}: {r['reason']}" for r in actionable)
     # The link goes in the BODY, not a provider-specific click action: every
     # service renders a URL, but only some support a tap target.
-    if STATUS_URL:
-        body += f"\n\n{STATUS_URL}"
+    base = status_url()
+    if base:
+        body += f"\n\n{base}"
 
     return {
         "title": (f"{actionable[0]['name']} -- {actionable[0]['reason']}"
@@ -1234,6 +1253,17 @@ async def lifespan(app: FastAPI):
                       f"environment variable is no longer read and can be removed.")
         except (OSError, ValueError, KeyError) as exc:
             print(f"[startup] could not migrate IDLARR_BACKUP_KEEP: {exc}")
+
+    if _ENV_STATUS_URL:
+        try:
+            raw = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+            if "status_url" not in (raw.get("defaults") or {}):
+                save_default_field("status_url", _ENV_STATUS_URL.rstrip("/"))
+                print(f"[startup] Moved STATUS_URL into trackers.yml. It is "
+                      f"editable in Settings now; the environment variable is "
+                      f"no longer read and can be removed.")
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"[startup] could not migrate STATUS_URL: {exc}")
 
     if RESET_AUTH:
         # Clearing session_secret as well is the point: a password reset that
@@ -1620,6 +1650,13 @@ async def update_settings(payload: dict = Body(...)):
             raise HTTPException(400, "backup_keep must be between 0 and 365")
         changed["backup_keep"] = keep
 
+    surl = payload.get("status_url")
+    if surl is not None:
+        surl = str(surl).strip()
+        if surl and not re.match(r"^https?://", surl, re.I):
+            raise HTTPException(400, "status_url must start with http:// or https://")
+        changed["status_url"] = surl.rstrip("/")
+
     if not changed:
         raise HTTPException(400, "nothing to update")
     try:
@@ -1633,7 +1670,7 @@ async def update_settings(payload: dict = Body(...)):
     cfg = load_config()
     return {k: cfg.get(k) for k in
             ("timezone", "check_hour", "alert_at_pct", "alive_push_days",
-             "backup_keep")}
+             "backup_keep", "status_url")}
 
 
 @app.post("/api/tracker", dependencies=[Depends(require_ui)])
@@ -2076,14 +2113,14 @@ async def userscript(request: Request, token: str = ""):
     """
     if not (hmac.compare_digest(token, get_token()) or authed(request)):
         raise HTTPException(401, "pass ?token=<IDLARR_TOKEN> or sign in first")
-    if not STATUS_URL:
+    if not status_url():
         raise HTTPException(
             500,
-            "STATUS_URL is not set, so the generated script would have no "
-            "endpoint to report to. Set it in .env to the URL you reach this "
-            "page on, then restart.")
+            "No status page URL is set, so the generated script would have "
+            "no endpoint to report to. Set it in Settings -> General to the "
+            "URL you reach this page on.")
     try:
-        body = render_userscript(STATUS_URL)
+        body = render_userscript(status_url())
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
     return Response(body, media_type="text/javascript; charset=utf-8")
@@ -3093,7 +3130,8 @@ __SHEET__
        check_hour:document.getElementById('setHour').value,
        alert_at_pct:document.getElementById('setPct').value,
        alive_push_days:document.getElementById('setAlive').value,
-       backup_keep:document.getElementById('setKeep').value})});
+       backup_keep:document.getElementById('setKeep').value,
+       status_url:document.getElementById('setUrl').value})});
    const d=await r.json().catch(()=>({}));
    setSave.disabled=false;
    if(!r.ok){setErr.textContent=d.detail||('failed ('+r.status+')');return;}
@@ -3250,6 +3288,12 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
                '<button class="lk" id="cfgUp">Restore\u2026</button>'
                '<input type="file" id="cfgFile" accept=".yml,.yaml,text/yaml" '
                'style="display:none">')
+        + _row("Status page URL",
+               "The address you reach this page on. The generated userscript "
+               "reports here, and alerts link to it. Wrong, and tracker CSP "
+               "blocks every ping.",
+               f'<input id="setUrl" class="w-grow" value="{esc(status_url())}" '
+               f'placeholder="https://idlarr.example.ts.net">')
         + _row("Backup retention",
                "Nightly snapshots kept in /data/backups. 0 disables them.",
                f'<input id="setKeep" class="w-num" value="{backup_keep()}">'
@@ -3296,15 +3340,15 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
         _row("Covers", "One @match and one SITES entry per tracker with a host.",
              f'<span class="val on">{n_hosts} tracker'
              f'{"" if n_hosts == 1 else "s"}</span>')
-        + _row("Endpoint", "From STATUS_URL. The script reports here.",
-               f'<span class="val">{esc(host_from_url(STATUS_URL)) or "not set"}</span>')
+        + _row("Endpoint", "Where the script reports. From the status page URL.",
+               f'<span class="val">{esc(host_from_url(status_url())) or "not set"}</span>')
         + (_row("Install", "Any userscript manager (Violentmonkey, Tampermonkey, "
                            "Greasemonkey) installs from this link.",
                 f'<a class="lk pri" href="{esc(js_url)}">Install</a>'
                 f'<button class="lk" id="cpjs" data-u="{esc(js_url)}">Copy URL</button>')
            if js_url else
-           _row("Install", "Set <b>STATUS_URL</b> in .env and restart — without it "
-                           "the generated script would have nowhere to report.",
+           _row("Install", "Set the <b>status page URL</b> above — without it the "
+                           "generated script would have nowhere to report.",
                 '<span class="val off">unavailable</span>')))
 
     # A working connection is remembered so a container recreate does not send
@@ -3466,13 +3510,13 @@ async def index(request: Request):
     # old footer overflow.
     n_hosts = sum(1 for t in load_config()["trackers"] if t.get("host"))
     n_trk = len(load_config()["trackers"])
-    js_url = (f"{STATUS_URL.rstrip('/')}/idlarr.user.js?token={get_token()}"
-              if STATUS_URL else "")
+    _su = status_url()
+    js_url = (f"{_su.rstrip('/')}/idlarr.user.js?token={get_token()}" if _su else "")
 
     signin_bit = ('sign-in <b class="bad">off</b>' if method == "none"
                   else f'sign-in <b class="ok">{esc(method)}</b>')
     script_bit = (f'userscript <b>{esc(userscript_version_peek())}</b>' if js_url
-                  else 'userscript <b class="bad">no STATUS_URL</b>')
+                  else 'userscript <b class="bad">no status URL</b>')
     last = get_state("last_check", "") or "not yet"
     status = (f'<span><b>{n_trk}</b> trackers</span>'
               f'<span>{signin_bit}</span>'

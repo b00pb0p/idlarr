@@ -73,8 +73,9 @@ and you add trackers from the page.
 `ntfy://ntfy.sh/your-topic`, `pover://USER@TOKEN`, `discord://ID/TOKEN`, and
 ~100 more. Without it the service runs and warns, but nothing can reach you.
 
-Set `STATUS_URL` to the address you'll reach the page on; the userscript is
-generated from it.
+Set `STATUS_URL` to the address you'll reach the page on — the userscript is
+generated from it. It seeds the config on first run; afterwards you change it
+in **Settings → General** rather than here.
 
 `IDLARR_TOKEN` is optional — one is generated on first boot and the userscript
 you install already carries it. Set it only to pin a specific value.
@@ -172,8 +173,8 @@ last, so a tracker with no data can never outrank one that's expiring.
 Click a **name** to open that tracker in a new tab. Click anywhere else on the
 row to expand a drawer with three panels:
 
-- **controls** — limit, `confirm`, `immune` (with a reason field), **snooze**,
-  **alert at**, notes, `seen`, `undo`, `remove`
+- **controls** — limit, alert threshold, snooze, notes, `confirm`, `immune`
+  (with a reason field), `seen`, `undo`, `remove`
 - **alert schedule** — the exact date each rung fires, or why it won't
 - **auth history** — recent auth events, and whether each was observed or asserted
 
@@ -182,7 +183,7 @@ lives behind the gear, in six sections:
 
 | | |
 |---|---|
-| **General** | timezone, check hour, alert threshold, still-alive push, config download |
+| **General** | timezone, check hour, alert threshold, still-alive push, status page URL, backup retention, config download and restore, recent activity |
 | **Sign-in** | method, credentials, sign out |
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
 | **Import** | Prowlarr or Jackett |
@@ -292,7 +293,7 @@ Alert priority maps to Apprise's own severity, so an expiring account looks
 different on your phone from a routine nudge: `default` becomes *info*, `high`
 becomes *warning*, `urgent` becomes *failure*.
 
-`STATUS_URL`, if set, is appended to the message body rather than used as a
+The status page URL, if set, is appended to the message body rather than used as a
 provider-specific click action — every service renders a URL, only some support
 a tap target.
 
@@ -354,7 +355,7 @@ cross-origin from tracker pages, where cookies do not apply.
   the tracker is at fault. Use `auth_sel` to override per-site.
 - **`trackers.yml` hot-reloads.** Edit it live; no restart.
 - **The database is backed up nightly** to `/data/backups/idlarr-YYYY-MM-DD.db`,
-  14 days by default (`IDLARR_BACKUP_KEEP`). It is the only record of when each
+  14 days by default, set in **Settings → General**. It is the only record of when each
   account was last seen — losing it risks no account, but resets every countdown
   to `no data` until you re-visit all of them. See
   [Restoring a backup](docs/troubleshooting.md#restoring-a-backup); it has been tested, and there is one

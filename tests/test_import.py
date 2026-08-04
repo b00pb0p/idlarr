@@ -179,7 +179,7 @@ def test_jackett_apply(client, cfg, jackett):
 
 
 def test_imported_trackers_reach_the_userscript(client, cfg, prowlarr, monkeypatch):
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     client.post("/api/import", json={**BODY, "apply": True})
     js = app.render_userscript("https://idlarr.test.internal")
     assert '{ host: "real.example", id: "realone" }' in js
@@ -297,7 +297,7 @@ def test_a_genuinely_new_api_host_imports_as_the_site(client, cfg, apihost):
 
 
 def test_the_generated_match_is_for_the_site_not_the_api(client, cfg, apihost, monkeypatch):
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     client.post("/api/import", json={**BODY, "apply": True})
     js = app.render_userscript("https://idlarr.test.internal")
     assert "// @match        *://*.broadcasthe.net/*" in js

@@ -35,7 +35,7 @@ def cfg(tmp_path, monkeypatch):
     path = tmp_path / "trackers.yml"
     shutil.copy(FIXTURE, path)
     monkeypatch.setattr(app, "CONFIG_PATH", path)
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     app._cfg_cache["data"] = None
     app.init_db()
     with app.db() as conn:
@@ -106,10 +106,11 @@ def test_rendering_the_page_never_bumps_the_userscript_version(client):
 
 def test_install_link_is_absent_without_status_url(client, monkeypatch):
     """A link that 500s is worse than no link. Say what to set instead."""
-    monkeypatch.setattr(app, "STATUS_URL", "")
+    monkeypatch.setattr(app, "status_url", lambda: "")
     page = client.get("/").text
     assert "idlarr.user.js?token=" not in page
-    assert "STATUS_URL" in page
+    # It should say where to fix it, and that is Settings now, not .env.
+    assert "status page URL" in page
 
 
 def test_signed_in_page_offers_sign_out(client):

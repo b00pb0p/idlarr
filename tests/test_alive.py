@@ -236,7 +236,7 @@ def test_env_only_seeds_when_the_key_is_absent(cfg, monkeypatch):
 def test_the_panel_is_always_editable(cfg, monkeypatch):
     """One source of truth means no read-only mode to explain."""
     monkeypatch.setattr(app, "_ENV_BACKUP_KEEP", "5")
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     from fastapi.testclient import TestClient
     page = TestClient(app.app).get("/").text
     assert 'id="setKeep"' in page
@@ -245,7 +245,7 @@ def test_the_panel_is_always_editable(cfg, monkeypatch):
 
 def test_the_panel_makes_it_editable_otherwise(cfg, monkeypatch):
     monkeypatch.setattr(app, "_ENV_BACKUP_KEEP", "")
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     from fastapi.testclient import TestClient
     assert 'id="setKeep"' in TestClient(app.app).get("/").text
 
@@ -262,3 +262,54 @@ def test_setting_retention_to_zero_disables_backups(cfg, tmp_path, monkeypatch):
     app.save_default_field("backup_keep", 0)
     assert app.backup_keep() == 0
     assert app.backup_db("2026-08-04") is None
+
+
+# ----------------------------------------------------------- status page URL
+
+def test_status_url_comes_from_config(cfg, monkeypatch):
+    monkeypatch.setattr(app, "_ENV_STATUS_URL", "")
+    app.save_default_field("status_url", "https://idlarr.test.internal")
+    assert app.status_url() == "https://idlarr.test.internal"
+
+
+def test_env_seeds_status_url_only_when_absent(cfg, monkeypatch):
+    """Same shape as backup_keep and TZ. If env kept winning, editing the URL
+    in the panel would be undone on the next restart — and a wrong URL points
+    the userscript's @connect at the wrong host, which tracker CSP kills
+    silently."""
+    import yaml as _y
+    monkeypatch.setattr(app, "_ENV_STATUS_URL", "https://from-env.example")
+    if "status_url" not in (_y.safe_load(cfg.read_text()).get("defaults") or {}):
+        app.save_default_field("status_url", "https://from-env.example")
+    assert app.status_url() == "https://from-env.example"
+
+    app.save_default_field("status_url", "https://edited.example")
+    if "status_url" not in (_y.safe_load(cfg.read_text()).get("defaults") or {}):
+        app.save_default_field("status_url", "https://from-env.example")
+    assert app.status_url() == "https://edited.example"
+
+
+@pytest.mark.parametrize("bad", ["ftp://x.example", "idlarr.example", "//x"])
+def test_status_url_scheme_is_validated(client, bad):
+    assert client.post("/api/settings", json={"status_url": bad}).status_code == 400
+
+
+def test_status_url_can_be_cleared(client, cfg):
+    client.post("/api/settings", json={"status_url": "https://x.example"})
+    r = client.post("/api/settings", json={"status_url": ""})
+    assert r.status_code == 200 and r.json()["status_url"] == ""
+
+
+def test_trailing_slash_is_normalised(client, cfg):
+    r = client.post("/api/settings", json={"status_url": "https://x.example/"})
+    assert r.json()["status_url"] == "https://x.example"
+
+
+def test_changing_it_changes_the_generated_userscript(cfg, monkeypatch):
+    """The whole reason this moved: fixing a wrong URL should not need a
+    container recreate."""
+    monkeypatch.setattr(app, "_ENV_STATUS_URL", "")
+    app.save_default_field("status_url", "https://first.example")
+    assert "https://first.example/ping" in app.render_userscript(app.status_url())
+    app.save_default_field("status_url", "https://second.example")
+    assert "https://second.example/ping" in app.render_userscript(app.status_url())

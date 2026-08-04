@@ -519,11 +519,11 @@ def test_many_items_batch_into_one_message():
 
 def test_status_url_is_in_the_body_not_a_click_action(monkeypatch):
     """Every service renders a URL in text; only some support tap targets."""
-    monkeypatch.setattr(app, "STATUS_URL", "https://box.example/")
+    monkeypatch.setattr(app, "status_url", lambda: "https://box.example/")
     p = app.build_notification([row()])
     assert p["body"].endswith("https://box.example/")
 
-    monkeypatch.setattr(app, "STATUS_URL", "")
+    monkeypatch.setattr(app, "status_url", lambda: "")
     assert "http" not in app.build_notification([row()])["body"]
 
 

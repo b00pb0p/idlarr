@@ -87,7 +87,7 @@ def test_generated_token_is_long_enough_to_be_unguessable(fresh):
 
 def test_the_generated_token_reaches_the_userscript(fresh, monkeypatch):
     """Generation is only useful if the script the user installs carries it."""
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     app.set_state("idlarr_token", "abc123")
     app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     app.CONFIG_PATH.write_text(app.default_config())
@@ -133,7 +133,7 @@ def test_empty_config_shows_a_first_run_banner_naming_the_path(fresh, monkeypatc
     app.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     app.CONFIG_PATH.write_text(app.default_config())
     app._cfg_cache["data"] = None
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     page = TestClient(app.app).get("/").text
     assert "No trackers yet" in page
     # The banner prompts about the mount but does NOT print the resolved path:
@@ -150,7 +150,7 @@ def test_the_banner_disappears_once_a_tracker_exists(fresh, monkeypatch):
     app.add_tracker({"id": "alpha", "name": "Alpha", "url": "https://a.example/",
                      "host": "a.example", "inactivity_days": 30,
                      "verified": False, "notes": "", "auth_sel": ""})
-    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     page = TestClient(app.app).get("/").text
     assert "No trackers yet" not in page
 
