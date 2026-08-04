@@ -105,7 +105,7 @@ one yourself: `openssl rand -hex 32`.
 | `TZ` | no | `UTC` | Drives the daily check and **all day counting** — set it to your own zone or countdowns can be a day out. |
 | `PUID` | build only | `1001` | **Build argument, not a runtime variable.** The published image always runs as 1001; `chown` your `data/` and `config/` to match. To use a different UID you must build from source: `docker compose build --build-arg PUID=1000`. |
 | `IDLARR_RESET_AUTH` | no | *(unset)* | Set to `1` to clear the UI login on the next boot — the only way back in from a forgotten password. **Remove it afterwards**, or every boot clears it again. |
-| `IDLARR_BACKUP_KEEP` | no | `14` | Dated database snapshots to retain. `0` disables backups. |
+| `IDLARR_BACKUP_KEEP` | legacy | — | **Moved to Settings → General.** A value set here is copied into `trackers.yml` on the next start, then ignored. Safe to delete. |
 | `IDLARR_BACKUP_DIR` | no | `/data/backups` | Where those snapshots go. |
 | `IDLARR_DEDUPE_HOURS` | no | `12` | One event per tracker per kind per this window. Must be ≥ the userscript's `COOLDOWN`. |
 

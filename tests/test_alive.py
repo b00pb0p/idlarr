@@ -202,3 +202,63 @@ def test_settings_need_auth_when_configured(client, cfg):
                                    "password": "correct-horse"})
     client.cookies.clear()
     assert client.post("/api/settings", json={"check_hour": 6}).status_code == 401
+
+
+# --------------------------------------------------------- backup retention
+
+def test_backup_keep_comes_from_config_when_env_is_unset(cfg, monkeypatch):
+    monkeypatch.setattr(app, "_ENV_BACKUP_KEEP", "")
+    app.save_default_field("backup_keep", 3)
+    assert app.backup_keep() == 3
+
+
+def test_env_only_seeds_when_the_key_is_absent(cfg, monkeypatch):
+    """IDLARR_BACKUP_KEEP migrates an existing install's value into the config
+    ONCE. If it kept winning, editing the field in the panel would be undone on
+    every restart — an editable control that silently does nothing."""
+    import yaml as _y
+    raw = _y.safe_load(cfg.read_text())
+    assert "backup_keep" not in raw["defaults"]
+
+    # what lifespan does on boot
+    monkeypatch.setattr(app, "_ENV_BACKUP_KEEP", "5")
+    if "backup_keep" not in (_y.safe_load(cfg.read_text()).get("defaults") or {}):
+        app.save_default_field("backup_keep", 5)
+    assert app.backup_keep() == 5
+
+    # the user then edits it; a later boot must NOT overwrite that
+    app.save_default_field("backup_keep", 30)
+    if "backup_keep" not in (_y.safe_load(cfg.read_text()).get("defaults") or {}):
+        app.save_default_field("backup_keep", 5)
+    assert app.backup_keep() == 30
+
+
+def test_the_panel_is_always_editable(cfg, monkeypatch):
+    """One source of truth means no read-only mode to explain."""
+    monkeypatch.setattr(app, "_ENV_BACKUP_KEEP", "5")
+    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    from fastapi.testclient import TestClient
+    page = TestClient(app.app).get("/").text
+    assert 'id="setKeep"' in page
+    assert "unset it" not in page
+
+
+def test_the_panel_makes_it_editable_otherwise(cfg, monkeypatch):
+    monkeypatch.setattr(app, "_ENV_BACKUP_KEEP", "")
+    monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
+    from fastapi.testclient import TestClient
+    assert 'id="setKeep"' in TestClient(app.app).get("/").text
+
+
+@pytest.mark.parametrize("bad", [-1, 400, "lots"])
+def test_retention_is_range_checked(client, bad):
+    assert client.post("/api/settings", json={"backup_keep": bad}).status_code == 400
+
+
+def test_setting_retention_to_zero_disables_backups(cfg, tmp_path, monkeypatch):
+    """0 is a meaningful value, not an error — it must reach backup_db()."""
+    monkeypatch.setattr(app, "_ENV_BACKUP_KEEP", "")
+    monkeypatch.setattr(app, "BACKUP_DIR", tmp_path / "backups")
+    app.save_default_field("backup_keep", 0)
+    assert app.backup_keep() == 0
+    assert app.backup_db("2026-08-04") is None

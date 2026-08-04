@@ -48,7 +48,22 @@ DEDUPE_HOURS = int(os.environ.get("IDLARR_DEDUPE_HOURS", 12))
 # Nightly snapshot of the events database, taken as part of the daily check.
 # Set IDLARR_BACKUP_KEEP=0 to turn it off.
 BACKUP_DIR = Path(os.environ.get("IDLARR_BACKUP_DIR", "/data/backups"))
-BACKUP_KEEP = int(os.environ.get("IDLARR_BACKUP_KEEP", 14))
+_ENV_BACKUP_KEEP = os.environ.get("IDLARR_BACKUP_KEEP", "").strip()
+BACKUP_KEEP = int(_ENV_BACKUP_KEEP or 14)   # startup default, before config loads
+
+
+def backup_keep() -> int:
+    """How many snapshots to retain. Config only.
+
+    IDLARR_BACKUP_KEEP SEEDS this on first run and is then ignored — the same
+    shape as TZ seeding the generated config. Two live sources for one integer
+    meant a precedence rule, a read-only mode and a note explaining which one
+    won; one source needs none of that.
+    """
+    try:
+        return int(load_config().get("backup_keep", 14))
+    except Exception:
+        return 14
 
 # Set IDLARR_RESET_AUTH=1 to clear the UI login on the next boot. Without an
 # escape hatch a forgotten password bricks the dashboard permanently — the
@@ -102,6 +117,7 @@ defaults:
   alert_at_pct: 0.65
   timezone: {tz}
   check_hour: 9
+  backup_keep: 14
 
 trackers:
 """
@@ -186,6 +202,7 @@ def load_config() -> dict:
                 # indistinguishable from "nothing is due".
                 "alive_push_days": int(defaults.get("alive_push_days", 0)),
                 "alert_at_pct": float(defaults.get("alert_at_pct", 0.65)),
+                "backup_keep": int(defaults.get("backup_keep", 14)),
             },
         )
     return _cfg_cache["data"]
@@ -375,7 +392,7 @@ def save_default_field(key: str, value) -> None:
     that tracker's limit mattered.
     """
     allowed = {"timezone", "check_hour", "alert_at_pct", "inactivity_days",
-               "alive_push_days"}
+               "alive_push_days", "backup_keep"}
     if key not in allowed:
         raise KeyError(f"not a settable default: {key}")
 
@@ -1085,7 +1102,8 @@ def backup_db(today: str) -> Path | None:
     account was last seen. Losing it does not risk an account, but it resets
     every countdown to `unknown` until each tracker is re-bootstrapped.
     """
-    if BACKUP_KEEP <= 0:
+    keep = backup_keep()
+    if keep <= 0:
         return None
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     dest = BACKUP_DIR / f"idlarr-{today}.db"
@@ -1103,7 +1121,7 @@ def backup_db(today: str) -> Path | None:
             tmp.unlink()
 
     # ISO dates sort lexicographically, so oldest-first is just sorted().
-    stale = sorted(BACKUP_DIR.glob("idlarr-*.db"))[:-BACKUP_KEEP]
+    stale = sorted(BACKUP_DIR.glob("idlarr-*.db"))[:-keep]
     for old in stale:
         old.unlink()
     if stale:
@@ -1202,6 +1220,20 @@ async def lifespan(app: FastAPI):
             "/ping would accept anything. Set IDLARR_TOKEN in .env, or check "
             f"that {DB_PATH} is writable."
         )
+
+    # Migrate IDLARR_BACKUP_KEEP into the config once, so an install that set
+    # it keeps its retention. Only when the key is ABSENT — otherwise editing it
+    # in the panel would be undone on every restart.
+    if _ENV_BACKUP_KEEP:
+        try:
+            raw = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+            if "backup_keep" not in (raw.get("defaults") or {}):
+                save_default_field("backup_keep", int(_ENV_BACKUP_KEEP))
+                print(f"[startup] Moved IDLARR_BACKUP_KEEP={_ENV_BACKUP_KEEP} into "
+                      f"trackers.yml. It is editable in Settings now; the "
+                      f"environment variable is no longer read and can be removed.")
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"[startup] could not migrate IDLARR_BACKUP_KEEP: {exc}")
 
     if RESET_AUTH:
         # Clearing session_secret as well is the point: a password reset that
@@ -1578,6 +1610,16 @@ async def update_settings(payload: dict = Body(...)):
             raise HTTPException(400, "alive_push_days must be between 0 and 90")
         changed["alive_push_days"] = alive
 
+    keep = payload.get("backup_keep")
+    if keep is not None:
+        try:
+            keep = int(keep)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "backup_keep must be a whole number")
+        if not 0 <= keep <= 365:
+            raise HTTPException(400, "backup_keep must be between 0 and 365")
+        changed["backup_keep"] = keep
+
     if not changed:
         raise HTTPException(400, "nothing to update")
     try:
@@ -1590,7 +1632,8 @@ async def update_settings(payload: dict = Body(...)):
 
     cfg = load_config()
     return {k: cfg.get(k) for k in
-            ("timezone", "check_hour", "alert_at_pct", "alive_push_days")}
+            ("timezone", "check_hour", "alert_at_pct", "alive_push_days",
+             "backup_keep")}
 
 
 @app.post("/api/tracker", dependencies=[Depends(require_ui)])
@@ -3049,7 +3092,8 @@ __SHEET__
      body:JSON.stringify({timezone:document.getElementById('setTz').value,
        check_hour:document.getElementById('setHour').value,
        alert_at_pct:document.getElementById('setPct').value,
-       alive_push_days:document.getElementById('setAlive').value})});
+       alive_push_days:document.getElementById('setAlive').value,
+       backup_keep:document.getElementById('setKeep').value})});
    const d=await r.json().catch(()=>({}));
    setSave.disabled=false;
    if(!r.ok){setErr.textContent=d.detail||('failed ('+r.status+')');return;}
@@ -3190,7 +3234,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
         + _row("Still-alive push",
                "Nothing else watches the watchdog. If this container dies the "
                "daily check stops and silence looks exactly like nothing being "
-               "due — a heartbeat makes that silence mean something.",
+               "due.",
                f'<select id="setAlive">{alive_opts}</select>')
         + _row("", "", '<button class="lk pri" id="setSave">Save</button>')
         + '<p class="e" id="setErr"></p>'
@@ -3206,9 +3250,10 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
                '<button class="lk" id="cfgUp">Restore\u2026</button>'
                '<input type="file" id="cfgFile" accept=".yml,.yaml,text/yaml" '
                'style="display:none">')
-        + _row("Backup retention", "Nightly snapshots kept in /data/backups. "
-               "Set with <code>IDLARR_BACKUP_KEEP</code>.",
-               f'<span class="val">{BACKUP_KEEP} days</span>')
+        + _row("Backup retention",
+               "Nightly snapshots kept in /data/backups. 0 disables them.",
+               f'<input id="setKeep" class="w-num" value="{backup_keep()}">'
+               f'<em class="act-d" style="width:auto;margin:0">days</em>')
         + '<p class="sub" style="margin:15px 0 0">Written to '
           '<code>trackers.yml</code>, which is hot-reloaded — only a timezone '
           'change needs a restart to affect an already-running check.</p>')

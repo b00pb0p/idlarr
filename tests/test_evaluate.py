@@ -364,7 +364,7 @@ def test_unmark_reopens_the_window_immediately():
 def backup_dir(tmp_path, monkeypatch):
     d = tmp_path / "backups"
     monkeypatch.setattr(app, "BACKUP_DIR", d)
-    monkeypatch.setattr(app, "BACKUP_KEEP", 14)
+    monkeypatch.setattr(app, "backup_keep", lambda: 14)
     return d
 
 
@@ -387,7 +387,7 @@ def test_backup_is_idempotent_for_one_day(backup_dir):
 
 
 def test_backup_prunes_to_the_retention_limit(backup_dir, monkeypatch):
-    monkeypatch.setattr(app, "BACKUP_KEEP", 3)
+    monkeypatch.setattr(app, "backup_keep", lambda: 3)
     seen("auth", 1)
     for day in range(1, 8):
         app.backup_db(f"2026-07-{day:02d}")
@@ -398,7 +398,7 @@ def test_backup_prunes_to_the_retention_limit(backup_dir, monkeypatch):
 
 
 def test_backup_can_be_disabled(backup_dir, monkeypatch):
-    monkeypatch.setattr(app, "BACKUP_KEEP", 0)
+    monkeypatch.setattr(app, "backup_keep", lambda: 0)
     assert app.backup_db("2026-07-28") is None
     assert not backup_dir.exists()
 
