@@ -65,6 +65,29 @@ IDLARR_VERSION = os.environ.get("IDLARR_VERSION", "dev")
 KNOWN_SOFTWARE = {"gazelle": "Gazelle", "unit3d": "UNIT3D", "tbdev": "TBDev",
                   "custom": "Custom"}
 
+# Written on first run when no config exists. Deliberately carries the same
+# fail-safe warning as trackers.example.yml: a limit nobody has confirmed is a
+# guess, and a guess that is too high is the one that loses the account.
+DEFAULT_CONFIG = """# Idlarr config. Hot-reloaded — no container restart needed.
+#
+# Add trackers from the status page (+ Add tracker), import them from Prowlarr
+# or Jackett, or write them here by hand. See docs/trackers.md.
+#
+# ############################################################################
+# # EVERY inactivity_days IS A FAIL-SAFE PLACEHOLDER UNTIL YOU CONFIRM IT.   #
+# # 30d is short enough to nag before almost any real limit is hit. Raise    #
+# # each one as you read that tracker's own rules page, then set verified.   #
+# ############################################################################
+
+defaults:
+  inactivity_days: 30
+  alert_at_pct: 0.65
+  timezone: UTC
+  check_hour: 9
+
+trackers:
+"""
+
 _cfg_cache = {"mtime": 0.0, "data": None}
 
 
@@ -325,8 +348,18 @@ def add_tracker(entry: dict) -> None:
             _, end, indent = _block_bounds(lines, existing[-1])
         else:
             # An empty list: insert directly under the `trackers:` key.
-            end = next((i + 1 for i, ln in enumerate(lines)
-                        if re.match(r"^trackers:\s*$", ln)), None)
+            # Accept `trackers:` and `trackers: []`. An inline empty list has
+            # to be rewritten to a bare key first — appending a block under
+            # `trackers: []` produces invalid YAML, which is how the very first
+            # "Add tracker" on an auto-created config used to fail.
+            end = None
+            for i, ln in enumerate(lines):
+                m = re.match(r"^trackers:\s*(\[\s*\])?\s*$", ln)
+                if m:
+                    if m.group(1):
+                        lines[i] = "trackers:\n"
+                    end = i + 1
+                    break
             if end is None:
                 raise ValueError("no `trackers:` key in the config to append to")
             indent = "  "
@@ -904,16 +937,6 @@ async def scheduler() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Refuse to start rather than run without authentication. A container that
-    # will not boot is impossible to miss; an open /ping is invisible until
-    # something writes to your database that you did not send.
-    if not TOKEN:
-        raise RuntimeError(
-            "IDLARR_TOKEN is not set — refusing to start. An empty token would "
-            "disable authentication entirely and /ping would accept anything. "
-            "Generate one with `openssl rand -hex 32`, put it in .env, and use "
-            "the same value for TOKEN in the userscript."
-        )
     if not NOTIFY_URLS:
         # Not fatal -- the status page still works -- but a watchdog that
         # cannot reach you is the exact failure this project exists to avoid,
@@ -938,6 +961,28 @@ async def lifespan(app: FastAPI):
             f"  somewhere other than you think."
         ) from exc
 
+    # A first boot with no IDLARR_TOKEN mints one and stores it, the way the
+    # *arrs generate an API key. The original design refused to start instead,
+    # because an EMPTY token once turned /ping into an open endpoint. That
+    # failure is still closed — but by guaranteeing a token exists rather than
+    # by refusing to run. get_token() reads env first, so setting IDLARR_TOKEN
+    # still wins and nothing is silently overridden.
+    if not TOKEN and not get_state("idlarr_token"):
+        set_state("idlarr_token", secrets.token_hex(32))
+        print("[startup] No IDLARR_TOKEN set — generated one and saved it to "
+              "the database. Install the userscript from the status page and it "
+              "will carry the right token automatically.")
+
+    # Belt and braces: if a token still cannot be obtained, refuse to start.
+    # An open /ping is invisible; a container that will not boot is not.
+    if not get_token():
+        raise RuntimeError(
+            "IDLARR_TOKEN is not set and could not be generated — refusing to "
+            "start. An empty token would disable authentication entirely and "
+            "/ping would accept anything. Set IDLARR_TOKEN in .env, or check "
+            f"that {DB_PATH} is writable."
+        )
+
     if RESET_AUTH:
         # Clearing session_secret as well is the point: a password reset that
         # left existing cookies valid would not lock out whoever you are
@@ -948,13 +993,31 @@ async def lifespan(app: FastAPI):
               "cleared and every existing session invalidated. Remove the "
               "variable, restart, then set a new login from the status page.")
 
+    # Auto-create the config on first run. The original design refused,
+    # because auto-creating turns a MIS-MOUNTED volume into a silently empty
+    # install that looks like it is working. That risk is real and has not gone
+    # away — but it was decided when hand-editing the file was the only way to
+    # add a tracker, so an empty config was simply useless. Add and Import make
+    # an empty config the legitimate first-run state.
+    #
+    # The mitigation is to make "empty because new" impossible to confuse with
+    # "empty because your mount is wrong": we say the resolved path out loud,
+    # every time, and the page carries a first-run banner while it is empty.
     if not CONFIG_PATH.exists():
-        raise RuntimeError(
-            f"No tracker config at {CONFIG_PATH}.\n"
-            f"  Copy the example into the directory you mounted at /config:\n"
-            f"      cp trackers.example.yml config/trackers.yml\n"
-            f"  If you did create it, /config is mounted somewhere else."
-        )
+        try:
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG_PATH.write_text(DEFAULT_CONFIG)
+        except OSError as exc:
+            raise RuntimeError(
+                f"No tracker config at {CONFIG_PATH}, and it could not be "
+                f"created: {exc}\n"
+                f"  The container runs as UID {os.getuid()}; the directory you\n"
+                f"  mounted at /config must be writable by it:\n"
+                f"      mkdir -p config && chown -R {os.getuid()} config"
+            ) from exc
+        print(f"[startup] No config found — created an empty one at "
+              f"{CONFIG_PATH}. If you expected trackers here, /config is "
+              f"mounted somewhere other than you think.")
     try:
         cfg = load_config()
     except Exception as exc:
@@ -983,20 +1046,32 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Idlarr", lifespan=lifespan)
 
 
+def get_token() -> str:
+    """The API token the userscript sends to /ping.
+
+    Precedence: IDLARR_TOKEN from the environment (module-level TOKEN, which
+    tests also monkeypatch) first, then the one generated into `state` on first
+    boot. Env wins so an explicit setting is never silently overridden by a
+    stale generated value.
+    """
+    return TOKEN or (get_state("idlarr_token", "") or "")
+
+
 def require_token(auth: str | None) -> None:
     """Fails CLOSED. An earlier version returned early when TOKEN was empty,
     which meant a missing or misspelled env var silently turned /ping into an
     open endpoint — and looked identical to working. `lifespan` refuses to
     start without a token, so this branch should be unreachable; it exists so
     that if it ever is reached, the answer is 'no' rather than 'yes'."""
-    if not TOKEN:
+    token = get_token()
+    if not token:
         raise HTTPException(status_code=500,
                             detail="server misconfigured: IDLARR_TOKEN is not set")
     # Constant-time. `!=` short-circuits on the first wrong byte, which is a
     # timing oracle for the one token that gates forging auth events — the core
     # threat this service exists to prevent. The userscript route already used
     # compare_digest; this makes /ping match it.
-    if not hmac.compare_digest(auth or "", f"Bearer {TOKEN}"):
+    if not hmac.compare_digest(auth or "", f"Bearer {token}"):
         raise HTTPException(status_code=401, detail="bad token")
 
 
@@ -1491,7 +1566,7 @@ def render_userscript(base_url: str) -> str:
     # status page reaches the browser on Violentmonkey's next update check
     # instead of needing a reinstall. The token has to ride in the URL: that
     # fetch carries no session cookie.
-    script_url = f"{base}/idlarr.user.js?token={TOKEN}"
+    script_url = f"{base}/idlarr.user.js?token={get_token()}"
     meta_extra = (f"// @updateURL   {script_url}\n"
                   f"// @downloadURL {script_url}\n"
                   f"// @connect      {connect_host}")
@@ -1504,7 +1579,7 @@ def render_userscript(base_url: str) -> str:
         ("endpoint", r"(?m)^  const ENDPOINT = .*$",
          f"  const ENDPOINT = {json.dumps(base + '/ping')};"),
         ("token", r"(?m)^  const TOKEN    = .*$",
-         f"  const TOKEN    = {json.dumps(TOKEN)};"),
+         f"  const TOKEN    = {json.dumps(get_token())};"),
         ("sites array", r"  const SITES = \[.*?\n  \];",
          "  const SITES = [\n" + sites + "\n  ];"),
     ]
@@ -1546,7 +1621,7 @@ async def userscript(request: Request, token: str = ""):
     not a widening — with no login configured, /api/mark already grants a
     stranger strictly more than the token does.
     """
-    if not (hmac.compare_digest(token, TOKEN) or authed(request)):
+    if not (hmac.compare_digest(token, get_token()) or authed(request)):
         raise HTTPException(401, "pass ?token=<IDLARR_TOKEN> or sign in first")
     if not STATUS_URL:
         raise HTTPException(
@@ -1715,7 +1790,9 @@ async def test_notify(request: Request,
     This always sends, and returns the provider's own reason for a refusal
     instead of swallowing it.
     """
-    if not (TOKEN and authorization == f"Bearer {TOKEN}") and not authed(request):
+    tok = get_token()
+    if not (tok and hmac.compare_digest(authorization or "", f"Bearer {tok}")) \
+            and not authed(request):
         raise HTTPException(401, "bad token")
     if not NOTIFY_URLS:
         raise HTTPException(400, "IDLARR_NOTIFY_URLS is empty — alerts have "
@@ -2740,12 +2817,23 @@ async def index(request: Request):
     else:
         banner = ""
 
+    # An empty config is now the legitimate first-run state, so it must be
+    # impossible to confuse with a mis-mounted /config that merely LOOKS new.
+    # Name the resolved path on screen, the same way startup names it in the log.
+    if not rows:
+        banner += (
+            '<div class="banner" id="firstrun"><b>No trackers yet.</b> '
+            'Add one from the header, or import from Prowlarr or Jackett in '
+            f'settings. Reading <code>{esc(CONFIG_PATH)}</code> — if you '
+            'expected trackers there, that mount is not where you think.'
+            '</div>')
+
     # The status line is read-only. Actions live in the header and the
     # settings panel now — mixing the two in fixed-width cells is what made the
     # old footer overflow.
     n_hosts = sum(1 for t in load_config()["trackers"] if t.get("host"))
     n_trk = len(load_config()["trackers"])
-    js_url = (f"{STATUS_URL.rstrip('/')}/idlarr.user.js?token={TOKEN}"
+    js_url = (f"{STATUS_URL.rstrip('/')}/idlarr.user.js?token={get_token()}"
               if STATUS_URL else "")
 
     signin_bit = ('sign-in <b class="bad">off</b>' if method == "none"
