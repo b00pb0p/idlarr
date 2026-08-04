@@ -27,9 +27,19 @@ for a different one you must build from source (see `PUID` below).
 There is no userscript to download: the service generates it from your config
 and serves it from the status page.
 
-**2. Config** — copy the example and edit it:
+**2. Config** — there is nothing to copy. On first boot the service creates an
+empty `config/trackers.yml` and the page invites you to add trackers. Startup
+also prints the resolved path it used, so a `/config` mounted somewhere
+unexpected shows up as a wrong path rather than as a mysteriously empty install.
+
+Add trackers from the page (**+ Add tracker**, or **Import** from Prowlarr or
+Jackett — see [Managing trackers](trackers.md)), or write them by hand. The file
+is hot-reloaded either way.
+
+To start from the shipped example instead of an empty file:
 
 ```bash
+curl -fsSLO https://raw.githubusercontent.com/b00pb0p/idlarr/main/trackers.example.yml
 cp trackers.example.yml config/trackers.yml
 ```
 
@@ -80,13 +90,17 @@ class** is exempt, and whether the site has a **vacation mode**.
 
 ```bash
 cp .env.example .env
-openssl rand -hex 32          # -> IDLARR_TOKEN
 ```
+
+`IDLARR_TOKEN` is optional — leave it blank and one is generated on first boot,
+stored in the database, and baked into the userscript you install from the page.
+Set it only to pin a specific value; an explicit token always wins. To generate
+one yourself: `openssl rand -hex 32`.
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `IDLARR_TOKEN` | **yes** | — | Shared secret for `/ping`. The service **refuses to start** without it. Baked into the generated userscript automatically. |
-| `IDLARR_NOTIFY_URLS` | **yes** | — | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs — ntfy, Pushover, Discord, Telegram, Signal and ~100 more. Compose aborts if unset. |
+| `IDLARR_TOKEN` | no | *(generated)* | Shared secret for `/ping`. Generated on first boot if unset and baked into the generated userscript. An explicit value always wins. |
+| `IDLARR_NOTIFY_URLS` | no | *(empty)* | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs — ntfy, Pushover, Discord, Telegram, Signal and ~100 more. Optional so a first run can boot, but **set it**: with it empty nothing can reach you. |
 | `STATUS_URL` | no | *(empty)* | Public URL of the status page. Appended to every alert so you can tap through. |
 | `TZ` | no | `UTC` | Drives the daily check and **all day counting** — set it to your own zone or countdowns can be a day out. |
 | `PUID` | build only | `1001` | **Build argument, not a runtime variable.** The published image always runs as 1001; `chown` your `data/` and `config/` to match. To use a different UID you must build from source: `docker compose build --build-arg PUID=1000`. |
@@ -136,9 +150,11 @@ reset a countdown, after which the dashboard reads `ok` while the account ages
 out. Set one from the settings panel (see [Signing in](../README.md#signing-in)), keep it behind
 Tailscale or a VPN, or both. Do not expose it unauthenticated.
 
-`/ping` itself is token-protected, and the service **refuses to start** without
-`IDLARR_TOKEN` — an empty token would disable authentication entirely, which is
-indistinguishable from working until something writes to your database.
+`/ping` itself is token-protected, and that protection **fails closed**: if no
+token can be obtained — neither set nor generated — `/ping` refuses every
+request rather than accepting them. An empty token would otherwise disable
+authentication entirely, which is indistinguishable from working until
+something writes to your database that you did not send.
 
 **5. Userscript** — install a userscript manager ([Violentmonkey](https://violentmonkey.github.io/), Tampermonkey, or Greasemonkey),
 then open the status page, click the settings gear, and click **Install** in the

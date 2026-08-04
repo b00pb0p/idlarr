@@ -54,31 +54,30 @@ Five minutes if nothing surprises you. The full walkthrough — every environmen
 variable, a different UID, building from source, worked config examples — is in
 **[docs/setup.md](docs/setup.md)**.
 
-**1. Directories and templates.** The `chown` matters: the container runs as
-UID 1001 and cannot create these itself. If Docker creates them they come out
-root-owned and startup fails with `unable to open database file`.
+**1. Directories.** The `chown` matters: the container runs as UID 1001 and
+cannot create these itself. If Docker creates them they come out root-owned and
+startup fails with `unable to open database file`.
 
 ```bash
 mkdir -p idlarr/data idlarr/config && cd idlarr
 chown -R 1001 data config
-BASE=https://raw.githubusercontent.com/b00pb0p/idlarr/main
-curl -fsSLO $BASE/trackers.example.yml
-curl -fsSLO $BASE/.env.example
-cp trackers.example.yml config/trackers.yml
-```
-
-**2. Secrets.** Copy `.env.example` to `.env` and set two things: a token, and
-where alerts go.
-
-```bash
+curl -fsSLO https://raw.githubusercontent.com/b00pb0p/idlarr/main/.env.example
 cp .env.example .env
-openssl rand -hex 32          # -> IDLARR_TOKEN
 ```
 
-`IDLARR_NOTIFY_URLS` is an [Apprise](https://github.com/caronc/apprise) URL —
+There is no config to copy — an empty `trackers.yml` is created on first boot,
+and you add trackers from the page.
+
+**2. Settings.** Only one thing is worth setting before you start:
+`IDLARR_NOTIFY_URLS`, an [Apprise](https://github.com/caronc/apprise) URL —
 `ntfy://ntfy.sh/your-topic`, `pover://USER@TOKEN`, `discord://ID/TOKEN`, and
-~100 more. Set `STATUS_URL` to the address you'll reach the page on; the
-userscript is generated from it.
+~100 more. Without it the service runs and warns, but nothing can reach you.
+
+Set `STATUS_URL` to the address you'll reach the page on; the userscript is
+generated from it.
+
+`IDLARR_TOKEN` is optional — one is generated on first boot and the userscript
+you install already carries it. Set it only to pin a specific value.
 
 **3. Deploy.** A prebuilt multi-arch image is published to GHCR:
 

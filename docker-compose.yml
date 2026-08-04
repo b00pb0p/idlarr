@@ -13,16 +13,27 @@ services:
       - ./config:/config
     environment:
       # --- secrets: set these in a .env file beside this compose file --------
-      # ${VAR:?msg} makes compose abort loudly rather than start without them.
-      # That guard matters: an empty IDLARR_TOKEN disables auth entirely,
-      # so a typo'd variable would silently turn /ping into an open endpoint.
-      IDLARR_TOKEN: "${IDLARR_TOKEN:?set IDLARR_TOKEN in .env}"
+      # IDLARR_TOKEN is OPTIONAL. Leave it empty and the service generates one
+      # on first boot and stores it in the database — the generated userscript
+      # then carries the right value automatically. Set it only if you want a
+      # specific token; an explicit value always wins over the generated one.
+      #
+      # This used `${VAR:?msg}` to abort when it was empty, because an empty
+      # token once disabled auth entirely. That hole is still closed — /ping
+      # refuses to serve when no token can be obtained — but by guaranteeing a
+      # token exists rather than by refusing to start.
+      IDLARR_TOKEN: "${IDLARR_TOKEN:-}"
 
       # --- where your notifications go --------------------------------------
       # Comma-separated Apprise URLs. ntfy, Pushover, Discord, Telegram,
-      # Signal, and ~100 more all go through here. Empty means alerts go
-      # nowhere, and startup says so.
-      IDLARR_NOTIFY_URLS: "${IDLARR_NOTIFY_URLS:?set IDLARR_NOTIFY_URLS in .env}"
+      # Signal, and ~100 more all go through here.
+      #
+      # Also optional, so a first run can boot and be looked at before you wire
+      # up a push service. Compose used to abort without it, which was stricter
+      # than the service itself — the app warns loudly at startup instead, and
+      # the Notifications panel shows the count. Do set it: a watchdog that
+      # cannot reach you is the exact failure this project exists to avoid.
+      IDLARR_NOTIFY_URLS: "${IDLARR_NOTIFY_URLS:-}"
 
       # --- appended to every alert so you can tap through to the page -------
       STATUS_URL: "${STATUS_URL:-}"
