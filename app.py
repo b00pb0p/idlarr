@@ -560,6 +560,7 @@ def remove_tracker(tracker_id: str) -> None:
 
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     with db() as conn:
         conn.executescript(
             """
@@ -1066,7 +1067,7 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
     except sqlite3.OperationalError as exc:
-        uid = os.getuid()
+        uid = os.getuid() if hasattr(os, "getuid") else "unknown"
         raise RuntimeError(
             f"Cannot open the database at {DB_PATH}: {exc}\n"
             f"  The container runs as UID {uid}, and the directory you mounted at\n"
@@ -1138,7 +1139,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         raise RuntimeError(
             f"Could not read {CONFIG_PATH}: {exc}\n"
-            f"  Check it is valid YAML and readable by UID {os.getuid()}."
+            f"  Check it is valid YAML and readable by UID {os.getuid() if hasattr(os, 'getuid') else 'unknown'}."
         ) from exc
     print(f"[startup] {len(cfg['trackers'])} tracker(s) loaded, timezone {cfg['timezone']}")
 
@@ -1714,7 +1715,8 @@ def render_userscript(base_url: str) -> str:
     # than the full API token — it expires in 24h, so a leaked log entry is not
     # a permanent credential. Violentmonkey re-fetches the URL on each check,
     # and the served script always contains a fresh token in @updateURL.
-    dl_token = make_download_token(ttl_seconds=86400)
+    # 7 days covers even the slowest update-check intervals with margin.
+    dl_token = make_download_token(ttl_seconds=604800)
     script_url = f"{base}/idlarr.user.js?token={dl_token}"
     meta_extra = (f"// @updateURL   {script_url}\n"
                   f"// @downloadURL {script_url}\n"
@@ -1803,8 +1805,8 @@ def verify_download_token(token: str) -> bool:
 @app.get("/api/download-token", dependencies=[Depends(require_ui)])
 async def get_download_token():
     """Generate a short-lived token for the userscript install/update URL.
-    Valid for 24 hours — long enough for Violentmonkey's update cycle."""
-    return {"token": make_download_token(ttl_seconds=86400)}
+    Valid for 7 days — long enough for Violentmonkey's update cycle."""
+    return {"token": make_download_token(ttl_seconds=604800)}
 
 
 @app.get("/idlarr.user.js")
@@ -3124,7 +3126,7 @@ async def index(request: Request):
     n_hosts = sum(1 for t in load_config()["trackers"] if t.get("host"))
     n_trk = len(load_config()["trackers"])
     _status_url = get_status_url()
-    _dl_token = make_download_token(ttl_seconds=86400) if _status_url else ""
+    _dl_token = make_download_token(ttl_seconds=604800) if _status_url else ""
     js_url = (f"{_status_url.rstrip('/')}/idlarr.user.js?token={_dl_token}"
               if _status_url else "")
 

@@ -1,4 +1,4 @@
-# The image needs exactly two files. Everything else — tests, docs, the
+# The image needs exactly these files. Everything else — tests, docs, the
 # screenshot, .git — was being shipped to the Docker daemon on every build for
 # no reason. Deny-all then allow, so adding a file to the repo cannot silently
 # bloat the context again.
@@ -7,6 +7,7 @@
 # build fails with "file not found" despite the file plainly existing.
 *
 !requirements.txt
+!requirements.lock
 !app.py
 # The TEMPLATE that /idlarr.user.js fills in from live config — not a static
 # asset, and not optional. Without it that route 500s.
