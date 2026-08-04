@@ -374,3 +374,29 @@ def test_reset_clears_everything():
 
     assert app.auth_method() == "none"
     assert app.read_session(stale) is None
+
+
+# ---------------------------------------------------------------- token timing
+
+def test_ping_token_uses_constant_time_comparison(monkeypatch):
+    """`!=` short-circuits on the first wrong byte, a timing oracle for the
+    token that gates forging auth events. Assert the code path uses
+    hmac.compare_digest rather than a plain string compare."""
+    import inspect
+    src = inspect.getsource(app.require_token)
+    assert "compare_digest" in src
+    assert "auth != " not in src and "!= f\"Bearer" not in src
+
+
+def test_ping_token_still_enforces_after_the_timing_fix(monkeypatch):
+    """Constant-time must not mean lax. Every wrong form is still rejected."""
+    monkeypatch.setattr(app, "TOKEN", "right-token")
+    from fastapi import HTTPException
+    def code(auth):
+        try:
+            app.require_token(auth); return 200
+        except HTTPException as e:
+            return e.status_code
+    assert code("Bearer right-token") == 200
+    for bad in ("Bearer wrong-token", "right-token", "Bearer ", "", None, "bearer right-token"):
+        assert code(bad) == 401, bad

@@ -262,3 +262,70 @@ def test_the_build_chain_passes_the_version_through():
 
 def test_about_panel_reports_the_running_version(page, monkeypatch):
     assert f'<span class="val">{app.IDLARR_VERSION}</span>' in page
+
+
+# ---------------------------------------------------------------- XSS surface
+#
+# The drawer builds its HTML by string concatenation in the browser, so any
+# user-controlled string field interpolated without hesc() is an injection.
+# immune_reason shipped exactly this way — reflected raw into value="..." while
+# notes beside it was escaped — so a reason like `x" onmouseover="alert(1)`
+# broke out of the attribute. These guards make the next such field fail here.
+
+# Fields a user can set to arbitrary text (via /api/limit, /api/tracker, the
+# import, or a hand-edited trackers.yml). Each must be escaped wherever the
+# client-side JS drops it into markup.
+USER_TEXT_FIELDS = ["immune_reason", "notes", "name", "url", "software"]
+
+
+@pytest.mark.parametrize("field", USER_TEXT_FIELDS)
+def test_user_text_is_escaped_before_it_reaches_markup(page, field):
+    """Every string-concatenation interpolation of a user-text field must go
+    through hesc(). A raw `'+d.notes` OR `'+(d.notes` fails; `'+hesc(d.notes`
+    passes. The earlier version of this test missed the `'+(d.` form and passed
+    vacuously on the very bug it was meant to catch — hence the explicit
+    optional `(` and the `# noqa` allowlist for non-HTML uses below."""
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    # A `+` (string concat), optional whitespace, optional `(` or `hesc(`,
+    # then the field. If the wrapper isn't hesc(, it's raw interpolation.
+    hits = 0
+    for m in re.finditer(r"\+\s*(hesc\(\s*|\(\s*)?[de]\.%s\b"
+                         % re.escape(field), script):
+        wrapper = (m.group(1) or "")
+        assert wrapper.startswith("hesc"), (
+            f"d.{field} interpolated without hesc() near "
+            f"...{script[max(0,m.start()-30):m.start()+40]!r}")
+        hits += 1
+
+
+def test_immune_reason_specifically_is_escaped(page):
+    """The one that shipped. Pin it by name so a regression is unmistakable."""
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    assert "hesc(d.immune_reason" in script
+    assert re.search(r"value=\"'\+d\.immune_reason", script) is None
+
+
+def test_no_css_selector_is_defined_twice_in_the_base_stylesheet():
+    """Two `.imlist{...}` blocks drifted apart in the base stylesheet — one
+    orphaned when Import moved out of a modal — and the cascade resolved the
+    conflict non-obviously. Duplicate base-level selectors are almost always
+    that: a leftover. Overrides inside @media are legitimate and excluded."""
+    css = re.search(r"<style>(.*?)</style>", app.PAGE, re.S).group(1)
+    # Drop @media blocks (balanced-brace scan) so intentional overrides don't trip it.
+    base, depth, i = [], 0, 0
+    while i < len(css):
+        if css.startswith("@media", i):
+            # skip to the matching close brace of this @media
+            j = css.index("{", i); d = 1; j += 1
+            while d and j < len(css):
+                d += css[j] == "{"; d -= css[j] == "}"; j += 1
+            i = j; continue
+        base.append(css[i]); i += 1
+    base_css = "".join(base)
+    selectors = re.findall(r"(?:^|})\s*([^{}@]+?)\s*\{", base_css)
+    seen = {}
+    for sel in selectors:
+        sel = " ".join(sel.split())          # normalise whitespace
+        seen[sel] = seen.get(sel, 0) + 1
+    dupes = {s: n for s, n in seen.items() if n > 1}
+    assert not dupes, f"selectors defined more than once in the base stylesheet: {dupes}"

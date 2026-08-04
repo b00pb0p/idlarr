@@ -992,7 +992,11 @@ def require_token(auth: str | None) -> None:
     if not TOKEN:
         raise HTTPException(status_code=500,
                             detail="server misconfigured: IDLARR_TOKEN is not set")
-    if auth != f"Bearer {TOKEN}":
+    # Constant-time. `!=` short-circuits on the first wrong byte, which is a
+    # timing oracle for the one token that gates forging auth events — the core
+    # threat this service exists to prevent. The userscript route already used
+    # compare_digest; this makes /ping match it.
+    if not hmac.compare_digest(auth or "", f"Bearer {TOKEN}"):
         raise HTTPException(status_code=401, detail="bad token")
 
 
@@ -1956,13 +1960,6 @@ PAGE = """<!doctype html>
   .modal .e{color:var(--critical);font-size:11.5px;min-height:15px;margin:7px 0 0}
   .modal .box.wide{width:410px}
   .modal .rowb button:disabled{opacity:.4;cursor:default}
-  .imlist{max-height:184px;overflow:auto;margin:2px 0 13px}
-  .imlist:empty{display:none}
-  .imlist .r{display:flex;gap:9px;align-items:baseline;padding:5px 0;
-    border-bottom:1px solid var(--line);font-size:11.5px}
-  .imlist .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .imlist .sk{color:var(--dim);font-size:9.5px;letter-spacing:.06em;white-space:nowrap}
-  .imlist .new{color:var(--ok);font-size:9.5px;letter-spacing:.06em;white-space:nowrap}
 
   /* Footer is read-only STATUS. It used to carry actions too, and that is
      what made it overflow: fixed-width nowrap content competing for room in a
@@ -2027,7 +2024,7 @@ PAGE = """<!doctype html>
   .xclose:hover{color:var(--fg)}
   .imlist{max-height:170px;overflow:auto;margin:2px 0 6px}
   .imlist:empty{display:none}
-  .imlist .r{display:flex;gap:9px;align-items:baseline;padding:5px 0;
+  .imlist .r{display:flex;gap:9px;align-items:baseline;padding:5px 10px 5px 0;
     border-bottom:1px solid var(--line);font-size:12px}
   .imlist .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .imlist .sk{color:var(--dim);font-size:10px;white-space:nowrap}
@@ -2174,7 +2171,7 @@ __SHEET__
     +'<button class="imm'+(imm?' on':'')+'">'+(imm?'\\u25cf immune':'immune')+'</button>'
     +'<button class="seen">seen</button><button class="undo danger">undo</button>'
     +'<button class="del danger">remove</button></div>'
-    +(imm?'<div class="reason"><input class="rsn" value="'+(d.immune_reason||'')
+    +(imm?'<div class="reason"><input class="rsn" value="'+hesc(d.immune_reason||'')
       +'" placeholder="why immune? e.g. donated, elite class"></div>':'')
     +'<div class="note"><input class="nts" value="'+hesc(d.notes||'')
       +'" placeholder="notes \u2014 first word sets the software column"></div>'

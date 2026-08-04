@@ -403,3 +403,31 @@ def test_write_failures_are_logged(client, cfg, prowlarr, monkeypatch, capsys):
     client.post("/api/import", json={**BODY, "apply": True})
     out = capsys.readouterr().out
     assert "0 added, 3 failed" in out and "refusing write" in out
+
+
+# ---------------------------------------------------------------- SSRF surface
+
+@pytest.mark.parametrize("scheme", [
+    "file:///etc/passwd",
+    "gopher://internal:70/",
+    "ftp://internal/secret",
+    "http-x://weird",
+    "//no-scheme.example",
+])
+def test_import_rejects_non_http_schemes(client, scheme):
+    """The import fetches a user-supplied URL server-side. Allowing file:// would
+    turn it into a local-file read, and other schemes widen the SSRF surface.
+    Only http(s) is accepted, and the check must run BEFORE any fetch."""
+    r = client.post("/api/import", json={"source": "prowlarr", "url": scheme,
+                                         "api_key": "k"})
+    assert r.status_code == 400
+
+
+def test_import_does_not_fetch_before_validating_scheme(client, monkeypatch):
+    """Prove nothing is fetched for a bad scheme — the guard is before the wire,
+    not after."""
+    called = []
+    monkeypatch.setattr(app, "_fetch_json", lambda u, h: called.append(u) or [])
+    client.post("/api/import", json={"source": "prowlarr",
+                                     "url": "file:///etc/passwd", "api_key": "k"})
+    assert called == [], "fetched a file:// URL before rejecting it"
