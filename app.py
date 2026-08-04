@@ -2031,19 +2031,19 @@ PAGE = """<!doctype html>
   .imlist .new{color:var(--ok);font-size:10px;white-space:nowrap}
   @media(max-width:760px){
     .sheet .win{flex-direction:column;height:92vh}
-    /* The nav becomes a horizontal scrolling strip, and the absolutely-placed
-       close button floats over its right end — landing on the last tab. Reserve
-       a gutter so tabs end before the corner, and give the button an opaque
-       background matching the nav so a tab scrolling under it is masked cleanly
-       rather than showing through. */
-    .sheet nav{width:100%;display:flex;overflow-x:auto;padding:0 46px 0 0;
+    /* Six tabs don't fit at phone width, so the nav must scroll — and any
+       close button sharing that row collides with whatever tab is at the right
+       edge. Lift the × into its own slim bar above the nav (position:static
+       makes it the first flex child), so the tabs scroll freely underneath
+       with nothing overlapping. */
+    .xclose{position:static;width:100%;height:auto;display:flex;
+      justify-content:flex-end;padding:9px 13px;font-size:20px;
+      background:var(--head);border-bottom:1px solid var(--line)}
+    .sheet nav{width:100%;display:flex;overflow-x:auto;padding:0;
       border-right:0;border-bottom:1px solid var(--line)}
     .sheet nav button{border-left:0;border-bottom:2px solid transparent;
       white-space:nowrap;padding:12px 13px;width:auto}
     .sheet nav button.on{border-left:0;border-bottom-color:var(--accent)}
-    .xclose{top:0;right:0;width:44px;height:45px;background:var(--bg);
-      border-bottom:1px solid var(--line);display:flex;align-items:center;
-      justify-content:center}
     .sheet .row{flex-wrap:wrap}
     .sheet .row .ctl2{width:100%;justify-content:flex-start}
     .banner .sp{margin-left:0;width:100%}
