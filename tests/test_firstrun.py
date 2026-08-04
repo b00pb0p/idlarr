@@ -136,7 +136,11 @@ def test_empty_config_shows_a_first_run_banner_naming_the_path(fresh, monkeypatc
     monkeypatch.setattr(app, "STATUS_URL", "https://idlarr.test.internal")
     page = TestClient(app.app).get("/").text
     assert "No trackers yet" in page
-    assert str(app.CONFIG_PATH) in page
+    # The banner prompts about the mount but does NOT print the resolved path:
+    # inside a container that is always /config/trackers.yml and identifies
+    # nothing. The startup log carries it instead.
+    assert "Check your config mount" in page
+    assert str(app.CONFIG_PATH) not in page
 
 
 def test_the_banner_disappears_once_a_tracker_exists(fresh, monkeypatch):

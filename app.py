@@ -2116,7 +2116,7 @@ PAGE = """<!doctype html>
   /* Command chips in help text: kept whole (never break mid-token) and set off
      from prose, so when one wraps to its own line it reads as a called-out
      command rather than a stray fragment. */
-  .sheet code,.sheet .sub code,.sheet .lbl code{font-family:'Azeret Mono',monospace;
+  .sheet code,.sheet .sub code,.sheet .lbl code,.banner code{font-family:'Azeret Mono',monospace;
     font-size:.92em;background:var(--bg);border:1px solid var(--line2);
     border-radius:3px;padding:1px 5px;white-space:nowrap;color:var(--fg)}
   .sheet .row{display:flex;align-items:center;gap:14px;padding:12px 0;
@@ -2862,12 +2862,15 @@ async def index(request: Request):
     # impossible to confuse with a mis-mounted /config that merely LOOKS new.
     # Name the resolved path on screen, the same way startup names it in the log.
     if not rows:
+        # Deliberately does NOT print the resolved path. In a container it is
+        # always /config/trackers.yml, so it identifies nothing — the failure
+        # is which HOST directory is bound there, which the service cannot see.
+        # The startup log carries the resolved path for the cases where it does
+        # discriminate (running from source with a custom IDLARR_CONFIG).
         banner += (
             '<div class="banner" id="firstrun"><b>No trackers yet.</b> '
-            'Add one from the header, or import from Prowlarr or Jackett in '
-            f'settings. Reading <code>{esc(CONFIG_PATH)}</code> — if you '
-            'expected trackers there, that mount is not where you think.'
-            '</div>')
+            'Use <b>+ Add tracker</b>, or <b>Import</b> from Prowlarr or '
+            'Jackett. Expecting some already? Check your config mount.</div>')
 
     # The status line is read-only. Actions live in the header and the
     # settings panel now — mixing the two in fixed-width cells is what made the
