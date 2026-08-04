@@ -1,7 +1,19 @@
+<<<<<<< HEAD
 # Deny-all then allow. Adding a file to the repo cannot silently bloat
 # the Docker build context. If you add a COPY to the Dockerfile, add an
 # exception here too.
 *
+=======
+# The image needs exactly these files. Everything else — tests, docs, the
+# screenshot, .git — was being shipped to the Docker daemon on every build for
+# no reason. Deny-all then allow, so adding a file to the repo cannot silently
+# bloat the context again.
+#
+# If you add a COPY to the Dockerfile, add an exception for it here too, or the
+# build fails with "file not found" despite the file plainly existing.
+*
+!requirements.txt
+>>>>>>> 2dfc73890db99963aa11b8daa00d83f1dbd64bd3
 !requirements.lock
 !app.py
 !idlarr.user.js

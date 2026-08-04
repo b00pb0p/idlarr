@@ -8,11 +8,18 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
+<<<<<<< HEAD
           python-version: "3.13"
+=======
+          python-version: ${{ matrix.python-version }}
+>>>>>>> 2dfc73890db99963aa11b8daa00d83f1dbd64bd3
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

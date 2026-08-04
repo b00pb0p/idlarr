@@ -583,6 +583,7 @@ def remove_tracker(tracker_id: str) -> None:
 
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     with db() as conn:
         conn.executescript(
             """
