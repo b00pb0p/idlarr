@@ -611,6 +611,30 @@ def drop_last_auth(tracker_id: str) -> dict | None:
     return {"ts": row["ts"], "source": row["source"] or ""}
 
 
+def note_activity(job: str, ok: bool, detail: str) -> None:
+    """Record the outcome of an unattended job so the page can show it.
+
+    The daily check, the backup, the alert and the heartbeat all run while
+    nobody is watching, and each can fail in a way that leaves no trace on
+    screen — a failed backup and a successful one look identical from the
+    dashboard. `docker logs` has the detail, but needing a shell to answer
+    "did last night work?" is the same gap that made the notification test
+    useless when it silently sent nothing.
+    """
+    stamp = datetime.now(local_tz()).strftime("%Y-%m-%d %H:%M")
+    set_state(f"act_{job}", json.dumps({"at": stamp, "ok": ok, "detail": detail}))
+
+
+def read_activity(job: str) -> dict | None:
+    raw = get_state(f"act_{job}")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
 def get_state(k: str, default=None):
     with db() as conn:
         row = conn.execute("SELECT v FROM state WHERE k=?", (k,)).fetchone()
@@ -1019,6 +1043,7 @@ async def maybe_alive_push(cfg: dict, now_local: datetime) -> bool:
                if worst else "No countdowns running yet."))
     ok, why = await asyncio.to_thread(dispatch, "Idlarr still alive", body, "default")
     print(f"[alive] {'sent' if ok else 'FAILED'}" + ("" if ok else f": {why}"))
+    note_activity("heartbeat", ok, "sent" if ok else f"refused: {why}")
     if ok:
         set_state("last_alive_push", now_local.isoformat())
     return ok
@@ -1028,9 +1053,11 @@ async def notify(rows: list[dict]) -> None:
     payload = build_notification(rows)
     if payload is None:
         print("[notify] nothing due")
+        note_activity("alert", True, "nothing due")
         return
     if not NOTIFY_URLS:
         print("[notify] IDLARR_NOTIFY_URLS is empty -- alert not sent")
+        note_activity("alert", False, "no destinations configured")
         return
     try:
         # Apprise is synchronous; a slow provider must not stall the scheduler.
@@ -1039,8 +1066,11 @@ async def notify(rows: list[dict]) -> None:
         n = payload["body"].count("\n") + 1
         print(f"[notify] {'sent' if ok else 'FAILED'} ({n} line(s))"
               + ("" if ok else f": {reason}"))
+        note_activity("alert", ok,
+                      f"{n} tracker(s)" if ok else f"refused: {reason}")
     except Exception as exc:
         print(f"[notify] FAILED: {exc}")
+        note_activity("alert", False, str(exc))
 
 
 def backup_db(today: str) -> Path | None:
@@ -1095,11 +1125,17 @@ async def scheduler() -> None:
                 try:
                     dest = backup_db(today)
                     if dest:
+                        kb = dest.stat().st_size // 1024
                         print(f"[backup] {dest} ({dest.stat().st_size} bytes)")
+                        note_activity("backup", True, f"{dest.name} ({kb} KB)")
+                    else:
+                        note_activity("backup", True, "disabled")
                 except Exception as exc:
                     print(f"[backup] FAILED: {exc}")
+                    note_activity("backup", False, str(exc))
                 await notify(statuses())
                 set_state("last_check", today)
+                note_activity("check", True, f"{len(load_config()['trackers'])} tracker(s)")
 
             # ---- still-alive heartbeat -------------------------------------
             # Its whole job is to make silence meaningful: if these stop
@@ -2483,6 +2519,11 @@ PAGE = """<!doctype html>
     gap:6px;align-items:center}
   .sheet .row .ctl2>input,.sheet .row .ctl2>select{width:100%}
   .sheet .row .ctl2>.val{white-space:normal;text-align:right}
+  /* Recent activity: timestamp above, outcome beneath, both right-aligned in
+     the same fixed column as every other control. */
+  .sheet .row .ctl2{flex-wrap:wrap}
+  .sheet .act-d{width:100%;text-align:right;font-style:normal;color:var(--dim);
+    font-size:10.5px;margin-top:2px}
   .sheet .row .ctl2>button{flex:1}
   .sheet .stack{margin:0 0 14px}
   .sheet .stack input,.sheet .stack select{width:100%;margin-bottom:9px}
@@ -3083,6 +3124,23 @@ def _row(label: str, hint: str, control: str) -> str:
             f'<div class="ctl2">{control}</div></div>')
 
 
+def _act_row(label: str, job: str) -> str:
+    """One line of the recent-activity block: when it last ran and how it went.
+
+    "never" is meaningful rather than missing — a backup that has never run on
+    an install that is days old is exactly the kind of quiet failure the
+    dashboard could not previously show.
+    """
+    a = read_activity(job)
+    if not a:
+        return _row(label, "", '<span class="val">never</span>')
+    cls = "on" if a.get("ok") else "off"
+    detail = esc(a.get("detail", ""))
+    return _row(label, "",
+                f'<span class="val {cls}">{esc(a.get("at", ""))}</span>'
+                f'<em class="act-d">{detail}</em>')
+
+
 def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
     """The settings panel. Rendered here rather than in PAGE because most of it
     is live state, and because the sections that carry forms need the current
@@ -3136,7 +3194,10 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
                f'<select id="setAlive">{alive_opts}</select>')
         + _row("", "", '<button class="lk pri" id="setSave">Save</button>')
         + '<p class="e" id="setErr"></p>'
-        + _row("Last check", "", f'<span class="val">{esc(last)}</span>')
+        + _act_row("Daily check", "check")
+        + _act_row("Nightly backup", "backup")
+        + _act_row("Last alert", "alert")
+        + _act_row("Last heartbeat", "heartbeat")
         + _row("Your config",
                "Download <code>trackers.yml</code> exactly as it is on disk, "
                "comments and all. Restoring replaces it — the current file is "
