@@ -279,3 +279,46 @@ def test_api_needs_auth_when_configured(client, cfg):
                                              "url": "https://x.example/"}).status_code == 401
     assert client.delete("/api/tracker/gamma").status_code == 401
     assert "gamma" in ids(cfg)
+
+
+# --------------------------------------------------------- empty-list edge cases
+
+def test_add_to_inline_empty_list(tmp_path, monkeypatch):
+    """The auto-generated config uses `trackers: []`. add_tracker must handle
+    this — it's what every fresh zero-config install starts with."""
+    path = tmp_path / "trackers.yml"
+    path.write_text(
+        "defaults:\n"
+        "  inactivity_days: 30\n"
+        "  alert_at_pct: 0.65\n"
+        "  timezone: UTC\n"
+        "  check_hour: 9\n\n"
+        "trackers: []\n"
+    )
+    monkeypatch.setattr(app, "CONFIG_PATH", path)
+    app._cfg_cache["data"] = None
+
+    app.add_tracker(dict(NEW))
+    result = doc(path)
+    assert len(result["trackers"]) == 1
+    assert result["trackers"][0]["id"] == "newone"
+    assert result["trackers"][0]["inactivity_days"] == 45
+    app._cfg_cache["data"] = None
+
+
+def test_add_to_bare_empty_key(tmp_path, monkeypatch):
+    """The other empty-list form: `trackers:` with nothing after it."""
+    path = tmp_path / "trackers.yml"
+    path.write_text(
+        "defaults:\n"
+        "  inactivity_days: 30\n\n"
+        "trackers:\n"
+    )
+    monkeypatch.setattr(app, "CONFIG_PATH", path)
+    app._cfg_cache["data"] = None
+
+    app.add_tracker(dict(NEW))
+    result = doc(path)
+    assert len(result["trackers"]) == 1
+    assert result["trackers"][0]["id"] == "newone"
+    app._cfg_cache["data"] = None

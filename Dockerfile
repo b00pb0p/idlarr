@@ -5,8 +5,8 @@ FROM python:3.13-alpine
 RUN apk add --no-cache gcc musl-dev libffi-dev
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
+COPY requirements.lock ./requirements.lock
+RUN pip install --no-cache-dir -r requirements.lock \
     && apk del gcc musl-dev libffi-dev
 
 # idlarr.user.js is the TEMPLATE the /idlarr.user.js route fills in from live
@@ -17,8 +17,8 @@ COPY app.py idlarr.user.js ./
 #   docker compose build --build-arg PUID=1000
 ARG PUID=1001
 RUN adduser -D -u ${PUID} idlarr \
-    && mkdir -p /data /config \
-    && chown idlarr:idlarr /data /config
+    && mkdir -p /data /data/backups /config \
+    && chown -R idlarr:idlarr /data /config
 USER idlarr
 
 VOLUME ["/data", "/config"]

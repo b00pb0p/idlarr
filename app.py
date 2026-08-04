@@ -28,6 +28,21 @@ import yaml
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+# ---------------------------------------------------------------- logging
+
+LOG_LEVEL = os.environ.get("IDLARR_LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = os.environ.get(
+    "IDLARR_LOG_FORMAT",
+    "%(asctime)s [%(name)s] %(levelname)s  %(message)s"
+)
+
+logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+# Quiet down noisy libraries — only warnings and above.
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+
+log = logging.getLogger("idlarr")
+
 # ---------------------------------------------------------------- crypto helpers
 
 def _derive_key(secret: bytes, purpose: bytes) -> bytes:
@@ -484,8 +499,16 @@ def add_tracker(entry: dict) -> None:
             _, end, indent = _block_bounds(lines, existing[-1])
         else:
             # An empty list: insert directly under the `trackers:` key.
-            end = next((i + 1 for i, ln in enumerate(lines)
-                        if re.match(r"^trackers:\s*$", ln)), None)
+            # Handles both `trackers:` (bare) and `trackers: []` (inline empty).
+            end = None
+            for i, ln in enumerate(lines):
+                if re.match(r"^trackers:\s*(\[\])?\s*$", ln):
+                    # If it's `trackers: []`, rewrite it to `trackers:` so
+                    # appending works as a normal YAML list.
+                    if "[]" in ln:
+                        lines[i] = "trackers:\n"
+                    end = i + 1
+                    break
             if end is None:
                 raise ValueError("no `trackers:` key in the config to append to")
             indent = "  "
@@ -868,7 +891,7 @@ def evaluate(tracker: dict, now: datetime | None = None) -> dict:
 
     if auth is None:
         out["state"] = "unknown"
-        out["reason"] = "No login ever recorded. Log in once to initialise, or mark it seen."
+        out["reason"] = "No login ever recorded. Log in once to initialise, or click Logged in."
         return out
 
     days_since = elapsed_days(now, auth)
@@ -980,20 +1003,22 @@ def dispatch(title: str, body: str, priority: str) -> tuple[bool, str]:
 async def notify(rows: list[dict]) -> None:
     payload = build_notification(rows)
     if payload is None:
-        print("[notify] nothing due")
+        log.debug("daily check: nothing due")
         return
     if not get_notify_urls():
-        print("[notify] IDLARR_NOTIFY_URLS is empty -- alert not sent")
+        log.warning("no notification URLs configured — alert not sent")
         return
     try:
         # Apprise is synchronous; a slow provider must not stall the scheduler.
         ok, reason = await asyncio.to_thread(
             dispatch, payload["title"], payload["body"], payload["priority"])
         n = payload["body"].count("\n") + 1
-        print(f"[notify] {'sent' if ok else 'FAILED'} ({n} line(s))"
-              + ("" if ok else f": {reason}"))
+        if ok:
+            log.info("notification sent (%d line(s))", n)
+        else:
+            log.error("notification FAILED (%d line(s)): %s", n, reason)
     except Exception as exc:
-        print(f"[notify] FAILED: {exc}")
+        log.error("notification FAILED: %s", exc)
 
 
 def backup_db(today: str) -> Path | None:
@@ -1029,7 +1054,7 @@ def backup_db(today: str) -> Path | None:
     for old in stale:
         old.unlink()
     if stale:
-        print(f"[backup] pruned {len(stale)} old snapshot(s)")
+        log.info("pruned %d old backup(s)", len(stale))
     return dest
 
 
@@ -1041,19 +1066,19 @@ async def scheduler() -> None:
             now_local = datetime.now(local_tz())
             today = now_local.date().isoformat()
             if now_local.hour >= cfg["check_hour"] and get_state("last_check") != today:
-                print(f"[check] running for {today}")
+                log.info("daily check running for %s", today)
                 # Back up before notifying, and never let a backup failure stop
                 # the alert — the alert is the whole point of the service.
                 try:
                     dest = backup_db(today)
                     if dest:
-                        print(f"[backup] {dest} ({dest.stat().st_size} bytes)")
+                        log.info("backup: %s (%d bytes)", dest, dest.stat().st_size)
                 except Exception as exc:
-                    print(f"[backup] FAILED: {exc}")
+                    log.error("backup FAILED: %s", exc)
                 await notify(statuses())
                 set_state("last_check", today)
         except Exception as exc:
-            print(f"[check] error: {exc}")
+            log.exception("scheduler error")
         await asyncio.sleep(600)
 
 
@@ -1066,7 +1091,7 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
     except sqlite3.OperationalError as exc:
-        uid = os.getuid()
+        uid = os.getuid() if hasattr(os, "getuid") else "unknown"
         raise RuntimeError(
             f"Cannot open the database at {DB_PATH}: {exc}\n"
             f"  The container runs as UID {uid}, and the directory you mounted at\n"
@@ -1083,8 +1108,7 @@ async def lifespan(app: FastAPI):
     if not _ENV_TOKEN and not get_state("idlarr_token"):
         generated = secrets.token_hex(32)
         set_state("idlarr_token", generated)
-        print(f"[startup] Generated IDLARR_TOKEN (first boot). "
-              f"Find it in Settings > Userscript, or install the generated script.")
+        log.info("generated IDLARR_TOKEN (first boot) — find it in Settings > Userscript")
 
     # Populate module-level vars for backward compat with code that reads them.
     TOKEN = get_token()
@@ -1099,21 +1123,13 @@ async def lifespan(app: FastAPI):
         )
 
     if not get_notify_urls():
-        # Not fatal -- the status page still works -- but a watchdog that
-        # cannot reach you is the exact failure this project exists to avoid,
-        # and silence is indistinguishable from "nothing is due".
-        print("[startup] WARNING: No notification URLs configured. "
-              "Alerts will go nowhere. Configure them in Settings > Notifications.")
+        log.warning("no notification URLs configured — alerts will go nowhere")
 
     if RESET_AUTH:
-        # Clearing session_secret as well is the point: a password reset that
-        # left existing cookies valid would not lock out whoever you are
-        # resetting because of.
         for key in ("auth_method", "auth_user", "auth_hash", "session_secret"):
             set_state(key, "")
-        print("[startup] IDLARR_RESET_AUTH is set — UI authentication has been "
-              "cleared and every existing session invalidated. Remove the "
-              "variable, restart, then set a new login from the status page.")
+        log.warning("IDLARR_RESET_AUTH is set — UI auth cleared, all sessions invalidated. "
+                    "Remove the variable and restart.")
 
     # --- tracker config bootstrap ---------------------------------------------
     # If no trackers.yml exists, create one from the shipped example so the
@@ -1131,27 +1147,24 @@ async def lifespan(app: FastAPI):
             "trackers: []\n"
         )
         CONFIG_PATH.write_text(default_config)
-        print(f"[startup] Created empty {CONFIG_PATH}. Add trackers from the status page.")
+        log.info("created empty %s — add trackers from the status page", CONFIG_PATH)
 
     try:
         cfg = load_config()
     except Exception as exc:
         raise RuntimeError(
             f"Could not read {CONFIG_PATH}: {exc}\n"
-            f"  Check it is valid YAML and readable by UID {os.getuid()}."
+            f"  Check it is valid YAML and readable by UID {os.getuid() if hasattr(os, 'getuid') else 'unknown'}."
         ) from exc
-    print(f"[startup] {len(cfg['trackers'])} tracker(s) loaded, timezone {cfg['timezone']}")
+    log.info("%d tracker(s) loaded, timezone %s", len(cfg["trackers"]), cfg["timezone"])
 
     # Say it out loud. Optional does not mean quiet: an unauthenticated status
     # page looks identical to an authenticated one until somebody uses it.
     if auth_method() == "none":
-        print("[startup] UI authentication is OFF. Anyone who can reach this "
-              "port can read your tracker list, reset a countdown via "
-              "/api/mark, and rewrite limits via /api/limit. Set a login from "
-              "the status page, or keep the service on a trusted network.")
+        log.warning("UI auth is OFF — anyone who can reach this port can "
+                    "reset a countdown or rewrite limits")
     else:
-        print(f"[startup] UI authentication: {auth_method()} "
-              f"(user {get_state('auth_user', '')!r})")
+        log.info("UI auth: %s (user %r)", auth_method(), get_state("auth_user", ""))
 
     task = asyncio.create_task(scheduler())
     yield
@@ -1216,6 +1229,34 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(CSRFMiddleware)
+
+
+class RequestLogMiddleware(BaseHTTPMiddleware):
+    """Log every request with method, path, status, and duration.
+
+    Replaces uvicorn's default access log with something more useful:
+    includes response time in ms, skips noisy healthchecks at DEBUG level,
+    and logs errors at WARNING so they stand out.
+    """
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        response = await call_next(request)
+        ms = (time.time() - start) * 1000
+        path = request.url.path
+        status = response.status_code
+        # Healthchecks are noisy — log at DEBUG so they don't clutter INFO.
+        if path == "/healthz":
+            log.debug("%s %s %d (%.0fms)", request.method, path, status, ms)
+        elif status >= 500:
+            log.error("%s %s %d (%.0fms)", request.method, path, status, ms)
+        elif status >= 400:
+            log.warning("%s %s %d (%.0fms)", request.method, path, status, ms)
+        else:
+            log.info("%s %s %d (%.0fms)", request.method, path, status, ms)
+        return response
+
+
+app.add_middleware(RequestLogMiddleware)
 
 
 def require_token(auth: str | None) -> None:
@@ -1570,6 +1611,11 @@ async def import_indexers(payload: dict = Body(...)):
             add_tracker({"id": c["id"], "name": c["name"], "url": c["url"],
                          "host": c["host"], "inactivity_days": 30,
                          "verified": False, "notes": "", "auth_sel": ""})
+            # Bootstrap the countdown: if Prowlarr/Jackett has a working
+            # connection, the tracker is clearly active right now. Record an
+            # auth event so the dashboard shows a live countdown instead of
+            # "unknown" for every imported tracker.
+            record(c["id"], "auth", source="import")
             added.append(c["id"])
         except (KeyError, ValueError) as exc:
             failed.append({"id": c["id"], "error": str(exc)})
@@ -1592,7 +1638,7 @@ async def delete_tracker(tracker_id: str):
 
 @app.post("/api/unmark/{tracker_id}", dependencies=[Depends(require_ui)])
 async def unmark(tracker_id: str):
-    """Undo the most recent auth event — a misclicked 'seen', or an auth the
+    """Undo the most recent auth event — a misclicked 'logged in', or an auth the
     heuristic recorded wrongly (e.g. a cached logged-in page while the site
     was actually down). Same posture as /api/mark."""
     known = {t["id"] for t in load_config()["trackers"]}
@@ -1633,10 +1679,33 @@ async def history(tracker_id: str, limit: int = 5):
 
 @app.get("/healthz")
 async def healthz():
-    """Stays open on purpose. Open item 1 wants an uptime monitor pointed here,
-    and a monitor that needs credentials is a monitor that will not get set up.
-    It discloses a tracker count and nothing else."""
-    return {"ok": True, "trackers": len(load_config()["trackers"])}
+    """Stays open on purpose. An uptime monitor pointed here should not need
+    credentials. Discloses operational status but no tracker names or secrets."""
+    cfg = load_config()
+    trackers = cfg["trackers"]
+    rows = statuses()
+
+    # Count by state for a quick glance at health.
+    state_counts = {}
+    for r in rows:
+        state_counts[r["state"]] = state_counts.get(r["state"], 0) + 1
+
+    # How many have ever recorded an auth event.
+    bootstrapped = sum(1 for r in rows if r["last_auth"] is not None)
+
+    return {
+        "ok": True,
+        "version": IDLARR_VERSION,
+        "trackers": len(trackers),
+        "bootstrapped": bootstrapped,
+        "states": state_counts,
+        "auth_configured": auth_method() != "none",
+        "notifications_configured": bool(get_notify_urls()),
+        "status_url_set": bool(get_status_url()),
+        "last_check": get_state("last_check", "") or None,
+        "timezone": cfg["timezone"],
+        "check_hour": cfg["check_hour"],
+    }
 
 
 # ---------------------------------------------------------------- userscript
@@ -1714,7 +1783,8 @@ def render_userscript(base_url: str) -> str:
     # than the full API token — it expires in 24h, so a leaked log entry is not
     # a permanent credential. Violentmonkey re-fetches the URL on each check,
     # and the served script always contains a fresh token in @updateURL.
-    dl_token = make_download_token(ttl_seconds=86400)
+    # 7 days covers even the slowest update-check intervals with margin.
+    dl_token = make_download_token(ttl_seconds=604800)
     script_url = f"{base}/idlarr.user.js?token={dl_token}"
     meta_extra = (f"// @updateURL   {script_url}\n"
                   f"// @downloadURL {script_url}\n"
@@ -1803,8 +1873,8 @@ def verify_download_token(token: str) -> bool:
 @app.get("/api/download-token", dependencies=[Depends(require_ui)])
 async def get_download_token():
     """Generate a short-lived token for the userscript install/update URL.
-    Valid for 24 hours — long enough for Violentmonkey's update cycle."""
-    return {"token": make_download_token(ttl_seconds=86400)}
+    Valid for 7 days — long enough for Violentmonkey's update cycle."""
+    return {"token": make_download_token(ttl_seconds=604800)}
 
 
 @app.get("/idlarr.user.js")
@@ -2079,9 +2149,9 @@ async def test_notify(request: Request,
             f"If you can read this, alerts will reach you.")
     ok, reason = await asyncio.to_thread(dispatch, "Idlarr test", body, "default")
     if not ok:
-        print(f"[notify] test FAILED: {reason}")
+        log.error("test notification FAILED: %s", reason)
         raise HTTPException(502, f"not accepted: {reason}")
-    print("[notify] test sent")
+    log.info("test notification sent")
     return {"ok": True, "destinations": len(notify_urls)}
 
 
@@ -2528,7 +2598,7 @@ __SHEET__
     +'<button class="chk'+(d.verified?' on':'')+'"'+(imm?' disabled':'')+'>'
     +(d.verified?'\\u2713 confirmed':'confirm')+'</button>'
     +'<button class="imm'+(imm?' on':'')+'">'+(imm?'\\u25cf immune':'immune')+'</button>'
-    +'<button class="seen">seen</button><button class="undo danger">undo</button>'
+    +'<button class="seen">logged in</button><button class="undo danger">undo</button>'
     +'<button class="del danger">remove</button></div>'
     +(imm?'<div class="reason"><input class="rsn" value="'+(d.immune_reason||'')
       +'" placeholder="why immune? e.g. donated, elite class"></div>':'')
@@ -2603,8 +2673,8 @@ __SHEET__
      if(!armed){armed=true;seenBtn.classList.add('arm');seenBtn.textContent='confirm?';
        msg('records a manual auth \\u2014 only if you really just logged in','warn');
        t=setTimeout(()=>{armed=false;seenBtn.classList.remove('arm');
-         seenBtn.textContent='seen';msg('');},4000);return;}
-     clearTimeout(t);armed=false;seenBtn.classList.remove('arm');seenBtn.textContent='seen';
+         seenBtn.textContent='logged in';msg('');},4000);return;}
+     clearTimeout(t);armed=false;seenBtn.classList.remove('arm');seenBtn.textContent='logged in';
      post('/api/mark/'+d.id).then(()=>fetch('/api/status').then(r=>r.json())).then(rows=>{
        const row=rows.find(x=>x.id===d.id);refresh(row);
        el.remove();tr.classList.remove('open');drawer(tr);}).catch(e=>msg(e.message,'bad'));});
@@ -3124,7 +3194,7 @@ async def index(request: Request):
     n_hosts = sum(1 for t in load_config()["trackers"] if t.get("host"))
     n_trk = len(load_config()["trackers"])
     _status_url = get_status_url()
-    _dl_token = make_download_token(ttl_seconds=86400) if _status_url else ""
+    _dl_token = make_download_token(ttl_seconds=604800) if _status_url else ""
     js_url = (f"{_status_url.rstrip('/')}/idlarr.user.js?token={_dl_token}"
               if _status_url else "")
 

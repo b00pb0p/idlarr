@@ -152,7 +152,7 @@ After deploying, open the status page and:
    Use **Send test** to verify.
 4. **Add trackers** — Click "+ Add tracker" or use Import (Prowlarr/Jackett).
 5. **Install the userscript** — Gear > Userscript > Install. One click.
-6. **Bootstrap** — Visit each tracker while logged in, or click **seen** per row.
+6. **Bootstrap** — Visit each tracker while logged in, or click **Logged in** per row.
 
 ## Signing in
 
@@ -268,7 +268,7 @@ Full detail in **[docs/trackers.md](docs/trackers.md)**.
 
 - **With no sign-in set, the write endpoints are open.** Set a login, keep it
   behind Tailscale or a VPN, or both.
-- **The `seen` button is a bootstrap tool, not a workflow.** It's two-step for
+- **The "Logged in" button is a bootstrap tool, not a workflow.** It's two-step for
   that reason.
 - **Auth detection is a heuristic.** If a site redesigns, it silently stops
   recording. Run `__idlarr()` in the browser console to diagnose.
