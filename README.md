@@ -166,9 +166,11 @@ TLS in front of it.
 
 ## The status page
 
-A sortable table: **tracker · software · state · last auth · left · limit ·
-elapsed**, worst first by default. Click any heading to sort; blanks always sort
-last, so a tracker with no data can never outrank one that's expiring.
+One card per account, worst first: **tracker · state · left · elapsed**, with
+the software under each name, and last auth and the limit on the elapsed line.
+Click **tracker**, **state**, **left** or **elapsed** to sort by it — elapsed
+being how much of that tracker's window has burned. Blanks always sort last, so
+a tracker with no data can never outrank one that's expiring.
 
 Click a **name** to open that tracker in a new tab. Click anywhere else on the
 row to expand a drawer with three panels:
@@ -188,15 +190,16 @@ lives behind the gear, in six sections:
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
 | **Import** | Prowlarr or Jackett |
 | **Notifications** | destination count, and a **Send test** button |
-| **About** | version, database size, `/healthz` |
+| **About** | version, tracker count, userscript version, last check, database size, `/healthz` |
 
 The tracker total leads the count strip at the top, beside the per-state counts.
 The userscript version and the date of the last daily check live in **About**;
 sign-in state is announced by the red banner and the **Sign-in** panel rather
 than repeated in a footer.
 
-On a phone the table stops being a table — each row becomes a labelled grid —
-and the settings nav becomes a scrolling tab strip.
+On a phone each card re-grids to fit — the countdown moves beside the name and
+the elapsed bar spans the full width — and the settings nav becomes a scrolling
+tab strip.
 
 Limits written here go straight into `trackers.yml`, comments intact,
 hot-reloaded, no restart. `seen` is two-step on purpose.

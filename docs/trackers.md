@@ -11,8 +11,8 @@ the generated userscript changes with it, so the browser picks up the new
 `@match` on your manager's next update check.
 
 Open a row to change its **limit**, mark it **confirmed** or **immune**, or edit
-its **notes** — the first word of which sets the software column, so correcting
-one corrects the other.
+its **notes** — the first word of which sets the software shown under the
+tracker's name, so correcting one corrects the other.
 
 To remove one, open its row and click **remove**, then confirm. Its **auth
 history stays in the database** on purpose: re-adding the same id restores the
@@ -81,7 +81,7 @@ directly works and needs no restart:
 `url` should point at a page that requires a login — the status page links to
 it, and it's where you'll land to reset the clock. `notes` starting with the
 tracker software (`Gazelle`, `UNIT3D`, `TBDev`, `Custom`) fills the software
-column for free.
+line under the tracker's name for free.
 
 `host` is derived from `url` minus any leading `www.`, and drives the generated
 userscript's `@match` line. Set it explicitly only when the domain you log in on

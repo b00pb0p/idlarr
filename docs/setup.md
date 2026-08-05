@@ -71,7 +71,7 @@ trackers:
 `url` should point at a page that requires a login — the status page links to
 it, and it's where you'll land to reset the clock. `notes` beginning with the
 tracker software (`Gazelle`, `UNIT3D`, `TBDev`, `Custom`) fills in the software
-column for free. `check_hour` is when the daily check runs, in `timezone`.
+line under the tracker's name for free. `check_hour` is when the daily check runs, in `timezone`.
 
 > **Those numbers are fail-safe placeholders, not research.** Nobody outside a
 > tracker reliably knows its current inactivity policy, and a limit guessed too
@@ -79,8 +79,9 @@ column for free. `check_hour` is when the daily check runs, in `timezone`.
 > 30 days nags you early enough for almost any real policy. Read each tracker's
 > own rules page, correct the number, then flip `verified: true`.
 
-The status page marks unverified rows and counts them in the header, so what
-you still haven't checked stays visible.
+The status page badges every unverified tracker with **unconfirmed**, under
+its name, so what you still haven't checked stays visible while you work
+through them.
 
 While you're in each rules page, note three things that can make an entry
 unnecessary: whether **seeding announces** reset the clock, whether your **user
