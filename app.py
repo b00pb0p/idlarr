@@ -63,7 +63,7 @@ NOTIFY_URLS = [u.strip() for u in os.environ.get("IDLARR_NOTIFY_URLS", "").split
 # the note in /ping. Must be >= the userscript's client-side cooldown.
 DEDUPE_HOURS = int(os.environ.get("IDLARR_DEDUPE_HOURS", 12))
 
-# Nightly snapshot of the events database, taken as part of the daily check.
+# Daily snapshot of the events database, taken as part of the daily check.
 # Set IDLARR_BACKUP_KEEP=0 to turn it off.
 BACKUP_DIR = Path(os.environ.get("IDLARR_BACKUP_DIR", "/data/backups"))
 _ENV_BACKUP_KEEP = os.environ.get("IDLARR_BACKUP_KEEP", "").strip()
@@ -3557,7 +3557,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
                f'<input id="setUrl" class="w-grow" value="{esc(status_url())}" '
                f'placeholder="https://idlarr.example.ts.net">')
         + _row("Backup retention",
-               "Nightly snapshots kept in /data/backups. 0 disables them.",
+               "Kept in /data/backups, one per day. 0 disables them.",
                f'<input id="setKeep" class="w-num" value="{backup_keep()}">'
                f'<em class="act-d" style="width:auto;margin:0">days</em>')
         + '<p class="sub" style="margin:15px 0 0">Written to '
@@ -3665,7 +3665,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         + _row("Last check", "The daily pass that evaluates every countdown "
                "and sends the batched alert.",
                f'<span class="val">{esc(last_check)}</span>')
-        + _row("Database", "Backed up nightly.", f'<span class="val">{db_kb}</span>')
+        + _row("Database", "Backed up once a day, inside the check.", f'<span class="val">{db_kb}</span>')
         + _row("Uptime check",
                "/healthz needs no credentials, so a monitor can reach it.",
                '<a class="lk" href="/healthz" target="_blank" rel="noreferrer">/healthz</a>')

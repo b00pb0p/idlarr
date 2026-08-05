@@ -118,7 +118,7 @@ Jackett — see **[docs/trackers.md](docs/trackers.md)**.
 Optional, and off until you set it up. Configure it from the status page —
 there is no password in `.env`, and nothing to edit in a file. The credentials
 are stored **hashed** (PBKDF2-HMAC-SHA256) in the database, so they ride along
-in the nightly backup and change without recreating the container.
+in the daily backup and change without recreating the container.
 
 | Method | What a stranger sees |
 |---|---|
@@ -180,13 +180,14 @@ row to expand a drawer with three panels:
 - **alert schedule** — the exact date each rung fires, or why it won't
 - **auth history** — recent auth events, and whether each was observed or asserted
 
-**Add tracker** and the settings gear sit top right. Everything configurable
-lives behind the gear, in six sections:
+**Add tracker**, the settings gear and, when sign-in uses Forms, a **sign-out**
+icon sit top right. Everything configurable lives behind the gear, in six
+sections. Closing the panel discards anything you have not saved.
 
 | | |
 |---|---|
 | **General** | timezone, check hour, alert threshold, still-alive push, status page URL, backup retention, config download and restore, recent activity |
-| **Sign-in** | method, credentials, sign out |
+| **Sign-in** | method, credentials, and sign out when the method is Forms |
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
 | **Import** | Prowlarr or Jackett |
 | **Notifications** | destination count, and a **Send test** button |
@@ -240,7 +241,7 @@ own way — a colour in Discord, a priority level in Pushover, a tag in ntfy.
 ## Still-alive push
 
 Nothing else watches the watchdog. If this container dies, the daily check and
-the nightly backup both stop — and **silence is exactly what a healthy quiet
+the backup it takes both stop — and **silence is exactly what a healthy quiet
 day looks like**. You would not find out until an account was gone.
 
 Turn on a heartbeat in *Settings → General → Still-alive push*: daily, weekly or
@@ -357,8 +358,9 @@ cross-origin from tracker pages, where cookies do not apply.
   failure direction, but check the console (`[idlarr]` logs) before assuming
   the tracker is at fault. Use `auth_sel` to override per-site.
 - **`trackers.yml` hot-reloads.** Edit it live; no restart.
-- **The database is backed up nightly** to `/data/backups/idlarr-YYYY-MM-DD.db`,
-  14 days by default, set in **Settings → General**. It is the only record of when each
+- **The database is backed up once a day**, at the start of the daily check
+  rather than overnight, to `/data/backups/idlarr-YYYY-MM-DD.db`. 14 days by
+  default, set in **Settings → General**. It is the only record of when each
   account was last seen — losing it risks no account, but resets every countdown
   to `no data` until you re-visit all of them. See
   [Restoring a backup](docs/troubleshooting.md#restoring-a-backup); it has been tested, and there is one

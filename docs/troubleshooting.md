@@ -32,8 +32,9 @@ serving; if they differ, that's the whole answer.
 
 # Restoring a backup
 
-Snapshots land in `/data/backups/` as `idlarr-YYYY-MM-DD.db`, written nightly
-during the daily check via SQLite's online backup API. Restoring one is a file
+Snapshots land in `/data/backups/` as `idlarr-YYYY-MM-DD.db`, written during
+the daily check (at your `check_hour`, not overnight) via SQLite's online
+backup API. Restoring one is a file
 copy:
 
 ```bash
@@ -54,7 +55,7 @@ and last-auth date intact.
 Two things to expect. A restored snapshot **re-runs that day's check and
 re-sends its alert**, because the backup is written just before the "already
 checked today" marker — so restoring on a day something was due gives you a
-duplicate push. And a restore rolls back to the last nightly snapshot, so auth
+duplicate push. And a restore rolls back to the last daily snapshot, so auth
 events recorded since then are gone; the countdowns will read older than
 reality until the userscript reports again.
 
