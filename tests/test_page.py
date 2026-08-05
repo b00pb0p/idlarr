@@ -235,6 +235,41 @@ def test_table_column_count_agrees_everywhere(page):
     assert spans == {n}, f"{n} columns but colspan is {spans}"
 
 
+def test_timezone_is_a_picker_not_free_text(page):
+    """Free text meant a typo was only caught on Save, and nobody remembers
+    whether it is America/Sao_Paulo or America/Sao Paulo. The configured zone
+    must always be an option even if this build's tzdata does not list it —
+    otherwise opening Settings silently reselects the first zone and Save
+    changes every countdown."""
+    sel = re.search(r'<select id="setTz">(.*?)</select>', page, re.S)
+    assert sel, "timezone is not a <select>"
+    body = sel.group(1)
+    assert "<optgroup" in body, "a flat list of ~500 zones is a scroll, not a choice"
+    assert '<option value="UTC"' in body
+    cur = app.load_config()["timezone"]
+    assert re.search(rf'<option value="{re.escape(cur)}" selected>', body), \
+        f"configured zone {cur} is not the selected option"
+
+
+def test_closing_settings_discards_unsaved_edits(page):
+    """The panel is rendered once, server-side; closing it only removed a CSS
+    class. An abandoned edit stayed in the DOM, so reopening showed it as the
+    saved config — and the next Save posted it. Reported from a live install
+    after clearing the timezone field and closing without saving."""
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    close = re.search(r"const closeSheet=\(\)=>\{(.*?)\};", script)
+    assert close, "closeSheet not found in its expected form"
+    assert "resetSheet" in close.group(1), \
+        "closing only hides the panel; unsaved edits survive into the next open"
+    assert "defaultValue" in script and "defaultSelected" in script
+    # ...and a save must move the defaults forward, or closing after saving
+    # would revert the very change that was just written. Assert the CALL, not
+    # the declaration — matching bare "keepAsSaved" passed with the call
+    # deleted, because the function itself was still defined.
+    assert "keepAsSaved(document.getElementById('s-general'))" in script, \
+        "general save does not update the defaults; closing would undo it"
+
+
 def test_settings_label_bold_does_not_leak_into_help_text(page):
     """`.sheet .row .lbl b` matched any <b> inside the row's help text too, so
     an emphasised phrase became a block-level 14.5px heading mid-sentence and

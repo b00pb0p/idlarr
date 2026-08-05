@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
+import zoneinfo
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -3165,7 +3166,23 @@ __SHEET__
  const openSheet=to=>{sheet.classList.add('on');
    const nb=to&&sheet.querySelector('nav button[data-s="'+to+'"]'); if(nb)nb.click();
    const f=sheet.querySelector('section.on input,section.on select'); if(f)f.focus();};
- const closeSheet=()=>sheet.classList.remove('on');
+ // The panel is rendered ONCE, server-side. Closing it only hid it, so an
+ // abandoned edit stayed in the DOM: reopening showed the edited value as if
+ // it were the saved config, and the next Save posted it. Closing discards.
+ const eachField=(root,fn)=>root.querySelectorAll('input,select').forEach(fn);
+ const resetSheet=()=>eachField(sheet,el=>{
+   if(el.type==='checkbox'||el.type==='radio')el.checked=el.defaultChecked;
+   else if(el.tagName==='SELECT')
+     Array.from(el.options).forEach(o=>{o.selected=o.defaultSelected;});
+   else el.value=el.defaultValue;});
+ // After a save the DOM holds the new truth but the markup defaults still hold
+ // the old one, so without this the next close would revert what you just saved.
+ const keepAsSaved=root=>eachField(root,el=>{
+   if(el.type==='checkbox'||el.type==='radio')el.defaultChecked=el.checked;
+   else if(el.tagName==='SELECT')
+     Array.from(el.options).forEach(o=>{o.defaultSelected=o.selected;});
+   else el.defaultValue=el.value;});
+ const closeSheet=()=>{sheet.classList.remove('on');resetSheet();};
  document.getElementById('gear').addEventListener('click',()=>openSheet());
  document.getElementById('sx').addEventListener('click',closeSheet);
  sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet();});
@@ -3318,6 +3335,7 @@ __SHEET__
    setSave.disabled=false;
    if(!r.ok){setErr.textContent=d.detail||('failed ('+r.status+')');return;}
    setErr.className='e good';setErr.textContent='Saved';
+   keepAsSaved(document.getElementById('s-general'));
    setTimeout(()=>{if(setErr.textContent==='Saved')setErr.textContent='';},3000);
    // Timezone and the alert threshold change day counting, so the rows behind
    // the panel are now stale. Repaint them in place rather than reloading:
@@ -3399,6 +3417,40 @@ def _row(label: str, hint: str, control: str) -> str:
             f'<div class="ctl2">{control}</div></div>')
 
 
+def _tz_options(current: str) -> str:
+    """Every zone this Python knows, grouped by region.
+
+    Free text was wrong twice over: a typo is only caught on Save (the endpoint
+    does validate), and nobody remembers whether it is America/Sao_Paulo or
+    America/Sao Paulo. Grouped because a flat list of ~500 is a scroll, not a
+    choice.
+
+    `current` is always present even if this build's tzdata does not know it —
+    otherwise opening Settings on a config written elsewhere would silently
+    reselect the first zone in the list and change every countdown on Save.
+    """
+    try:
+        zones = sorted(z for z in zoneinfo.available_timezones() if "/" in z)
+    except Exception:                       # no tzdata: still offer UTC
+        zones = []
+    if current and current != "UTC" and current not in zones:
+        zones = sorted(zones + [current])
+    sel = lambda z: " selected" if z == current else ""
+    out = [f'<option value="UTC"{sel("UTC")}>UTC</option>']
+    region = None
+    for z in zones:
+        r = z.split("/", 1)[0]
+        if r != region:
+            if region is not None:
+                out.append("</optgroup>")
+            out.append(f'<optgroup label="{esc(r)}">')
+            region = r
+        out.append(f'<option value="{esc(z)}"{sel(z)}>{esc(z)}</option>')
+    if region is not None:
+        out.append("</optgroup>")
+    return "".join(out)
+
+
 def _act_row(label: str, job: str, sub: str = "") -> str:
     """One line of the recent-activity block: when it last ran and how it went.
 
@@ -3459,7 +3511,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         f'{v}%</option>' for v in range(40, 100, 5))
     general = (
         _row("Timezone", "All day counting is calendar days in this zone.",
-             f'<input id="setTz" value="{esc(cfg["timezone"])}">')
+             f'<select id="setTz">{_tz_options(cfg["timezone"])}</select>')
         + _row("Daily check hour",
                "When the check runs and alerts batch into one push.",
                f'<select id="setHour">{hour_opts}</select>')
