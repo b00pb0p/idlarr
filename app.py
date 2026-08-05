@@ -2663,6 +2663,14 @@ PAGE = """<!doctype html>
     line-height:1;display:grid;place-items:center;
     transition:color .15s,border-color .15s,transform .3s}
   .gear:hover{color:var(--sig);border-color:var(--sigdim);transform:rotate(40deg)}
+  /* Same 38px square as the cog. Stroked icon rather than a glyph, because no
+     unicode logout character sits on the same optical weight as the others. */
+  .signout{width:38px;height:38px;padding:0;border-radius:8px;background:var(--head);
+    border:1px solid var(--line2);color:var(--dim2);cursor:pointer;
+    display:grid;place-items:center;transition:color .15s,border-color .15s}
+  .signout:hover{color:var(--sig);border-color:var(--sigdim)}
+  .signout svg{display:block;transition:transform .18s}
+  .signout:hover svg{transform:translateX(2px)}
 
   .sheet{position:fixed;inset:0;background:rgba(0,0,0,.66);display:none;z-index:40;
     align-items:center;justify-content:center}
@@ -2766,7 +2774,7 @@ PAGE = """<!doctype html>
     <option value="st">state</option><option value="nm">tracker</option>
     <option value="left">left</option><option value="el">elapsed</option>
   </select><button id="msd" aria-label="reverse sort">&#8645;</button></div>
-  <div class="hbtn"><button class="addbtn" id="addtrk">+ Add tracker</button><button class="gear" id="gear" title="settings" aria-label="settings">&#9881;</button></div></div>
+  <div class="hbtn"><button class="addbtn" id="addtrk">+ Add tracker</button><button class="gear" id="gear" title="settings" aria-label="settings">&#9881;</button>__SIGNOUT__</div></div>
 __BANNER__
 <div class="legend">__LEGEND__</div>
 
@@ -3169,9 +3177,11 @@ __SHEET__
    amc.style.display=amm.value==='none'?'none':'';});
 
  // ---- sign out ---------------------------------------------------------
- const outb=document.getElementById('amout');
- if(outb)outb.addEventListener('click',()=>fetch('/logout',{method:'POST'})
-   .then(()=>location.href='/login'));
+ // Two entry points, one behaviour: the header icon and the button in
+ // Settings -> Sign-in.
+ ['amout','hout'].forEach(id=>{const b=document.getElementById(id);
+   if(b)b.addEventListener('click',()=>fetch('/logout',{method:'POST'})
+     .then(()=>location.href='/login'));});
 
  // ---- add tracker ------------------------------------------------------
  const tm=document.getElementById('tm'),tme=document.getElementById('tme');
@@ -3513,7 +3523,10 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         + _row("", "Changing this signs every other browser out. Forgotten it? "
                    "Restart once with this set, then remove it: "
                    "<code>IDLARR_RESET_AUTH=1</code>",
-               ('<button class="lk" id="amout">Sign out</button>' if method != "none" else "")
+               # Forms only, same reason as the header icon: HTTP Basic
+               # re-sends its credentials on every request, so signing out
+               # cannot work and the button would do nothing visible.
+               ('<button class="lk" id="amout">Sign out</button>' if method == "forms" else "")
                + '<button class="lk pri" id="amsave">Save</button>')
         + '<p class="e" id="ame"></p>')
 
@@ -3714,6 +3727,19 @@ async def index(request: Request):
     script_ver = userscript_version_peek() if js_url else "not served — no status URL"
     last_check = get_state("last_check", "") or "not yet"
 
+    # Forms only. Under HTTP Basic the browser re-sends the Authorization
+    # header on every request, so dropping the session cookie does not sign you
+    # out — the next request is authenticated again. A button that visibly does
+    # nothing is worse than no button.
+    signout = ('<button class="signout" id="hout" title="sign out" aria-label="sign out">'
+               '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" '
+               'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+               'stroke-linejoin="round" aria-hidden="true">'
+               '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
+               '<polyline points="16 17 21 12 16 7"/>'
+               '<line x1="21" y1="12" x2="9" y2="12"/></svg></button>'
+               if method == "forms" else "")
+
     sheet = settings_sheet(method, n_trk, n_hosts, js_url, script_ver, last_check)
 
     return (PAGE
@@ -3721,6 +3747,7 @@ async def index(request: Request):
                      '<tr><td colspan="5"><div class="empty">no trackers configured</div></td></tr>')
             .replace("__LEGEND__", legend)
             .replace("__BANNER__", banner)
+            .replace("__SIGNOUT__", signout)
             .replace("__SHEET__", sheet)
             .replace("__AUTHMETHOD__", method)
             .replace("__STAMP__", stamp))

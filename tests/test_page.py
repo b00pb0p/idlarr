@@ -235,6 +235,30 @@ def test_table_column_count_agrees_everywhere(page):
     assert spans == {n}, f"{n} columns but colspan is {spans}"
 
 
+@pytest.mark.parametrize("method,shown", [("none", False), ("forms", True),
+                                          ("basic", False)])
+def test_signout_appears_only_where_it_works(client, method, shown):
+    """Under HTTP Basic the browser re-sends the Authorization header on every
+    request, so dropping the session cookie does not sign you out — the next
+    request is authenticated again. Neither sign-out control may appear there,
+    and there is nothing to sign out of when auth is off.
+
+    Both are checked together: they are rendered in different places (the
+    header and the Sign-in panel) from separate conditions, so one can be
+    tightened while the other keeps offering a button that does nothing."""
+    if method != "none":
+        client.post("/api/auth", json={"method": method, "username": "jared",
+                                       "password": "correct-horse"})
+    body = client.get("/", auth=("jared", "correct-horse")).text
+    for el in ('id="hout"', 'id="amout"'):
+        assert (el in body) is shown, \
+            f"method={method}: {el} should{'' if shown else ' not'} be present"
+    if shown:
+        script = re.search(r"<script>(.*?)</script>", body, re.S).group(1)
+        for h in ("'hout'", "'amout'"):
+            assert h in script, f"{h} rendered but no handler wired to it"
+
+
 def test_every_row_cell_the_script_repaints_exists(page):
     """`paint()` rewrites a row in place after an edit. It queried `td.seen`
     and `td.lim`, which the five-column layout removed — so the first one
