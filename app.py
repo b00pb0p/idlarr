@@ -3395,19 +3395,23 @@ def _row(label: str, hint: str, control: str) -> str:
             f'<div class="ctl2">{control}</div></div>')
 
 
-def _act_row(label: str, job: str) -> str:
+def _act_row(label: str, job: str, sub: str = "") -> str:
     """One line of the recent-activity block: when it last ran and how it went.
 
     "never" is meaningful rather than missing — a backup that has never run on
     an install that is days old is exactly the kind of quiet failure the
     dashboard could not previously show.
+
+    `sub` matters more than it looks. Every row here is a timestamp with no
+    context, and three of the four carry the SAME timestamp because they happen
+    inside one another — which reads as a bug until something says otherwise.
     """
     a = read_activity(job)
     if not a:
-        return _row(label, "", '<span class="val">never</span>')
+        return _row(label, sub, '<span class="val">never</span>')
     cls = "on" if a.get("ok") else "off"
     detail = esc(a.get("detail", ""))
-    return _row(label, "",
+    return _row(label, sub,
                 f'<span class="val {cls}">{esc(a.get("at", ""))}</span>'
                 f'<em class="act-d">{detail}</em>')
 
@@ -3467,10 +3471,21 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
                f'<select id="setAlive">{alive_opts}</select>')
         + _row("", "", '<button class="lk pri" id="setSave">Save</button>')
         + '<p class="e" id="setErr"></p>'
-        + _act_row("Daily check", "check")
-        + _act_row("Nightly backup", "backup")
-        + _act_row("Last alert", "alert")
-        + _act_row("Last heartbeat", "heartbeat")
+        # "Nightly backup" was wrong — it runs inside the daily check, not at
+        # night — and "Last alert" implied one had been sent when the row
+        # records only that the step ran.
+        + _act_row("Daily check", "check",
+                   "Runs at the check hour. The two below happen inside it, "
+                   "which is why they share its timestamp.")
+        + _act_row("Database backup", "backup",
+                   "Taken at the start of the check, before any alert, so a "
+                   "failed backup can never stop one.")
+        + _act_row("Notification", "alert",
+                   "Only sends when something is due. <b>nothing due</b> means "
+                   "it ran and there was nothing to tell you.")
+        + _act_row("Heartbeat", "heartbeat",
+                   "Separate from the check: a low-priority push so that "
+                   "silence from Idlarr means the container is down.")
         + _row("Your config",
                "Download <code>trackers.yml</code> exactly as it is on disk, "
                "comments and all. Restoring replaces it — the current file is "

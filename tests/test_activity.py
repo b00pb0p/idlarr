@@ -98,10 +98,14 @@ def test_a_failed_heartbeat_is_recorded(cfg, monkeypatch):
 def test_the_panel_shows_never_before_anything_has_run(cfg, monkeypatch):
     monkeypatch.setattr(app, "status_url", lambda: "https://idlarr.test.internal")
     page = TestClient(app.app).get("/").text
-    assert "Daily check" in page and "Nightly backup" in page
-    # The activity row must not reuse the settings row's label, or the panel
-    # shows two "Still-alive push" rows meaning different things.
-    assert "Last heartbeat" in page
+    # Labels must say what actually happened. "Nightly backup" was wrong (it
+    # runs inside the daily check, not at night) and "Last alert" implied one
+    # had been sent when the row only records that the step ran.
+    for label in ("Daily check", "Database backup", "Notification", "Heartbeat"):
+        assert label in page, label
+    assert "Nightly backup" not in page and "Last alert" not in page
+    # An activity row must not reuse a settings row's label, or the panel shows
+    # two rows with the same name meaning different things.
     assert page.count("Still-alive push") == 1
     assert page.count(">never<") >= 4
 
