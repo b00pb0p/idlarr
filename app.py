@@ -2368,17 +2368,17 @@ PAGE = """<!doctype html>
   .brand{display:flex;align-items:baseline;gap:12px}
   h1{font-family:var(--disp);font-size:23px;font-weight:800;letter-spacing:-.03em;margin:0}
   h1 b{color:var(--sig);font-weight:800}
-  .stamp{font-family:var(--mono);font-weight:400;color:var(--dim2);font-size:11.5px;
-    text-align:right;line-height:1.45}
-  .stamp b{color:var(--fg);font-weight:600}
   .tag{font-family:var(--mono);font-weight:500;color:var(--dim);font-size:9.5px;
     letter-spacing:.26em;text-transform:uppercase}
   @media(max-width:760px){.tag{display:none}}
   /* Decorative. Generated in JS: jittered, but with no distinctive feature
      anywhere, because a landmark is what lets the eye spot the loop. */
-  .pulse{flex:1;min-width:90px;height:38px;position:relative;overflow:hidden;
-    -webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);
-    mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
+  /* Owns the whole middle of the header now that the clock is gone. The fade
+     is tightened to 4%: across a much wider strip an 8% ramp ate a visible
+     chunk of trace at each end. */
+  .pulse{flex:1;min-width:120px;height:38px;position:relative;overflow:hidden;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent);
+    mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent)}
   /* 600%, not 200%: one tile is three screen-widths of trace, so the loop
      runs 18 beats before it repeats while only ~6 are on screen at once.
      translateX(-50%) is still exactly one tile. */
@@ -2578,7 +2578,6 @@ PAGE = """<!doctype html>
     .wrap{padding:16px 12px 50px}
     .bar{gap:10px}
     h1{font-size:14px}
-    .stamp{font-size:9.5px}
     .msort{display:flex;margin-left:auto}
     .legend{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:0}
     .legend div{border-bottom:1px solid var(--line);min-width:0;padding:7px 9px}
@@ -2775,7 +2774,6 @@ PAGE = """<!doctype html>
 
 <div class="bar"><div class="brand"><h1>idl<b>a</b>rr</h1><span class="tag">tracker monitor</span></div>
   <div class="pulse" id="pulse"></div>
-  <span class="stamp">__STAMP__</span>
   <div class="msort"><select id="msf" aria-label="sort by">
     <option value="st">state</option><option value="nm">tracker</option>
     <option value="left">left</option><option value="el">elapsed</option>
@@ -3704,12 +3702,6 @@ async def index(request: Request):
             f'<div class="meter{"" if not (r["immune"] or r["state"] == "snoozed") else " none"}">'
             f'<i style="--p:{0 if r["immune"] else max(3, _pct(r)):.0f}%"></i></div></td></tr>')
 
-    # Two lines: the date is context, the time is the thing you glance at, so
-    # the time gets its own line and the brighter weight.
-    _now = datetime.now(local_tz())
-    stamp = (_now.strftime("%d %b %Y").upper() + "<br><b>"
-             + _now.strftime("%H:%M %Z").upper() + "</b>")
-
     method = auth_method()
     if method == "none":
         # Named consequences, not "consider enabling authentication". The two
@@ -3770,8 +3762,7 @@ async def index(request: Request):
             .replace("__BANNER__", banner)
             .replace("__SIGNOUT__", signout)
             .replace("__SHEET__", sheet)
-            .replace("__AUTHMETHOD__", method)
-            .replace("__STAMP__", stamp))
+            .replace("__AUTHMETHOD__", method))
 
 
 if __name__ == "__main__":
