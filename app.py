@@ -2147,30 +2147,39 @@ LOGIN_PAGE = """<!doctype html>
    --mono:'Martian Mono',ui-monospace,monospace;
    --body:'Familjen Grotesk',system-ui,sans-serif}
  *{box-sizing:border-box}
- html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+ /* The centring and the glow go on BODY ONLY. Applied to `html` as well, html
+    became a flex container, which made body a flex ITEM -- so body shrank to
+    the width of the form and painted its own copy of the gradient inside that
+    narrow box. It showed as a lighter vertical band down the middle of the
+    page, the exact width of the sign-in card. */
+ html{height:100%}
+ body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);
    font-family:var(--body);font-size:14px;display:flex;
    -webkit-font-smoothing:antialiased;
    background-image:radial-gradient(90% 60% at 50% 0%,rgba(47,230,166,.07),transparent 60%);
    align-items:center;justify-content:center}
  form{background:var(--head);border:1px solid var(--line2);border-radius:14px;
    padding:28px;width:320px}
- h1{font-family:var(--disp);font-size:23px;font-weight:800;letter-spacing:-.03em;margin:0 0 2px}
+ h1{font-family:var(--disp);font-size:23px;font-weight:800;letter-spacing:-.03em;
+   margin:0 0 22px}
  h1 b{color:var(--accent);font-weight:800}
- p.t{font-family:var(--mono);font-weight:500;color:var(--dim);font-size:9.5px;
-   letter-spacing:.26em;text-transform:uppercase;margin:0 0 20px}
- label{display:block;font-family:var(--mono);font-weight:500;color:var(--dim);font-size:9.5px;
-   letter-spacing:.16em;text-transform:uppercase;margin:0 0 6px}
+ /* Body face, like every other uppercase label in the app. Mono is for
+    numerals and machine data. */
+ label{display:block;font-family:var(--body);font-weight:600;color:var(--dim);font-size:11px;
+   letter-spacing:.13em;text-transform:uppercase;margin:0 0 6px}
  input{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:8px;
    color:var(--fg);padding:9px 11px;font-family:var(--mono);font-weight:500;
    font-size:12.5px;margin-bottom:14px}
  input:focus{outline:none;border-color:var(--accent)}
- button{width:100%;background:var(--accent);border:0;border-radius:8px;color:#04120d;padding:11px;
-   font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:.14em;
-   text-transform:uppercase;cursor:pointer}
+ /* Same metrics as the status page's + Add tracker button. */
+ button{width:100%;height:40px;background:var(--accent);border:0;border-radius:8px;
+   color:#04120d;font-family:var(--mono);font-weight:600;font-size:10px;
+   letter-spacing:.11em;text-transform:uppercase;cursor:pointer;transition:filter .15s}
+ button:hover{filter:brightness(1.12)}
  .err{color:var(--bad);font-size:12px;min-height:16px;margin:10px 0 0;text-align:center}
 </style></head><body>
 <form id="f" autocomplete="on">
-  <h1>idl<b>a</b>rr</h1><p class="t">sign in</p>
+  <h1>idl<b>a</b>rr</h1>
   <label for="u">username</label><input id="u" name="username" autocomplete="username" autofocus>
   <label for="p">password</label>
   <input id="p" name="password" type="password" autocomplete="current-password">
@@ -2338,7 +2347,10 @@ PAGE = """<!doctype html>
     --body:'Familjen Grotesk',system-ui,sans-serif;
   }
   *{box-sizing:border-box}
-  html,body{margin:0;background:var(--bg);color:var(--fg);
+  /* The glow belongs to ONE element. On html and body both it was painted
+     twice, at double the intended opacity. */
+  html{background:var(--bg)}
+  body{margin:0;background:var(--bg);color:var(--fg);
     font-family:var(--body);font-size:14px;-webkit-font-smoothing:antialiased;
     -moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;
     background-image:radial-gradient(120% 80% at 50% -10%,rgba(47,230,166,.06),transparent 60%);
@@ -2379,6 +2391,10 @@ PAGE = """<!doctype html>
     background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .legend div{min-width:0;padding:13px 14px;background:var(--head)}
   .legend .tot{--c:var(--fg);background:var(--drawer)}
+  /* A healthy install is nine zeros and one number. At full strength a red 0
+     under EXPIRED reads as an alarm; dimmed, colour only appears where
+     something actually is in that state. */
+  .legend .zero{opacity:.34}
   .legend b{display:block;font-family:var(--mono);font-size:22px;font-weight:700;
     color:var(--c);line-height:1;font-variant-numeric:tabular-nums}
   /* Labels take the body face; Martian Mono keeps the numerals. Its slab
@@ -2799,6 +2815,7 @@ __SHEET__
 (function(){
  const CURRENT_METHOD='__AUTHMETHOD__';
  const tb=document.querySelector('tbody');
+ // Mirrors LABELS in app.py; a test asserts the two agree by value.
  const LABEL={ok:'days left',due:'days left',warn:'days left',critical:'days left',
    expired:'days over',session:'re-auth',immune:'exempt',unknown:'no data',
    snoozed:'days left'};
@@ -2845,12 +2862,16 @@ __SHEET__
    tr.dataset.lim=d.inactivity_days; tr.dataset.seen=d.days_since===null?'':d.days_since;
    tr.dataset.immune=d.immune?'1':''; tr.dataset.verified=d.verified?'1':'';
    tr.dataset.reason=d.immune_reason||'';
+   tr.dataset.el=d.days_since===null?'0':
+     Math.min(100,Math.max(0,d.days_since/Math.max(d.inactivity_days,1)*100)).toFixed(2);
    tr.querySelector('td.st').textContent=d.immune&&d.immune_reason?d.immune_reason
      :(SLBL[d.state]||d.state);
-   tr.querySelector('td.seen').textContent=ago(d.days_since);
-   tr.querySelector('td.n').textContent=
-     (d.immune||d.days_left===null)?'\\u2014':Math.abs(d.days_left);
-   tr.querySelector('td.lim').textContent=d.inactivity_days+'d';
+   // The countdown carries its unit as a child, so textContent= would wipe it.
+   // `td.seen` and `td.lim` are gone -- last auth and the limit share the
+   // elapsed cell's meta line now.
+   const big=(d.immune||d.days_left===null)?'\\u2014':Math.abs(d.days_left);
+   tr.querySelector('td.n').innerHTML=big+'<small>'+(LABEL[d.state]||'')+'</small>';
+   tr.querySelector('.elm').textContent=ago(d.days_since)+' \\u00b7 '+d.inactivity_days+'d';
    const p=d.days_since===null?0:Math.min(100,Math.max(3,(1-d.days_left/d.inactivity_days)*100));
    tr.querySelector('.meter i').style.setProperty('--p',(d.immune?0:p).toFixed(0)+'%');
    tr.querySelector('.meter').classList.toggle('none',!!d.immune);
@@ -3323,9 +3344,12 @@ __SHEET__
 })();
 </script></body></html>"""
 
+# The unit printed under each countdown. Mirrored by LABEL in the page's JS,
+# which repaints that cell after an edit; a test asserts the two agree by
+# VALUE, not just by key -- they had drifted on `immune` while both sat unused.
 LABELS = {"ok": "days left", "due": "days left", "warn": "days left",
           "critical": "days left", "expired": "days over", "session": "re-auth",
-          "unknown": "no data", "immune": "days idle", "snoozed": "days left"}
+          "unknown": "no data", "immune": "exempt", "snoozed": "days left"}
 RANK = {"expired": 0, "session": 1, "critical": 2, "warn": 3, "due": 4,
         "unknown": 5, "ok": 6, "snoozed": 7, "immune": 8}
 
@@ -3607,7 +3631,8 @@ async def index(request: Request):
     # it gets the neutral colour and its own divider.
     legend = (f'<div class="tot"><b>{len(rows)}</b><span>trackers</span></div>'
               + "".join(
-                  f'<div style="--c:var(--{s})"><b>{counts.get(s, 0)}</b>'
+                  f'<div class="{"zero" if not counts.get(s) else ""}" '
+                  f'style="--c:var(--{s})"><b>{counts.get(s, 0)}</b>'
                   f'<span>{STATE_LABEL.get(s, s)}</span></div>'
                   for s in ("expired", "session", "critical", "warn", "due",
                             "unknown", "ok", "snoozed", "immune")))
@@ -3618,14 +3643,7 @@ async def index(request: Request):
         big = "—" if (r["immune"] or r["days_left"] is None) else str(abs(r["days_left"]))
         # The unit is not decoration: "4" under a red dot is ambiguous until it
         # says whether those are days remaining or days already overdue.
-        if r["immune"]:
-            unit = "exempt"
-        elif r["days_left"] is None:
-            unit = "no data"
-        elif r["days_left"] < 0:
-            unit = "days over"
-        else:
-            unit = "days left"
+        unit = LABELS[s]
         name = (f'<a href="{esc(r["url"])}" target="_blank" rel="noreferrer">{esc(r["name"])}</a>'
                 if r["url"] else f'<span class="t">{esc(r["name"])}</span>')
         hand = ' <i title="last auth was marked by hand">&#9998;</i>' if r.get("auth_source") == "manual" else ""

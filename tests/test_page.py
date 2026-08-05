@@ -235,6 +235,39 @@ def test_table_column_count_agrees_everywhere(page):
     assert spans == {n}, f"{n} columns but colspan is {spans}"
 
 
+def test_every_row_cell_the_script_repaints_exists(page):
+    """`paint()` rewrites a row in place after an edit. It queried `td.seen`
+    and `td.lim`, which the five-column layout removed — so the first one
+    returned null, threw, and killed the rest of the repaint. The row kept its
+    old countdown and the console showed
+    "can't access property textContent, tr.querySelector(...) is null".
+
+    Nothing coupled the script's selectors to the cells the server renders;
+    the element-id test above only covers ids, and these are classes."""
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    wanted = set(re.findall(r"querySelector\('(td\.\w+|\.\w+)'\)", script))
+    row = re.search(r'<tr class="row".*?</tr>', page, re.S)
+    assert row, "fixture rendered no rows, so this guard proves nothing"
+    have = {f"td.{c}" for c in re.findall(r'<td class="(\w+)', row.group(0))}
+    have |= {f".{c}" for c in re.findall(r'class="([\w-]+)', row.group(0))}
+    missing = {w for w in wanted if w in {f"td.{x}" for x in
+               ("s", "nm", "st", "n", "el", "sw", "seen", "lim")} } - have
+    assert not missing, f"paint() queries cells the row no longer has: {missing}"
+
+
+def test_the_two_unit_label_maps_agree(page):
+    """The unit under each countdown ("days left", "days over", "exempt") is
+    stated twice: LABELS in Python renders it, LABEL in the page's JS rewrites
+    it after an edit. They had already drifted on `immune` — and neither was
+    reachable, because the row builder carried a third, inline copy of the
+    rule. Compare VALUES; comparing key sets is what let the drift through."""
+    js = dict(re.findall(r"(\w+):'([^']*)'",
+                         re.search(r"const LABEL=\{(.*?)\};", page, re.S).group(1)))
+    assert js == app.LABELS, (
+        f"python-only {set(app.LABELS.items()) - set(js.items())}, "
+        f"js-only {set(js.items()) - set(app.LABELS.items())}")
+
+
 def test_the_drawer_does_not_inherit_the_row_nowrap(page):
     """`td{white-space:nowrap}` exists so a long tracker name ellipsizes in its
     own cell. The drawer is a <td> too, so it inherited nowrap — and its prose
