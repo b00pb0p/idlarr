@@ -5,10 +5,15 @@
 # pick up a security fix, and neither does anything else. Without this the four
 # runtime dependencies quietly rot.
 #
-# This covers routine version bumps only. Security notifications are a separate
-# feature that needs no file: Settings -> Code security -> Dependabot alerts.
-# Turn that on too; it is the half that matters when something is actually
-# wrong.
+# This covers routine version bumps only, and version updates are enabled purely
+# by this file existing. There is no switch for them in the repo settings; the
+# "Configure" button there just opens this file for editing.
+#
+# The other half lives in Settings -> Advanced Security (GitHub renamed that
+# page from "Code security and analysis"). Dependabot alerts, malware alerts and
+# security updates are all on. "Grouped security updates" is worth enabling
+# there too: the groups below apply to VERSION updates only, so without it one
+# advisory touching several packages opens a pull request per package.
 #
 # Every pull request here runs tests.yml (it triggers on `pull_request`), which
 # installs the proposed versions and runs the full suite. Merging one pushes to
