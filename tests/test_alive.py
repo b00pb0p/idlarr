@@ -313,3 +313,31 @@ def test_changing_it_changes_the_generated_userscript(cfg, monkeypatch):
     assert "https://first.example/ping" in app.render_userscript(app.status_url())
     app.save_default_field("status_url", "https://second.example")
     assert "https://second.example/ping" in app.render_userscript(app.status_url())
+
+
+def test_enabling_after_the_check_hour_sends_promptly(cfg, sent):
+    """The hour guard is "not before check_hour", so switching this on in the
+    evening sends one immediately rather than waiting until tomorrow. Kept on
+    purpose — an unproven notification path that stays silent for a week
+    defeats the point — but pinned so it is a decision, not an accident."""
+    evening = NOON.replace(hour=20, minute=4)
+    assert run({"alive_push_days": 7, "check_hour": 9}, evening) is True
+    assert len(sent) == 1
+
+
+def test_but_still_not_before_the_check_hour(cfg, sent):
+    assert run({"alive_push_days": 7, "check_hour": 9}, NOON.replace(hour=6)) is False
+    assert sent == []
+
+
+def test_the_next_one_lands_in_the_check_hour_window(cfg, sent):
+    """Only the first is off-schedule. Once last_alive_push is set, the
+    interval gate holds it until the next check-hour tick."""
+    run({"alive_push_days": 7, "check_hour": 9}, NOON.replace(hour=20, minute=4))
+    # six days later, in the window: too soon
+    assert run({"alive_push_days": 7, "check_hour": 9},
+               NOON.replace(hour=9) + timedelta(days=6)) is False
+    # seven days later, in the window: due
+    assert run({"alive_push_days": 7, "check_hour": 9},
+               NOON.replace(hour=9) + timedelta(days=7)) is True
+    assert len(sent) == 2

@@ -1055,6 +1055,12 @@ async def maybe_alive_push(cfg: dict, now_local: datetime) -> bool:
 
     Returns True if a push was sent. Deliberately runs after the daily check,
     so a day with a real alert does not also get a redundant heartbeat.
+
+    The hour guard is "not BEFORE check_hour", not "at check_hour". Enabling
+    this after the check hour therefore sends one on the next tick rather than
+    waiting a day — which is worth keeping: an unproven notification path that
+    stays silent for a week is exactly what this feature exists to prevent.
+    Every subsequent push lands in the check-hour window.
     """
     every = int(cfg.get("alive_push_days", 0))
     if every <= 0 or now_local.hour < int(cfg.get("check_hour", 9)):
@@ -3272,7 +3278,8 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
         + _row("Still-alive push",
                "Nothing else watches the watchdog. If this container dies the "
                "daily check stops and silence looks exactly like nothing being "
-               "due.",
+               "due. The first one arrives shortly after you switch this on, so "
+               "you know it works; after that they land with the daily check.",
                f'<select id="setAlive">{alive_opts}</select>')
         + _row("", "", '<button class="lk pri" id="setSave">Save</button>')
         + '<p class="e" id="setErr"></p>'
