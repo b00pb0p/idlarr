@@ -3,9 +3,9 @@
 
 Nothing tested the page's own contract before this, and it has a sharp edge:
 PAGE is a template filled by str.replace, so a renamed placeholder ships a page
-with `__STATUS__` printed on it rather than failing anywhere. These assert the
+with `__LEGEND__` printed on it rather than failing anywhere. These assert the
 substitutions happened, the settings panel is wired to elements that exist, and
-the status line says what it should.
+the table's columns agree across the four places that state them.
 
 Run:  .venv/bin/python -m pytest test_page.py -q
 """
@@ -82,16 +82,23 @@ def test_every_element_the_script_reaches_for_exists(page, element):
     assert f'id="{element}"' in page
 
 
-def test_status_line_reports_the_real_counts(page, cfg):
-    line = re.search(r'<div class="statusline">(.*?)</div>', page, re.S).group(1)
-    assert "<b>7</b> trackers" in line
-    assert 'sign-in <b class="bad">off</b>' in line
+def test_legend_reports_the_tracker_total(page, cfg):
+    """The total moved off the status line into the first legend cell. It is
+    the one number there that is not a state, so it is easy to drop when the
+    strip is regenerated."""
+    tot = re.search(r'<div class="tot"><b>(\d+)</b><span>([^<]+)</span>', page)
+    assert tot, "no total cell in the legend"
+    assert tot.group(1) == "7", tot.group(1)
+    assert tot.group(2) == "trackers"
 
 
-def test_status_line_shows_the_userscript_version_once_served(client, page):
+def test_about_shows_the_userscript_version_once_served(client, page):
+    """Also moved off the status line. Before the script has ever been served
+    it must say so rather than show a version nobody can install."""
     assert "not served yet" in page
     client.get(f"/idlarr.user.js?token={app.TOKEN}")
-    assert "userscript <b>1.1.1</b>" in client.get("/").text
+    assert "1.1.1" in re.search(r'id="s-about".*?</section>',
+                                client.get("/").text, re.S).group(0)
 
 
 def test_rendering_the_page_never_bumps_the_userscript_version(client):
@@ -118,7 +125,6 @@ def test_signed_in_page_offers_sign_out(client):
                                    "password": "correct-horse"})
     page = client.get("/").text
     assert 'id="amout"' in page
-    assert 'sign-in <b class="ok">forms</b>' in page
     assert "No sign-in configured" not in page
 
 
@@ -185,16 +191,59 @@ def test_test_notify_says_so_when_nothing_is_configured(client, monkeypatch):
 # broken layout rather than as broken code.
 
 @pytest.mark.parametrize("selector", [
-    ".statusline{", ".sheet{", ".sheet .win{", ".sheet nav{", ".sheet .row{",
-    ".sheet .row .ctl2{", ".hbtn{", ".gear{", ".xclose{", ".imlist{",
+    ".sheet{", ".sheet .win{", ".sheet nav{", ".sheet .row{",
+    ".sheet .row .ctl2{", ".hbtn{", ".gear{", ".xclose{", ".imlist{", ".addbtn{",
     ".banner{", ".modal{", ".legend{",
+    # added with the vitals layout: the header trace, the elapsed meta line,
+    # the software/chip strip under the name, the unit under the countdown,
+    # the legend's total cell and the footer's label rows
+    ".pulse{", ".elm{", "td.nm .m2{", "td.n small{", ".legend .tot{", ".foot .fr{",
 ])
 def test_layout_classes_have_rules(page, selector):
     """The markup is emitted from Python and the CSS lives in PAGE. Nothing
     couples them, so shipping one without the other is a silent failure: every
-    element is present and correct, and the page looks wrecked."""
+    element is present and correct, and the page looks wrecked.
+
+    Checked against the BASE stylesheet, not the whole thing: `.pulse{` also
+    appears as `@media(...){.pulse{display:none}}`, so searching the raw CSS
+    passed even with the real rule deleted — the guard proved nothing for
+    every class that happens to carry a mobile override."""
     css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
-    assert selector in css, f"markup uses {selector} but no rule defines it"
+    base = _base_stylesheet(css)
+    assert selector in base, f"markup uses {selector} but no base rule defines it"
+
+
+def test_table_column_count_agrees_everywhere(page):
+    """The `--cols` grid template, <thead>, every body row and the drawer's
+    colspan are four separate statements of one number. Add or drop a column
+    and three of them still render — the header labels just stop sitting over
+    their data, or the drawer stops spanning the row. Nothing couples them.
+
+    `--cols` is the layout authority since the table stopped being a table:
+    rows are grid cards so a row and its drawer can butt together."""
+    css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+    tracks = re.search(r"--cols:([^;}]+)", css).group(1).split()
+    n = len(tracks)
+    heads = len(re.findall(r"<th\b", page))
+    spans = {int(x) for x in re.findall(r'colspan="(\d+)"', page)}
+    rows = re.findall(r'<tr class="row".*?</tr>', page, re.S)
+    assert rows, "fixture rendered no rows, so this guard proves nothing"
+    cells = {len(re.findall(r"<td\b", r)) for r in rows}
+
+    assert heads == n, f"--cols has {n} tracks {tracks} but {heads} <th>"
+    assert cells == {n}, f"{n} columns but rows have {cells} <td>"
+    assert spans == {n}, f"{n} columns but colspan is {spans}"
+
+
+def test_every_sort_option_resolves_to_a_header(page):
+    """The mobile <select> sorts by clicking the matching (hidden) <th>. An
+    option whose column no longer exists silently does nothing — the list just
+    fails to reorder, which reads as a broken table rather than dead markup."""
+    sel = re.search(r'<select id="msf".*?</select>', page, re.S).group(0)
+    options = set(re.findall(r'<option value="(\w+)">', sel))
+    headers = set(re.findall(r'<th data-k="(\w+)"', page))
+    assert options, "no sort options rendered"
+    assert options <= headers, f"sort options with no <th>: {options - headers}"
 
 
 def test_no_route_is_registered_twice():
@@ -308,24 +357,28 @@ def test_immune_reason_specifically_is_escaped(page):
     assert re.search(r"value=\"'\+d\.immune_reason", script) is None
 
 
+def _base_stylesheet(css: str) -> str:
+    """`css` with every @media block removed, by balanced-brace scan. Rules
+    inside a media query are overrides: they neither count as a duplicate
+    definition nor as the base definition of a class."""
+    base, i = [], 0
+    while i < len(css):
+        if css.startswith("@media", i):
+            j = css.index("{", i); d = 1; j += 1
+            while d and j < len(css):
+                d += css[j] == "{"; d -= css[j] == "}"; j += 1
+            i = j; continue
+        base.append(css[i]); i += 1
+    return "".join(base)
+
+
 def test_no_css_selector_is_defined_twice_in_the_base_stylesheet():
     """Two `.imlist{...}` blocks drifted apart in the base stylesheet — one
     orphaned when Import moved out of a modal — and the cascade resolved the
     conflict non-obviously. Duplicate base-level selectors are almost always
     that: a leftover. Overrides inside @media are legitimate and excluded."""
     css = re.search(r"<style>(.*?)</style>", app.PAGE, re.S).group(1)
-    # Drop @media blocks (balanced-brace scan) so intentional overrides don't trip it.
-    base, depth, i = [], 0, 0
-    while i < len(css):
-        if css.startswith("@media", i):
-            # skip to the matching close brace of this @media
-            j = css.index("{", i); d = 1; j += 1
-            while d and j < len(css):
-                d += css[j] == "{"; d -= css[j] == "}"; j += 1
-            i = j; continue
-        base.append(css[i]); i += 1
-    base_css = "".join(base)
-    selectors = re.findall(r"(?:^|})\s*([^{}@]+?)\s*\{", base_css)
+    selectors = re.findall(r"(?:^|})\s*([^{}@]+?)\s*\{", _base_stylesheet(css))
     seen = {}
     for sel in selectors:
         sel = " ".join(sel.split())          # normalise whitespace

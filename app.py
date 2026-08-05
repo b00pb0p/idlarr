@@ -2137,32 +2137,40 @@ async def userscript(request: Request, token: str = ""):
 LOGIN_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Idlarr — sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&family=Martian+Mono:wght@400;500&family=Familjen+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
- :root{--bg:#0d0f11;--head:#151a1d;--line:#232a2f;--line2:#2e373d;--fg:#dbe3e7;
-   --dim:#727f88;--accent:#e0553f;--bad:#e0553f}
+ :root{--bg:#0a0e0d;--head:#0f1614;--line:#1d2a26;--line2:#284039;--fg:#eaf6f2;
+   --dim:#93aaa4;--accent:#2fe6a6;--bad:#ff6b5e;
+   --disp:'Bricolage Grotesque',system-ui,sans-serif;
+   --mono:'Martian Mono',ui-monospace,monospace;
+   --body:'Familjen Grotesk',system-ui,sans-serif}
  *{box-sizing:border-box}
  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
-   font-family:Archivo,system-ui,sans-serif;font-size:13px;display:flex;
+   font-family:var(--body);font-size:14px;display:flex;
+   -webkit-font-smoothing:antialiased;
+   background-image:radial-gradient(90% 60% at 50% 0%,rgba(47,230,166,.07),transparent 60%);
    align-items:center;justify-content:center}
- form{background:var(--head);border:1px solid var(--line2);padding:26px;width:310px}
- h1{font-size:15px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
-   margin:0 0 3px;display:flex;align-items:center;gap:9px}
- h1::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--accent);
-   box-shadow:0 0 10px var(--accent)}
- p.t{color:var(--dim);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-   margin:0 0 18px}
- label{display:block;color:var(--dim);font-size:10px;letter-spacing:.12em;
-   text-transform:uppercase;margin:0 0 5px}
- input{width:100%;background:var(--bg);border:1px solid var(--line2);color:var(--fg);
-   padding:8px 9px;font-family:inherit;font-size:13px;margin-bottom:13px}
+ form{background:var(--head);border:1px solid var(--line2);border-radius:14px;
+   padding:28px;width:320px}
+ h1{font-family:var(--disp);font-size:23px;font-weight:800;letter-spacing:-.03em;margin:0 0 2px}
+ h1 b{color:var(--accent);font-weight:800}
+ p.t{font-family:var(--mono);font-weight:500;color:var(--dim);font-size:9.5px;
+   letter-spacing:.26em;text-transform:uppercase;margin:0 0 20px}
+ label{display:block;font-family:var(--mono);font-weight:500;color:var(--dim);font-size:9.5px;
+   letter-spacing:.16em;text-transform:uppercase;margin:0 0 6px}
+ input{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:8px;
+   color:var(--fg);padding:9px 11px;font-family:var(--mono);font-weight:500;
+   font-size:12.5px;margin-bottom:14px}
  input:focus{outline:none;border-color:var(--accent)}
- button{width:100%;background:var(--accent);border:0;color:#fff;padding:9px;
-   font-family:inherit;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
-   cursor:pointer}
- .err{color:var(--bad);font-size:11.5px;min-height:16px;margin:9px 0 0;text-align:center}
+ button{width:100%;background:var(--accent);border:0;border-radius:8px;color:#04120d;padding:11px;
+   font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:.14em;
+   text-transform:uppercase;cursor:pointer}
+ .err{color:var(--bad);font-size:12px;min-height:16px;margin:10px 0 0;text-align:center}
 </style></head><body>
 <form id="f" autocomplete="on">
-  <h1>Idlarr</h1><p class="t">sign in</p>
+  <h1>idl<b>a</b>rr</h1><p class="t">sign in</p>
   <label for="u">username</label><input id="u" name="username" autocomplete="username" autofocus>
   <label for="p">password</label>
   <input id="p" name="password" type="password" autocomplete="current-password">
@@ -2314,55 +2322,85 @@ PAGE = """<!doctype html>
 <title>Idlarr</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Azeret+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Martian+Mono:wght@400;500;600;700&family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0d0f11;--head:#151a1d;--drawer:#111619;--line:#232a2f;--line2:#2e373d;
-    --fg:#dbe3e7;--dim:#727f88;--dim2:#8e9aa3;
-    --ok:#43a06b;--due:#c2a136;--warn:#d2802f;--critical:#e0553f;--expired:#a52c4e;
-    --immune:#6572a0;--session:#2f96b4;--unknown:#5d6870;--accent:#e0553f;
-    --snoozed:#7a6a94;
+    --bg:#0a0e0d;--head:#0f1614;--drawer:#131d1a;--line:#1d2a26;--line2:#284039;
+    --fg:#eaf6f2;--dim:#93aaa4;--dim2:#c2d5d0;
+    --ok:#2fe6a6;--due:#ffe066;--warn:#ffab45;--critical:#ff6b5e;--expired:#ff4d7d;
+    --immune:#8f9bd6;--session:#4fd3ff;--unknown:#4b5f5a;--accent:#2fe6a6;
+    --snoozed:#b58be0;
+    --sig:#2fe6a6;--sigdim:#1c6d54;
+    /* Three faces, three jobs: names carry weight, numbers stay tabular, and
+       everything else has to read at 9px. Mixing them was the point. */
+    --disp:'Bricolage Grotesque',system-ui,sans-serif;
+    --mono:'Martian Mono',ui-monospace,monospace;
+    --body:'Familjen Grotesk',system-ui,sans-serif;
   }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--fg);
-    font-family:Archivo,system-ui,sans-serif;font-size:13px;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:1240px;margin:0 auto;padding:22px 20px 70px}
+    font-family:var(--body);font-size:14px;-webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;
+    background-image:radial-gradient(120% 80% at 50% -10%,rgba(47,230,166,.06),transparent 60%);
+    background-attachment:fixed}
+  .wrap{max-width:1160px;margin:0 auto;padding:28px 26px 90px}
+  /* One column template drives the header labels and every row, at every
+     width. Two layout models (table on desktop, grid on mobile) is what let
+     the two drift apart. */
+  :root{--cols:14px 232px 92px 104px 1fr}
 
-  .bar{display:flex;align-items:center;gap:16px;padding-bottom:12px;
-    border-bottom:2px solid var(--line2);flex-wrap:wrap}
-  h1{font-size:16px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin:0;
-    display:flex;align-items:center;gap:9px}
-  h1::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--accent);
-    box-shadow:0 0 10px var(--accent);animation:beat 2.6s ease-out infinite}
-  @keyframes beat{0%{transform:scale(1)}10%{transform:scale(1.35)}20%{transform:scale(1)}
-    30%{transform:scale(1.2)}40%{transform:scale(1)}}
-  .stamp{font-family:'Azeret Mono',monospace;color:var(--dim);font-size:10.5px}
-  .tag{color:var(--dim);font-size:9.5px;letter-spacing:.13em;text-transform:uppercase}
+  /* Every band on the page is separated the same way: 22px, a hairline,
+     22px. Header / counts / table / footer. */
+  .bar{display:flex;align-items:center;gap:20px;padding-bottom:22px;
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{display:flex;align-items:baseline;gap:12px}
+  h1{font-family:var(--disp);font-size:23px;font-weight:800;letter-spacing:-.03em;margin:0}
+  h1 b{color:var(--sig);font-weight:800}
+  .stamp{font-family:var(--mono);font-weight:400;color:var(--dim2);font-size:11.5px;
+    text-align:right;line-height:1.45}
+  .stamp b{color:var(--fg);font-weight:600}
+  .tag{font-family:var(--mono);font-weight:500;color:var(--dim);font-size:9.5px;
+    letter-spacing:.26em;text-transform:uppercase}
   @media(max-width:760px){.tag{display:none}}
-  .tick{display:flex;gap:2px;margin-left:auto;align-items:flex-end;height:22px}
-  .tick i{width:8px;background:var(--c);height:var(--h);display:block;opacity:.85;
-    border-radius:1px;cursor:pointer}
-  .tick i:hover{opacity:1;box-shadow:0 0 8px var(--c)}
+  /* Decorative. Generated in JS so the rhythm varies; a single repeating
+     wavelength reads as a loading spinner rather than a monitor. */
+  .pulse{flex:1;min-width:90px;height:38px;position:relative;overflow:hidden;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);
+    mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
+  .pulse svg{position:absolute;left:0;top:0;height:38px;width:200%;animation:slide 11s linear infinite}
+  .pulse g{animation:wander 6.5s ease-in-out infinite alternate}
+  @keyframes slide{to{transform:translateX(-50%)}}
+  @keyframes wander{from{transform:translateY(-1.6px)}to{transform:translateY(1.6px)}}
+  @media(prefers-reduced-motion:reduce){.pulse svg,.pulse g{animation:none}}
+  @media(max-width:760px){.pulse{display:none}}
 
-  .legend{display:flex;margin:12px 0 16px;border:1px solid var(--line);flex-wrap:wrap;
-    background:var(--head)}
-  .legend div{flex:1;min-width:82px;padding:8px 13px;border-right:1px solid var(--line)}
-  .legend div:last-child{border-right:0}
-  .legend b{display:block;font-family:'Azeret Mono',monospace;font-size:17px;font-weight:500;
+  .legend{display:grid;grid-template-columns:repeat(10,1fr);gap:1px;margin:22px 0 0;
+    background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .legend div{min-width:0;padding:13px 14px;background:var(--head)}
+  .legend .tot{--c:var(--fg);background:var(--drawer)}
+  .legend b{display:block;font-family:var(--mono);font-size:22px;font-weight:700;
     color:var(--c);line-height:1;font-variant-numeric:tabular-nums}
-  .legend span{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);
-    display:block;margin-top:5px;font-weight:600}
+  /* Labels take the body face; Martian Mono keeps the numerals. Its slab
+     uppercase at .14em turned NOTIFICATIONS and LOGGED OUT into letter
+     soup — the same reason the state column moved off it. */
+  .legend span{font-family:var(--body);font-size:11px;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--dim);display:block;margin-top:7px;font-weight:600}
 
-  table{width:100%;border-collapse:collapse;table-layout:fixed}
-  col.c-rail{width:4px} col.c-nm{width:22%} col.c-sw{width:118px} col.c-st{width:116px}
-  col.c-seen{width:104px} col.c-left{width:78px} col.c-lim{width:76px} col.c-el{width:auto}
-  thead th{font-size:9px;letter-spacing:.17em;text-transform:uppercase;color:var(--dim);
-    text-align:left;padding:0 18px 8px 0;font-weight:700;border-bottom:1px solid var(--line2);
-    cursor:pointer;user-select:none;white-space:nowrap}
-  thead th:first-child{padding-right:0}
-  thead th:nth-child(2){padding-left:14px}
+  /* Not a table layout. Rows are cards on a shared grid, so a row and its
+     drawer can butt together — border-spacing would have forced a gap between
+     every row pair, including a row and its own drawer. */
+  table,thead,tbody{display:block;width:100%}
+  table{margin-top:22px;padding-top:22px;border-top:1px solid var(--line)}
+  thead tr,tbody tr.row{display:grid;grid-template-columns:var(--cols);gap:18px;
+    align-items:center}
+  thead tr{padding:0 18px 9px;align-items:end}
+  thead th{font-family:var(--body);font-size:11px;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--dim);text-align:center;padding:0;font-weight:600;
+    cursor:pointer;user-select:none;white-space:nowrap;min-width:0}
   thead th:hover{color:var(--fg)}
-  thead th.r{text-align:right}
+  /* `elapsed` is centred over its BAR, which starts 45px in, not over the
+     whole column — otherwise it sits noticeably left of what it names. */
+  thead th.mid{padding-left:45px}
   thead th::after{content:'';display:inline-block;width:0;height:0;margin-left:6px;
     vertical-align:2px;border-left:3.5px solid transparent;border-right:3.5px solid transparent;
     opacity:.3;border-bottom:4px solid currentColor}
@@ -2370,43 +2408,64 @@ PAGE = """<!doctype html>
   thead th[data-dir="asc"]::after{opacity:1}
   thead th.nos{cursor:default} thead th.nos::after{display:none}
 
-  tbody tr.row{border-bottom:1px solid var(--line);cursor:pointer}
-  tbody tr.row:hover{background:var(--head)}
-  tbody tr.row.open{background:var(--head);border-bottom-color:transparent}
+  tbody tr.row{cursor:pointer;background:var(--head);border:1px solid var(--line);
+    border-radius:12px;padding:14px 18px;margin-bottom:7px;transition:border-color .2s}
+  tbody tr.row:hover{border-color:var(--line2)}
+  tbody tr.row.open{border-color:var(--line2);border-bottom-color:transparent;
+    border-radius:12px 12px 0 0;margin-bottom:0}
   tbody tr.row.flash{animation:fl .9s ease}
-  @keyframes fl{0%,100%{background:transparent}18%{background:rgba(224,85,63,.13)}}
-  td{padding:9px 18px 9px 0;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;
-    white-space:nowrap}
-  td.s{width:4px;padding:0;background:var(--c)}
-  td.nm{padding-left:14px;font-weight:600;font-size:13.5px}
-  td.nm a{color:var(--fg);text-decoration:none;border-bottom:1px solid transparent}
+  @keyframes fl{0%,100%{background:var(--head)}18%{background:rgba(47,230,166,.11)}}
+  td{padding:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  td.s::after{content:'';display:block;width:8px;height:8px;border-radius:50%;
+    background:var(--c);box-shadow:0 0 12px var(--c)}
+  td.nm{line-height:1.2}
+  td.nm a{font-family:var(--disp);font-weight:700;font-size:16.5px;letter-spacing:-.012em;
+    color:var(--fg);text-decoration:none;border-bottom:1px solid transparent}
   td.nm a:hover{color:var(--c);border-bottom-color:var(--c)}
-  td.nm i{font-style:normal;color:var(--dim);font-size:10px;margin-left:7px;font-weight:400}
-  td.nm .caret{display:inline-block;width:0;height:0;margin-right:8px;vertical-align:2px;
-    border-top:3.5px solid transparent;border-bottom:3.5px solid transparent;
-    border-left:5px solid var(--dim);transition:transform .15s}
-  tr.row.open .caret{transform:rotate(90deg)}
-  td.sw{color:var(--dim2);font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600}
-  td.st{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--c);font-weight:700}
-  td.seen{font-family:'Azeret Mono',monospace;color:var(--dim2);font-size:10.5px;text-align:right}
-  td.n{text-align:right;font-family:'Azeret Mono',monospace;font-variant-numeric:tabular-nums;
-    font-size:15px;font-weight:500;color:var(--c)}
-  td.lim{text-align:right;font-family:'Azeret Mono',monospace;color:var(--dim);font-size:10.5px}
-  .meter{height:5px;background:#1a2024;position:relative;border-radius:1px;overflow:hidden}
-  .meter i{position:absolute;inset:0 auto 0 0;width:var(--p);background:var(--c);border-radius:1px}
+  td.nm .t{font-family:var(--disp);font-weight:700;font-size:16.5px;letter-spacing:-.012em;
+    display:block;overflow:hidden;text-overflow:ellipsis}
+  td.nm i{font-style:normal;color:var(--dim);font-size:11px;margin-left:7px;font-weight:400}
+  /* Stacked, not inline: the badge beside the software read as a second word
+     of it, and a long software name pushed the badge out of the column. */
+  td.nm .m2{display:flex;flex-direction:column;align-items:flex-start;gap:4px;
+    margin-top:3px;min-width:0}
+  .sw{font-family:var(--body);color:var(--dim);font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;font-weight:600}
+  td.st{font-family:var(--body);font-size:12.5px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--c);font-weight:700;white-space:normal;line-height:1.25}
+  td.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;
+    font-size:27px;font-weight:700;color:var(--c);line-height:1}
+  td.n small{display:block;font-size:10.5px;font-weight:500;color:var(--dim2);
+    letter-spacing:.06em;margin-top:5px}
+  /* Pushed off the countdown by the same gap that sits on its other side, so
+     the number reads as its own object rather than a label on the bar. */
+  td.el{padding-left:45px;position:relative;height:30px}
+  .meter{position:absolute;left:45px;right:0;bottom:0;height:4px;background:var(--line);
+    border-radius:2px;overflow:hidden}
+  .meter i{position:absolute;inset:0 auto 0 0;width:var(--p);background:var(--c);
+    border-radius:2px;opacity:.85}
   .meter.none{opacity:.22}
-  .q{font-size:8.5px;letter-spacing:.1em;color:var(--accent);border:1px solid rgba(224,85,63,.4);
-    padding:1px 5px;margin-left:8px;font-weight:700;text-transform:uppercase}
+  .elm{position:absolute;top:0;right:0;font-family:var(--mono);font-weight:500;
+    font-size:10px;color:var(--dim)}
+  .q{font-family:var(--body);font-weight:600;font-size:9.5px;letter-spacing:.1em;color:var(--accent);
+    border:1px solid var(--sigdim);border-radius:20px;padding:2px 7px;font-weight:500;
+    text-transform:uppercase;white-space:nowrap}
 
-  tr.drawer td{padding:0;border-bottom:1px solid var(--line);background:var(--drawer)}
-  .d{border-left:4px solid var(--c);padding:15px 18px;display:grid;
-    grid-template-columns:minmax(0,340px) 1fr 1fr;gap:26px}
-  @media(max-width:940px){.d{grid-template-columns:1fr}}
-  .dh{font-size:8.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
-    font-weight:700;margin-bottom:10px}
-  button{font-family:Archivo;font-size:9px;font-weight:700;letter-spacing:.15em;
+  tr.drawer{display:block;margin-bottom:7px}
+  tr.drawer td{display:block;padding:0;background:var(--drawer);
+    border:1px solid var(--line2);border-top:1px solid var(--line);
+    border-radius:0 0 12px 12px}
+  .d{display:grid;grid-template-columns:minmax(0,340px) 1fr 1fr;gap:0}
+  .d>div{padding:20px 22px;border-right:1px solid var(--line);min-width:0}
+  .d>div:last-child{border-right:0}
+  @media(max-width:940px){.d{grid-template-columns:1fr}
+    .d>div{border-right:0;border-bottom:1px solid var(--line)}
+    .d>div:last-child{border-bottom:0}}
+  .dh{font-family:var(--body);font-size:11px;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--dim);font-weight:600;margin-bottom:16px}
+  button{font-family:var(--mono);font-size:9.5px;font-weight:500;letter-spacing:.09em;
     text-transform:uppercase;background:transparent;color:var(--dim2);
-    border:1px solid var(--line2);padding:8px 12px;cursor:pointer;transition:.15s}
+    border:1px solid var(--line2);border-radius:7px;padding:8px 12px;cursor:pointer;transition:.15s}
   button:hover{color:var(--fg);border-color:var(--dim)}
   button:disabled{opacity:.35;cursor:not-allowed}
   button.on{color:var(--accent);border-color:var(--accent);background:rgba(224,85,63,.09)}
@@ -2416,21 +2475,25 @@ PAGE = """<!doctype html>
   .msg.bad{color:var(--critical)} .msg.good{color:var(--ok)} .msg.warn{color:var(--due)}
   /* Controls are sized to their CONTENT and share a left edge. Stretching
      each one to the column width put a three-digit day count in a 200px box. */
-  .a2 .r{display:flex;align-items:center;gap:9px;padding:6px 0;
+  .a2 .r{display:flex;align-items:center;gap:10px;padding:8px 0;
     border-bottom:1px solid var(--line)}
   .a2 .r:last-child{border-bottom:0}
-  .a2 label{width:74px;flex:none;color:var(--dim);font-size:9px;
-    letter-spacing:.14em;text-transform:uppercase;font-weight:700}
-  .a2 .c{flex:1;min-width:0;display:flex;align-items:center;gap:7px}
-  .a2 .c input,.a2 .c select{background:#0b0e10;border:1px solid var(--line2);
-    color:var(--fg);padding:5px 7px;font-family:inherit;font-size:12px}
-  .a2 .c input:focus,.a2 .c select:focus{outline:none;border-color:var(--accent)}
+  .a2 label{width:88px;flex:none;color:var(--dim2);font-family:var(--body);
+    font-size:13px;font-weight:500}
+  /* Controls pin to the right edge and share it; the hint floats left so a
+     three-digit day count and a date picker still line up. */
+  .a2 .c{flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:6px}
+  .a2 .c input,.a2 .c select{background:var(--bg);border:1px solid var(--line2);
+    border-radius:7px;color:var(--fg);padding:6px 9px;font-family:var(--mono);
+    font-weight:500;font-size:12.5px}
+  .a2 .c input:focus,.a2 .c select:focus{outline:none;border-color:var(--sig)}
   .a2 .c input:disabled{opacity:.4;cursor:not-allowed}
-  .a2 .w-num{width:62px;text-align:right}
+  .a2 .w-num{width:76px;text-align:right}
   select.w-num{text-align:left}
   .a2 .w-date{width:142px}
   .a2 .w-grow{flex:1;min-width:0}
-  .a2 .c em{font-style:normal;color:var(--dim);font-size:10px;white-space:nowrap}
+  .a2 .c em{font-style:normal;color:var(--dim);font-size:10px;white-space:nowrap;
+    order:-1;margin-right:auto;overflow:hidden;text-overflow:ellipsis}
   .a2 .c em b{font-weight:400;color:var(--dim2)}
   .a2 .lk.mini{padding:5px 8px;font-size:8px}
   @media(max-width:940px){
@@ -2438,26 +2501,38 @@ PAGE = """<!doctype html>
     /* Space is dearer than the hint on a phone. */
     .a2 .c em{display:none}
   }
-  .sched,.hist{font-family:'Azeret Mono',monospace;font-size:11px}
+  .sched,.hist{font-family:var(--mono);font-size:11px}
   .sched div,.hist div{display:flex;align-items:baseline;gap:10px;padding:5px 0;
     border-bottom:1px solid var(--line)}
   .sched div:last-child,.hist div:last-child{border-bottom:0}
-  .sched b{font-family:Archivo;font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+  .sched b{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;
     font-weight:700;color:var(--k);width:58px;flex:none}
   .sched span,.hist span{color:var(--dim2)}
   .sched em,.hist em{font-style:normal;margin-left:auto;color:var(--dim)}
   .sched .past{opacity:.4}
-  .hist em{font-family:Archivo;font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+  .hist em{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
   .hist em.hand{color:var(--accent)}
 
-  .foot{color:var(--dim);font-size:10px;margin-top:18px;line-height:1.75}
-  .foot b{color:var(--dim2);font-weight:400}
+  /* Was one dim 10px paragraph with middots doing the work of punctuation, so
+     five separate facts read as one run-on sentence. Each is its own line with
+     its trigger in a fixed-width label column. */
+  /* 15px, not 22: the last row carries a 7px bottom margin of its own, so
+     22 here would sit the rule 29px below it and break the rhythm. */
+  .foot{margin-top:15px;padding-top:22px;border-top:1px solid var(--line);
+    color:var(--dim2);font-size:12.5px;line-height:1.55}
+  .foot .fr{display:flex;gap:14px;padding:3px 0}
+  .foot .fr em{flex:none;width:126px;font-style:normal;font-family:var(--body);
+    font-weight:600;font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--dim);padding-top:2px}
+  .foot b{color:var(--sig);font-weight:500}
+  @media(max-width:760px){.foot .fr{display:block}
+    .foot .fr em{display:block;width:auto;margin-bottom:1px}}
   .empty{color:var(--dim);padding:50px 0;text-align:center;letter-spacing:.12em;text-transform:uppercase}
 
   /* Mobile sort control — the <thead> is hidden below, so this drives the same
      handlers by clicking the (still present) header cells programmatically. */
   .msort{display:none;gap:6px;align-items:center}
-  .msort select,.msort button{font-family:Archivo;font-size:9px;font-weight:700;
+  .msort select,.msort button{font-family:var(--mono);font-size:9px;font-weight:700;
     letter-spacing:.13em;text-transform:uppercase;background:#0b0e10;color:var(--dim2);
     border:1px solid var(--line2);padding:7px 9px}
   .msort select{-webkit-appearance:none;appearance:none;padding-right:22px;
@@ -2476,38 +2551,31 @@ PAGE = """<!doctype html>
     .bar{gap:10px}
     h1{font-size:14px}
     .stamp{font-size:9.5px}
-    .tick{margin-left:0;width:100%;height:18px;order:3}
-    .tick i{flex:1;width:auto;min-width:0}
     .msort{display:flex;margin-left:auto}
-    .legend{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:0}
+    .legend{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:0}
     .legend div{border-bottom:1px solid var(--line);min-width:0;padding:7px 9px}
-    .legend div:nth-child(4n){border-right:0}
+    .legend div:nth-child(5n){border-right:0}
     .legend b{font-size:15px}
     .legend span{font-size:8px;letter-spacing:.1em}
 
-    table{table-layout:auto;display:block}
-    colgroup,thead{display:none}
-    tbody{display:block}
-    tbody tr.row{display:grid;grid-template-columns:1fr 1fr auto;
-      grid-template-areas:"nm nm n" "st st n" "sw seen lim" "el el el";
-      gap:3px 10px;align-items:baseline;padding:11px 12px 10px 14px;
-      border-left:4px solid var(--c);position:relative}
-    tbody tr.row.open{border-bottom-color:var(--line)}
-    td{padding:0;white-space:normal}
+    /* Same card, fewer tracks: the columns sum wider than a phone, so the
+       countdown moves beside the name and the trace spans the full width. */
+    thead{display:none}
+    tbody tr.row{grid-template-columns:1fr auto;
+      grid-template-areas:"nm n" "st n" "el el";
+      gap:4px 12px;align-items:baseline;padding:12px 14px 11px 14px;
+      border-left:3px solid var(--c);border-radius:10px}
+    tbody tr.row.open{border-radius:10px 10px 0 0}
+    td{white-space:normal}
     td.s{display:none}
-    td.nm{grid-area:nm;padding-left:0;font-size:14.5px;line-height:1.25}
-    td.nm .caret{margin-right:6px}
-    td.st{grid-area:st;font-size:9px}
-    td.n{grid-area:n;font-size:27px;align-self:center;text-align:right}
-    td.sw{grid-area:sw;font-size:9px}
-    td.seen{grid-area:seen;text-align:left;font-size:10px}
-    td.lim{grid-area:lim;font-size:10px}
-    td.el{grid-area:el;margin-top:5px}
-    .q{display:block;margin:3px 0 0}
-
-    tr.drawer{display:block}
-    tr.drawer td{display:block}
-    .d{grid-template-columns:1fr;gap:16px;padding:14px 12px}
+    td.nm{grid-area:nm}
+    td.nm a,td.nm .t{font-size:15.5px}
+    td.st{grid-area:st;font-size:11px}
+    td.n{grid-area:n;font-size:29px;align-self:center}
+    td.el{grid-area:el;margin-top:10px;padding-left:0}
+    .meter{left:0}
+    .d{grid-template-columns:1fr}
+    tr.drawer td{border-radius:0 0 10px 10px}
       .foot{font-size:9.5px}
   }
   .banner{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:13px 0 0;
@@ -2520,46 +2588,53 @@ PAGE = """<!doctype html>
      inline-flex + line-height is what makes their heights match. */
   .lk{display:inline-flex;align-items:center;justify-content:center;
     box-sizing:border-box;background:var(--bg);border:1px solid var(--line2);
-    color:var(--fg);font-family:Archivo,system-ui,sans-serif;font-size:9px;
-    font-weight:700;letter-spacing:.15em;text-transform:uppercase;
+    border-radius:7px;color:var(--dim2);font-family:var(--mono);font-size:9.5px;
+    font-weight:500;letter-spacing:.09em;text-transform:uppercase;
     line-height:1;padding:8px 12px;cursor:pointer;text-decoration:none;
     white-space:nowrap;transition:.15s}
-  .lk:hover{border-color:var(--accent);color:var(--fg)}
+  .lk:hover{border-color:var(--sigdim);color:var(--fg)}
   .lk:disabled{opacity:.35;cursor:not-allowed}
-  .lk.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+  .lk.pri{background:var(--sig);border-color:var(--sig);color:#04120d;font-weight:600}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;
     align-items:center;justify-content:center;z-index:30}
   .modal.on{display:flex}
-  .modal .box{background:var(--head);border:1px solid var(--line2);padding:22px;
-    width:340px;max-width:92vw}
-  .modal h3{margin:0 0 4px;font-size:12px;letter-spacing:.13em;text-transform:uppercase}
-  .modal .hint{color:var(--dim);font-size:11px;margin:0 0 15px;line-height:1.45}
-  .modal label{display:block;color:var(--dim);font-size:10px;letter-spacing:.11em;
-    text-transform:uppercase;margin:0 0 4px}
+  .modal .box{background:var(--head);border:1px solid var(--line2);border-radius:14px;
+    padding:24px 26px;width:430px;max-width:92vw;box-shadow:0 24px 60px rgba(0,0,0,.55)}
+  .modal h3{margin:0 0 8px;font-family:var(--disp);font-weight:700;font-size:19px;
+    letter-spacing:-.01em;text-transform:none}
+  .modal .hint{color:var(--dim2);font-size:12.5px;margin:0 0 8px;line-height:1.5}
+  .modal .hint b{color:var(--warn);font-weight:600}
+  .modal label{display:block;color:var(--dim);font-family:var(--body);font-weight:600;
+    font-size:11px;letter-spacing:.13em;text-transform:uppercase;margin:14px 0 6px}
   .modal input,.modal select{width:100%;background:var(--bg);border:1px solid var(--line2);
-    color:var(--fg);padding:7px 8px;font-family:inherit;font-size:12.5px;margin-bottom:12px}
-  .modal input:focus,.modal select:focus{outline:none;border-color:var(--accent)}
-  .modal .rowb{display:flex;gap:8px;margin-top:2px}
-  .modal .rowb button{flex:1;padding:8px;font-family:inherit;font-size:11px;
-    letter-spacing:.09em;text-transform:uppercase;cursor:pointer}
+    border-radius:8px;color:var(--fg);padding:9px 11px;font-family:var(--mono);
+    font-weight:500;font-size:12.5px}
+  .modal input::placeholder{color:#5c716c}
+  .modal input:focus,.modal select:focus{outline:none;border-color:var(--sig)}
+  .modal .rowb{display:flex;gap:8px;margin-top:22px;padding-top:18px;
+    border-top:1px solid var(--line)}
+  .modal .rowb button{flex:1;padding:9px;font-family:var(--mono);font-weight:500;
+    font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;cursor:pointer}
   .modal .e{color:var(--critical);font-size:11.5px;min-height:15px;margin:7px 0 0}
   .modal .box.wide{width:410px}
   .modal .rowb button:disabled{opacity:.4;cursor:default}
 
-  /* Footer is read-only STATUS. It used to carry actions too, and that is
-     what made it overflow: fixed-width nowrap content competing for room in a
-     flex cell. Nothing here is interactive, so nothing can compete. */
-  .statusline{margin:14px 0 0;padding:11px 2px 0;border-top:1px solid var(--line);
-    color:var(--dim);font-family:'Azeret Mono',monospace;font-size:11px;
-    display:flex;gap:16px;flex-wrap:wrap}
-  .statusline b{color:var(--fg);font-weight:400}
-  .statusline .bad{color:var(--critical)}
-  .statusline .ok{color:var(--ok)}
-
-  .hbtn{display:flex;gap:7px;margin-left:14px;align-items:center}
-  .gear{background:var(--head);border:1px solid var(--line2);color:var(--fg);
-    cursor:pointer;font-size:14px;line-height:1;padding:5px 9px}
-  .gear:hover{border-color:var(--accent)}
+  .hbtn{display:flex;gap:9px;align-items:center}
+  /* Creating a tracker is a list action, so it rides the header next to the
+     list — not two clicks deep under the cog. Filled, because it is the one
+     thing a new install has to do. */
+  .addbtn{background:var(--sig);color:#04120d;border:0;border-radius:8px;
+    font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:.11em;
+    text-transform:uppercase;cursor:pointer;white-space:nowrap;transition:filter .15s;
+    /* height, not padding: the cog is a fixed 38px square, and matching two
+       controls by eye through padding drifts the moment the font metrics do. */
+    height:38px;padding:0 16px;display:inline-flex;align-items:center}
+  .addbtn:hover{filter:brightness(1.12)}
+  .gear{width:38px;height:38px;padding:0;border-radius:8px;background:var(--head);
+    border:1px solid var(--line2);color:var(--dim2);cursor:pointer;font-size:17px;
+    line-height:1;display:grid;place-items:center;
+    transition:color .15s,border-color .15s,transform .3s}
+  .gear:hover{color:var(--sig);border-color:var(--sigdim);transform:rotate(40deg)}
 
   .sheet{position:fixed;inset:0;background:rgba(0,0,0,.66);display:none;z-index:40;
     align-items:center;justify-content:center}
@@ -2569,36 +2644,40 @@ PAGE = """<!doctype html>
   .sheet nav{width:180px;border-right:1px solid var(--line);background:var(--bg);
     padding:14px 0;flex:none}
   .sheet nav button{display:block;width:100%;text-align:left;background:none;
-    border:0;border-left:2px solid transparent;color:var(--dim);font-family:inherit;
-    font-size:11px;letter-spacing:.14em;text-transform:uppercase;padding:11px 16px;
-    cursor:pointer}
+    border:0;border-left:2px solid transparent;color:var(--dim);font-family:var(--body);
+    font-weight:600;font-size:12px;letter-spacing:.13em;text-transform:uppercase;
+    padding:12px 20px;cursor:pointer}
   .sheet nav button:hover{color:var(--fg)}
-  .sheet nav button.on{color:var(--fg);border-left-color:var(--accent);
+  .sheet nav button.on{color:var(--fg);border-left-color:var(--sig);
     background:var(--head)}
   .sheet .pane{flex:1;overflow:auto;padding:20px 22px}
   .sheet .pane section{display:none}
   .sheet .pane section.on{display:block}
-  .sheet h4{margin:0 0 5px;font-size:13px;letter-spacing:.13em;text-transform:uppercase}
-  .sheet .sub{color:var(--dim);font-size:12px;margin:0 0 16px;line-height:1.55}
+  /* Section titles are names, not labels: uppercase micro-tracking made
+     "General" read as a form field rather than the heading above one. */
+  .sheet h4{margin:0 0 6px;font-family:var(--disp);font-weight:700;font-size:19px;
+    letter-spacing:-.01em;text-transform:none}
+  .sheet .sub{color:var(--dim2);font-size:13px;margin:0 0 20px;line-height:1.55}
   /* Command chips in help text: kept whole (never break mid-token) and set off
      from prose, so when one wraps to its own line it reads as a called-out
      command rather than a stray fragment. */
-  .sheet code,.sheet .sub code,.sheet .lbl code,.banner code{font-family:'Azeret Mono',monospace;
+  .sheet code,.sheet .sub code,.sheet .lbl code,.banner code{font-family:var(--mono);
     font-size:.92em;background:var(--bg);border:1px solid var(--line2);
     border-radius:3px;padding:1px 5px;white-space:nowrap;color:var(--fg)}
   .sheet .row{display:flex;align-items:center;gap:14px;padding:12px 0;
     border-bottom:1px solid var(--line)}
   .sheet .row:last-child{border-bottom:0}
   .sheet .row .lbl{flex:1;min-width:0}
-  .sheet .row .lbl b{display:block;font-weight:400;font-size:13.5px;color:var(--fg)}
-  .sheet .row .lbl span{color:var(--dim);font-size:11.5px;line-height:1.5;
-    display:block;margin-top:3px}
-  .sheet .row .val{font-family:'Azeret Mono',monospace;font-size:12.5px;color:var(--dim)}
+  .sheet .row .lbl b{display:block;font-weight:600;font-size:14.5px;color:var(--fg)}
+  .sheet .row .lbl span{color:var(--dim);font-size:12.5px;line-height:1.5;
+    display:block;margin-top:2px}
+  .sheet .row .val{font-family:var(--mono);font-weight:500;font-size:12.5px;color:var(--dim2)}
   .sheet .row .val.on{color:var(--ok)}
   .sheet .row .val.off{color:var(--critical)}
   .sheet input,.sheet select{background:var(--bg);border:1px solid var(--line2);
-    color:var(--fg);padding:7px 8px;font-family:inherit;font-size:13px}
-  .sheet input:focus,.sheet select:focus{outline:none;border-color:var(--accent)}
+    border-radius:8px;color:var(--fg);padding:8px 11px;font-family:var(--mono);
+    font-weight:500;font-size:12.5px}
+  .sheet input:focus,.sheet select:focus{outline:none;border-color:var(--sig)}
   /* ONE fixed control column. Every control shares a left and right edge;
      letting each size itself staggered them down the panel. */
   .sheet .row .ctl2{width:200px;flex:none;display:flex;justify-content:flex-end;
@@ -2647,41 +2726,38 @@ PAGE = """<!doctype html>
     .sheet .row{flex-wrap:wrap}
     .sheet .row .ctl2{width:100%;justify-content:flex-start}
     .banner .sp{margin-left:0;width:100%}
-    .hbtn .lk{font-size:10px;padding:4px 7px}
+    .addbtn{height:34px;padding:0 12px;font-size:9px}
+    .gear{width:34px;height:34px;font-size:15px}
   }
 </style></head><body><div class="wrap">
 
-<div class="bar"><h1>Idlarr</h1><span class="tag">never lose an account to inactivity</span><span class="stamp">__STAMP__</span>
+<div class="bar"><div class="brand"><h1>idl<b>a</b>rr</h1><span class="tag">tracker monitor</span></div>
+  <div class="pulse" id="pulse"></div>
+  <span class="stamp">__STAMP__</span>
   <div class="msort"><select id="msf" aria-label="sort by">
     <option value="st">state</option><option value="nm">tracker</option>
-    <option value="left">left</option><option value="seen">last auth</option>
-    <option value="lim">limit</option><option value="sw">software</option>
+    <option value="left">left</option><option value="el">elapsed</option>
   </select><button id="msd" aria-label="reverse sort">&#8645;</button></div>
-  <div class="tick">__TICK__</div>
-  <div class="hbtn"><button class="lk" id="addtrk">+ Add tracker</button><button class="gear" id="gear" title="settings" aria-label="settings">&#9881;</button></div></div>
+  <div class="hbtn"><button class="addbtn" id="addtrk">+ Add tracker</button><button class="gear" id="gear" title="settings" aria-label="settings">&#9881;</button></div></div>
 __BANNER__
 <div class="legend">__LEGEND__</div>
 
 <table>
-<colgroup><col class="c-rail"><col class="c-nm"><col class="c-sw"><col class="c-st">
-<col class="c-seen"><col class="c-left"><col class="c-lim"><col class="c-el"></colgroup>
 <thead><tr><th class="nos"></th>
 <th data-k="nm" data-t="s">tracker</th>
-<th data-k="sw" data-t="s">software</th>
 <th data-k="st" data-t="n">state</th>
-<th data-k="seen" data-t="n" class="r">last auth</th>
-<th data-k="left" data-t="n" class="r">left</th>
-<th data-k="lim" data-t="n" class="r">limit</th>
-<th class="nos">elapsed</th></tr></thead>
+<th data-k="left" data-t="n">left</th>
+<th data-k="el" data-t="n" class="mid">elapsed</th></tr></thead>
 <tbody>__ROWS__</tbody></table>
 
 <div class="foot">
-Click a row for controls, the alert schedule and auth history &middot; click a name to open the
-tracker &middot; click a heading to sort<br>
-<b>&#9998;</b> = marked by hand, not observed &middot; the countdown runs on <b>auth</b> events only
-&middot; no request is ever made to a tracker.
+  <div class="fr"><em>Click a row</em>for controls, the alert schedule and auth history</div>
+  <div class="fr"><em>Click a name</em>to open that tracker in a new tab</div>
+  <div class="fr"><em>Click a heading</em>to sort by it</div>
+  <div class="fr"><em>&#9998;</em>last auth was marked by hand, not observed by the userscript</div>
+  <div class="fr"><em>Countdowns</em>run on <b>auth</b> events only &mdash; a visit while logged
+    out does not reset one. No request is ever made to a tracker.</div>
 </div>
-<div class="statusline">__STATUS__</div>
 </div>
 
 __SHEET__
@@ -2715,6 +2791,9 @@ __SHEET__
    expired:'days over',session:'re-auth',immune:'exempt',unknown:'no data',
    snoozed:'days left'};
  const RANK={expired:0,session:1,critical:2,warn:3,due:4,unknown:5,ok:6,snoozed:7,immune:8};
+ // Display names, where they differ from the state key. Mirrors STATE_LABEL
+ // in app.py; a test asserts the two agree.
+ const SLBL={session:'logged out'};
 
  const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify(b||{})}).then(async r=>{const d=await r.json().catch(()=>({}));
@@ -2754,7 +2833,8 @@ __SHEET__
    tr.dataset.lim=d.inactivity_days; tr.dataset.seen=d.days_since===null?'':d.days_since;
    tr.dataset.immune=d.immune?'1':''; tr.dataset.verified=d.verified?'1':'';
    tr.dataset.reason=d.immune_reason||'';
-   tr.querySelector('td.st').textContent=d.immune&&d.immune_reason?d.immune_reason:d.state;
+   tr.querySelector('td.st').textContent=d.immune&&d.immune_reason?d.immune_reason
+     :(SLBL[d.state]||d.state);
    tr.querySelector('td.seen').textContent=ago(d.days_since);
    tr.querySelector('td.n').textContent=
      (d.immune||d.days_left===null)?'\\u2014':Math.abs(d.days_left);
@@ -2777,7 +2857,7 @@ __SHEET__
      for(let v=40;v<100;v+=5)o+='<option value="'+(v/100).toFixed(2)+'"'
        +(Math.abs(sel-v/100)<0.001?' selected':'')+'>'+v+'%</option>';
      return o;};
-   el.innerHTML='<td colspan="8"><div class="d" style="--c:var(--'+d.state+')">'
+   el.innerHTML='<td colspan="5"><div class="d" style="--c:var(--'+d.state+')">'
     +'<div><div class="dh">controls</div><div class="a2">'
     +'<div class="r"><label>Limit</label><div class="c">'
     +'<input class="lim w-num" type="text" inputmode="numeric" value="'
@@ -2967,10 +3047,39 @@ __SHEET__
    msd.addEventListener('click',()=>{const t=th4(msf.value);if(t)t.click();});
  }
 
- document.querySelectorAll('.tick i').forEach(t=>t.addEventListener('click',()=>{
-   const r=document.getElementById('t-'+t.dataset.id);
-   if(r){r.scrollIntoView({behavior:'smooth',block:'center'});
-     r.classList.remove('flash');void r.offsetWidth;r.classList.add('flash');}}));
+ // ---- header trace ----------------------------------------------------
+ // Purely decorative. Beats vary in RR interval, R amplitude and T height;
+ // one in seven is an ectopic wide complex with a compensatory pause and one
+ // in nine is dropped, because a single repeating wavelength reads as a
+ // spinner rather than a monitor. Deterministic, so the two tiles match and
+ // the scroll seam is invisible.
+ (function(){
+   const host=document.getElementById('pulse'); if(!host)return;
+   const MID=17,W=1100;
+   let s=1337; const rnd=()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff};
+   let d='M0 '+MID,x=0,i=0;
+   const to=(nx,ny)=>{d+=' L'+nx.toFixed(1)+' '+ny.toFixed(1)};
+   while(x<W-60){
+     if(i%9===3){x+=120+rnd()*60;to(x,MID);i++;continue;}          // dropped beat
+     if(i%7===5){                                                  // ectopic complex
+       x+=14;to(x,MID); x+=7;to(x,MID+7); x+=11;to(x,MID-16);
+       x+=10;to(x,MID+11); x+=9;to(x,MID-2); x+=6;to(x,MID);
+       x+=150+rnd()*30;to(x,MID); i++; continue;}
+     const amp=12+rnd()*6,tw=4+rnd()*2.5;
+     x+=10;to(x,MID);
+     d+=' q 7 -'+(3.2+rnd()*1.4).toFixed(1)+' 15 0'; x+=15;         // P
+     x+=7;to(x,MID); x+=3;to(x,MID+3);                              // Q
+     x+=4;to(x,MID-amp);                                            // R
+     x+=4;to(x,MID+6.5); x+=5;to(x,MID); x+=9;to(x,MID);            // S
+     d+=' q 10 -'+tw.toFixed(1)+' 21 0'; x+=21;                     // T
+     x+=32+rnd()*46;to(x,MID); i++;                                 // diastole
+   }
+   to(W,MID);
+   const p='<path d="'+d+'" fill="none" stroke="var(--sig)" stroke-width="1.4" '+
+           'stroke-linejoin="round" opacity=".85"/>';
+   host.innerHTML='<svg viewBox="0 0 '+(W*2)+' 34" preserveAspectRatio="none" aria-hidden="true">'+
+     '<g>'+p+'<g transform="translate('+W+',0)">'+p+'</g></g></svg>';
+ })();
 
  // ---- sign-in ---------------------------------------------------------
  // The banner is dismissable but NOT sticky-dismissed across a password
@@ -3188,6 +3297,14 @@ LABELS = {"ok": "days left", "due": "days left", "warn": "days left",
 RANK = {"expired": 0, "session": 1, "critical": 2, "warn": 3, "due": 4,
         "unknown": 5, "ok": 6, "snoozed": 7, "immune": 8}
 
+# What a state is CALLED on screen, where that differs from what it is called
+# in the code. `session` is the one that needed it: the state means the
+# userscript saw a visit but no authenticated session — your login cookie
+# died — and "session" named the mechanism rather than the problem. The key
+# stays `session` everywhere else, so RANK, --session, /api/status and every
+# test keep working. Mirrored by SLBL in the page's JS; agreement is tested.
+STATE_LABEL = {"session": "logged out"}
+
 
 def _pct(r: dict) -> float:
     if r["days_left"] is None or r["days_since"] is None:
@@ -3229,7 +3346,8 @@ def _act_row(label: str, job: str) -> str:
                 f'<em class="act-d">{detail}</em>')
 
 
-def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
+def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
+                   script_ver: str = "", last_check: str = "") -> str:
     """The settings panel. Rendered here rather than in PAGE because most of it
     is live state, and because the sections that carry forms need the current
     values to be correct on first paint."""
@@ -3398,6 +3516,15 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str) -> str:
     about = (
         _row("Version", "", f'<span class="val">{IDLARR_VERSION}</span>')
         + _row("Trackers", "", f'<span class="val">{n_trk}</span>')
+        # Both moved off the status line under the table, which was four
+        # unrelated facts in a row nobody read. They are reference values, and
+        # reference values belong in About.
+        + _row("Userscript", "Version served to Violentmonkey. Bumps when you "
+               "add or remove a tracker.",
+               f'<span class="val">{esc(script_ver)}</span>')
+        + _row("Last check", "The daily pass that evaluates every countdown "
+               "and sends the batched alert.",
+               f'<span class="val">{esc(last_check)}</span>')
         + _row("Database", "Backed up nightly.", f'<span class="val">{db_kb}</span>')
         + _row("Uptime check",
                "/healthz needs no credentials, so a monitor can reach it.",
@@ -3444,46 +3571,60 @@ async def index(request: Request):
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1
 
-    tick = "".join(
-        f'<i style="--c:var(--{r["state"]});'
-        f'--h:{20 if r["state"] in ("immune", "unknown") else max(16, _pct(r)):.0f}%" '
-        f'data-id="{esc(r["id"])}" title="{esc(r["name"])} — {esc(r["reason"])}"></i>'
-        for r in rows)
-
-    legend = "".join(
-        f'<div style="--c:var(--{s})"><b>{counts.get(s, 0)}</b><span>{s}</span></div>'
-        for s in ("expired", "session", "critical", "warn", "due", "unknown", "ok",
-                  "snoozed", "immune"))
+    # The total leads the strip: it is the one number that is not a state, so
+    # it gets the neutral colour and its own divider.
+    legend = (f'<div class="tot"><b>{len(rows)}</b><span>trackers</span></div>'
+              + "".join(
+                  f'<div style="--c:var(--{s})"><b>{counts.get(s, 0)}</b>'
+                  f'<span>{STATE_LABEL.get(s, s)}</span></div>'
+                  for s in ("expired", "session", "critical", "warn", "due",
+                            "unknown", "ok", "snoozed", "immune")))
 
     body = []
     for r, p in zip(rows, payloads):
         s = r["state"]
         big = "—" if (r["immune"] or r["days_left"] is None) else str(abs(r["days_left"]))
+        # The unit is not decoration: "4" under a red dot is ambiguous until it
+        # says whether those are days remaining or days already overdue.
+        if r["immune"]:
+            unit = "exempt"
+        elif r["days_left"] is None:
+            unit = "no data"
+        elif r["days_left"] < 0:
+            unit = "days over"
+        else:
+            unit = "days left"
         name = (f'<a href="{esc(r["url"])}" target="_blank" rel="noreferrer">{esc(r["name"])}</a>'
-                if r["url"] else esc(r["name"]))
+                if r["url"] else f'<span class="t">{esc(r["name"])}</span>')
         hand = ' <i title="last auth was marked by hand">&#9998;</i>' if r.get("auth_source") == "manual" else ""
         q = ("" if (r["verified"] or r["immune"]) else
              '<span class="q" title="limit is a placeholder, not researched">unconfirmed</span>')
-        state_txt = r["immune_reason"] if (r["immune"] and r["immune_reason"]) else s
+        state_txt = (r["immune_reason"] if (r["immune"] and r["immune_reason"])
+                     else STATE_LABEL.get(s, s))
         body.append(
             f'<tr class="row" id="t-{esc(r["id"])}" data-nm="{esc(r["name"])}" '
             f'data-sw="{esc(r["software"])}" data-st="{RANK[s]}" data-state="{s}" '
             f'data-seen="{"" if r["days_since"] is None else r["days_since"]}" '
             f'data-left="{"" if r["days_left"] is None else r["days_left"]}" '
             f'data-lim="{r["inactivity_days"]}" '
+            f'data-el="{_pct(r):.2f}" '
             f"data-row='{json.dumps(p).replace(chr(39), '&#39;')}' "
             f'style="--c:var(--{s})">'
             f'<td class="s"></td>'
-            f'<td class="nm"><span class="caret"></span>{name}{hand}{q}</td>'
-            f'<td class="sw">{esc(r["software"])}</td>'
+            f'<td class="nm">{name}{hand}'
+            f'<span class="m2"><span class="sw">{esc(r["software"])}</span>{q}</span></td>'
             f'<td class="st">{esc(state_txt)}</td>'
-            f'<td class="seen">{_ago(r["days_since"])}</td>'
-            f'<td class="n">{big}</td>'
-            f'<td class="lim">{r["inactivity_days"]}d</td>'
-            f'<td class="el"><div class="meter{"" if not (r["immune"] or r["state"] == "snoozed") else " none"}">'
+            f'<td class="n">{big}<small>{unit}</small></td>'
+            f'<td class="el">'
+            f'<div class="elm">{_ago(r["days_since"])} &middot; {r["inactivity_days"]}d</div>'
+            f'<div class="meter{"" if not (r["immune"] or r["state"] == "snoozed") else " none"}">'
             f'<i style="--p:{0 if r["immune"] else max(3, _pct(r)):.0f}%"></i></div></td></tr>')
 
-    stamp = datetime.now(local_tz()).strftime("%d %b %Y · %H:%M %Z").upper()
+    # Two lines: the date is context, the time is the thing you glance at, so
+    # the time gets its own line and the brighter weight.
+    _now = datetime.now(local_tz())
+    stamp = (_now.strftime("%d %b %Y").upper() + "<br><b>"
+             + _now.strftime("%H:%M %Z").upper() + "</b>")
 
     method = auth_method()
     if method == "none":
@@ -3520,25 +3661,16 @@ async def index(request: Request):
     _su = status_url()
     js_url = (f"{_su.rstrip('/')}/idlarr.user.js?token={get_token()}" if _su else "")
 
-    signin_bit = ('sign-in <b class="bad">off</b>' if method == "none"
-                  else f'sign-in <b class="ok">{esc(method)}</b>')
-    script_bit = (f'userscript <b>{esc(userscript_version_peek())}</b>' if js_url
-                  else 'userscript <b class="bad">no status URL</b>')
-    last = get_state("last_check", "") or "not yet"
-    status = (f'<span><b>{n_trk}</b> trackers</span>'
-              f'<span>{signin_bit}</span>'
-              f'<span>{script_bit}</span>'
-              f'<span>checked <b>{esc(last)}</b></span>')
+    script_ver = userscript_version_peek() if js_url else "not served — no status URL"
+    last_check = get_state("last_check", "") or "not yet"
 
-    sheet = settings_sheet(method, n_trk, n_hosts, js_url)
+    sheet = settings_sheet(method, n_trk, n_hosts, js_url, script_ver, last_check)
 
     return (PAGE
             .replace("__ROWS__", "".join(body) or
-                     '<tr><td colspan="8"><div class="empty">no trackers configured</div></td></tr>')
-            .replace("__TICK__", tick)
+                     '<tr><td colspan="5"><div class="empty">no trackers configured</div></td></tr>')
             .replace("__LEGEND__", legend)
             .replace("__BANNER__", banner)
-            .replace("__STATUS__", status)
             .replace("__SHEET__", sheet)
             .replace("__AUTHMETHOD__", method)
             .replace("__STAMP__", stamp))

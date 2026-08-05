@@ -190,10 +190,10 @@ lives behind the gear, in six sections:
 | **Notifications** | destination count, and a **Send test** button |
 | **About** | version, database size, `/healthz` |
 
-The footer is a read-only status line — tracker count, sign-in state, userscript
-version, last check. Nothing there is clickable, which is deliberate: an earlier
-version mixed status and actions in fixed-width cells and the content overflowed
-the moment a label got long.
+The tracker total leads the count strip at the top, beside the per-state counts.
+The userscript version and the date of the last daily check live in **About**;
+sign-in state is announced by the red banner and the **Sign-in** panel rather
+than repeated in a footer.
 
 On a phone the table stops being a table — each row becomes a labelled grid —
 and the settings nav becomes a scrolling tab strip.
@@ -229,7 +229,7 @@ Relative to each tracker's inactivity limit:
 | ≤ 14 days | warn | `high` | *warning* |
 | ≤ 5 days | critical | `urgent` | *failure* |
 | past the limit | expired | `urgent` | *failure* |
-| visited while logged out | session | `high` | *warning* |
+| visited while logged out | session, shown as **logged out** | `high` | *warning* |
 
 The right-hand column is the Apprise severity, which each service renders in its
 own way — a colour in Discord, a priority level in Pushover, a tag in ntfy.
@@ -421,9 +421,8 @@ Seed **before** starting the container. Docker creates a missing bind-mount
 source as an empty root-owned directory, so starting first gets you
 `No tracker config at /config/trackers.yml` and a database it cannot write.
 
-It boots screenshot-ready — a sign-in already configured so there is no red
-banner, and a userscript version in the status line. Log in with
-**`demo` / `demo-password`**.
+It boots screenshot-ready — a sign-in already configured, so there is no red
+banner. Log in with **`demo` / `demo-password`**.
 
 Set `STATUS_URL` to the address you will actually browse. `localhost` is right
 only if you are on the machine running it; from anywhere else the Install link
