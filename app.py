@@ -2452,11 +2452,18 @@ PAGE = """<!doctype html>
     text-transform:uppercase;white-space:nowrap}
 
   tr.drawer{display:block;margin-bottom:7px}
+  /* white-space MUST be reset here. `td{white-space:nowrap}` above exists so a
+     long tracker name ellipsizes in its cell — but the drawer is a <td> too,
+     so it inherited nowrap and its prose (the empty-schedule and empty-history
+     messages are full sentences) ran out of its pane and across the next one.
+     Invisible below 760px, where the mobile block already sets normal. */
   tr.drawer td{display:block;padding:0;background:var(--drawer);
+    white-space:normal;text-overflow:clip;
     border:1px solid var(--line2);border-top:1px solid var(--line);
     border-radius:0 0 12px 12px}
   .d{display:grid;grid-template-columns:minmax(0,340px) 1fr 1fr;gap:0}
-  .d>div{padding:20px 22px;border-right:1px solid var(--line);min-width:0}
+  .d>div{padding:20px 22px;border-right:1px solid var(--line);min-width:0;
+    overflow-wrap:anywhere}
   .d>div:last-child{border-right:0}
   @media(max-width:940px){.d{grid-template-columns:1fr}
     .d>div{border-right:0;border-bottom:1px solid var(--line)}
@@ -2502,15 +2509,19 @@ PAGE = """<!doctype html>
     .a2 .c em{display:none}
   }
   .sched,.hist{font-family:var(--mono);font-size:11px}
-  .sched div,.hist div{display:flex;align-items:baseline;gap:10px;padding:5px 0;
+  .sched div,.hist div{display:flex;align-items:baseline;gap:14px;padding:6px 0;
     border-bottom:1px solid var(--line)}
   .sched div:last-child,.hist div:last-child{border-bottom:0}
-  .sched b{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;
-    font-weight:700;color:var(--k);width:58px;flex:none}
+  /* 72px, not 58: CRITICAL measured ~55px in Martian Mono at .14em and sat
+     hard against the date. Labels are the body face here like everywhere
+     else — this rule and .hist em were missed in that sweep. */
+  .sched b{font-family:var(--body);font-size:10.5px;letter-spacing:.12em;
+    text-transform:uppercase;font-weight:600;color:var(--k);width:72px;flex:none}
   .sched span,.hist span{color:var(--dim2)}
   .sched em,.hist em{font-style:normal;margin-left:auto;color:var(--dim)}
   .sched .past{opacity:.4}
-  .hist em{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+  .hist em{font-family:var(--body);font-size:10.5px;letter-spacing:.12em;
+    text-transform:uppercase;font-weight:600}
   .hist em.hand{color:var(--accent)}
 
   /* Was one dim 10px paragraph with middots doing the work of punctuation, so
@@ -2532,9 +2543,9 @@ PAGE = """<!doctype html>
   /* Mobile sort control — the <thead> is hidden below, so this drives the same
      handlers by clicking the (still present) header cells programmatically. */
   .msort{display:none;gap:6px;align-items:center}
-  .msort select,.msort button{font-family:var(--mono);font-size:9px;font-weight:700;
-    letter-spacing:.13em;text-transform:uppercase;background:#0b0e10;color:var(--dim2);
-    border:1px solid var(--line2);padding:7px 9px}
+  .msort select,.msort button{font-family:var(--mono);font-size:9.5px;font-weight:500;
+    letter-spacing:.09em;text-transform:uppercase;background:var(--bg);color:var(--dim2);
+    border:1px solid var(--line2);border-radius:7px;padding:8px 10px}
   .msort select{-webkit-appearance:none;appearance:none;padding-right:22px;
     background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),
       linear-gradient(135deg,var(--dim) 50%,transparent 50%);

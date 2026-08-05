@@ -235,6 +235,21 @@ def test_table_column_count_agrees_everywhere(page):
     assert spans == {n}, f"{n} columns but colspan is {spans}"
 
 
+def test_the_drawer_does_not_inherit_the_row_nowrap(page):
+    """`td{white-space:nowrap}` exists so a long tracker name ellipsizes in its
+    own cell. The drawer is a <td> too, so it inherited nowrap — and its prose
+    (the empty-schedule and empty-history messages are whole sentences) ran out
+    of its pane and printed across the one beside it.
+
+    Only reproducible above 760px: the mobile block already sets
+    td{white-space:normal}, so a phone-width check would have passed."""
+    css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+    rule = re.search(r"\n  tr\.drawer td\{(.*?)\}", _base_stylesheet(css), re.S)
+    assert rule, "no base tr.drawer td rule"
+    assert "white-space:normal" in " ".join(rule.group(1).split()), \
+        "drawer inherits td{white-space:nowrap}; its prose will overrun the next pane"
+
+
 def test_every_sort_option_resolves_to_a_header(page):
     """The mobile <select> sorts by clicking the matching (hidden) <th>. An
     option whose column no longer exists silently does nothing — the list just
