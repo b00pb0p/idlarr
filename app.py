@@ -2362,16 +2362,17 @@ PAGE = """<!doctype html>
   .tag{font-family:var(--mono);font-weight:500;color:var(--dim);font-size:9.5px;
     letter-spacing:.26em;text-transform:uppercase}
   @media(max-width:760px){.tag{display:none}}
-  /* Decorative. Generated in JS so the rhythm varies; a single repeating
-     wavelength reads as a loading spinner rather than a monitor. */
+  /* Decorative. Generated in JS: jittered, but with no distinctive feature
+     anywhere, because a landmark is what lets the eye spot the loop. */
   .pulse{flex:1;min-width:90px;height:38px;position:relative;overflow:hidden;
     -webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);
     mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
-  .pulse svg{position:absolute;left:0;top:0;height:38px;width:200%;animation:slide 11s linear infinite}
-  .pulse g{animation:wander 6.5s ease-in-out infinite alternate}
+  /* 600%, not 200%: one tile is three screen-widths of trace, so the loop
+     runs 18 beats before it repeats while only ~6 are on screen at once.
+     translateX(-50%) is still exactly one tile. */
+  .pulse svg{position:absolute;left:0;top:0;height:38px;width:600%;animation:slide 18s linear infinite}
   @keyframes slide{to{transform:translateX(-50%)}}
-  @keyframes wander{from{transform:translateY(-1.6px)}to{transform:translateY(1.6px)}}
-  @media(prefers-reduced-motion:reduce){.pulse svg,.pulse g{animation:none}}
+  @media(prefers-reduced-motion:reduce){.pulse svg{animation:none}}
   @media(max-width:760px){.pulse{display:none}}
 
   .legend{display:grid;grid-template-columns:repeat(10,1fr);gap:1px;margin:22px 0 0;
@@ -3059,37 +3060,57 @@ __SHEET__
  }
 
  // ---- header trace ----------------------------------------------------
- // Purely decorative. Beats vary in RR interval, R amplitude and T height;
- // one in seven is an ectopic wide complex with a compensatory pause and one
- // in nine is dropped, because a single repeating wavelength reads as a
- // spinner rather than a monitor. Deterministic, so the two tiles match and
- // the scroll seam is invisible.
+ // Purely decorative. Two tiles side by side, scrolled by exactly one tile, so
+ // the loop point is the join between them.
+ //
+ // The tiles MUST stay sibling <path>s carrying their own transform
+ // attribute. They were briefly a nested <g transform=...> while a drift
+ // animation ran on `.pulse g` -- a CSS animation's transform overrides a
+ // transform presentation attribute, so the copy's translate() was destroyed,
+ // it stacked on the original, and the right half of the strip was blank. Do
+ // not animate a transform on anything wrapping these paths.
+ //
+ // RR intervals are jittered and then normalised to sum to exactly W, so the
+ // first beat of the next tile lands one ordinary interval after the last beat
+ // of this one; the seam is just another beat gap. Amplitude, P and T vary per
+ // beat -- a metronome reads as a graphic, not a monitor.
  (function(){
    const host=document.getElementById('pulse'); if(!host)return;
-   const MID=17,W=1100;
+   const MID=19,H=38,W=2160,N=18;      // 18 beats/tile, ~6 on screen at a time
    let s=1337; const rnd=()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff};
-   let d='M0 '+MID,x=0,i=0;
+   // Baseline drift, BAKED INTO THE PATH rather than animated on the group.
+   // As a CSS translateY on <g> it moved the whole trace rigidly, which reads
+   // as a bounce. Here it undulates along the trace and scrolls with it. Three
+   // whole cycles per tile, so both ends sit on MID at matching slope and the
+   // seam stays invisible.
+   const b=(px)=>MID+2.2*Math.sin(2*Math.PI*3*px/W);
+   const rr=[]; for(let i=0;i<N;i++)rr.push(1+(rnd()-0.5)*0.44);
+   const k=W/rr.reduce((a,b2)=>a+b2,0);
+   let d='M0 '+MID,x=0;
    const to=(nx,ny)=>{d+=' L'+nx.toFixed(1)+' '+ny.toFixed(1)};
-   while(x<W-60){
-     if(i%9===3){x+=120+rnd()*60;to(x,MID);i++;continue;}          // dropped beat
-     if(i%7===5){                                                  // ectopic complex
-       x+=14;to(x,MID); x+=7;to(x,MID+7); x+=11;to(x,MID-16);
-       x+=10;to(x,MID+11); x+=9;to(x,MID-2); x+=6;to(x,MID);
-       x+=150+rnd()*30;to(x,MID); i++; continue;}
-     const amp=12+rnd()*6,tw=4+rnd()*2.5;
-     x+=10;to(x,MID);
-     d+=' q 7 -'+(3.2+rnd()*1.4).toFixed(1)+' 15 0'; x+=15;         // P
-     x+=7;to(x,MID); x+=3;to(x,MID+3);                              // Q
-     x+=4;to(x,MID-amp);                                            // R
-     x+=4;to(x,MID+6.5); x+=5;to(x,MID); x+=9;to(x,MID);            // S
+   for(let i=0;i<N;i++){
+     const start=x, span=rr[i]*k;
+     // A slow envelope over the tile, plus jitter: beats come in taller and
+     // shorter runs the way breathing modulates a real trace, instead of every
+     // peak landing at one of two heights.
+     // Floor 5, not 8.5: the troughs were barely shorter than the peaks. The
+     // ceiling is capped too — at the old spread the tallest R overshot the
+     // top of the viewBox by 1.6px and had its tip clipped flat.
+     const amp=5+8*(0.5+0.5*Math.sin(2*Math.PI*2*i/N))+rnd()*2.2;
+     const tw=3.8+rnd()*4, pw=2.8+rnd()*2.4;
+     x+=10;to(x,b(x));
+     d+=' q 7 -'+pw.toFixed(1)+' 15 0'; x+=15;                      // P
+     x+=6;to(x,b(x)); x+=3;to(x,b(x)+2.5+rnd());                    // Q
+     x+=4;to(x,b(x)-amp);                                           // R
+     x+=4;to(x,b(x)+amp*0.45); x+=5;to(x,b(x)); x+=8;to(x,b(x));    // S
      d+=' q 10 -'+tw.toFixed(1)+' 21 0'; x+=21;                     // T
-     x+=32+rnd()*46;to(x,MID); i++;                                 // diastole
+     x=start+span; to(x,b(x));                                      // diastole
    }
    to(W,MID);
-   const p='<path d="'+d+'" fill="none" stroke="var(--sig)" stroke-width="1.4" '+
-           'stroke-linejoin="round" opacity=".85"/>';
-   host.innerHTML='<svg viewBox="0 0 '+(W*2)+' 34" preserveAspectRatio="none" aria-hidden="true">'+
-     '<g>'+p+'<g transform="translate('+W+',0)">'+p+'</g></g></svg>';
+   const p=t=>'<path d="'+d+'"'+t+' fill="none" stroke="var(--sig)" '+
+             'stroke-width="1.4" stroke-linejoin="round" opacity=".85"/>';
+   host.innerHTML='<svg viewBox="0 0 '+(W*2)+' '+H+'" preserveAspectRatio="none" aria-hidden="true">'+
+     '<g>'+p('')+p(' transform="translate('+W+',0)"')+'</g></svg>';
  })();
 
  // ---- sign-in ---------------------------------------------------------
