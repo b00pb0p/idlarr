@@ -2137,7 +2137,7 @@ async def userscript(request: Request, token: str = ""):
 
 LOGIN_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Idlarr — sign in</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Idlarr - Sign in</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&family=Martian+Mono:wght@400;500&family=Familjen+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2329,7 +2329,7 @@ async def test_notify(request: Request,
 PAGE = """<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Idlarr</title>
+<title>Idlarr - Account Activity Monitor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Martian+Mono:wght@400;500;600;700&family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2366,12 +2366,12 @@ PAGE = """<!doctype html>
      22px. Header / counts / table / footer. */
   .bar{display:flex;align-items:center;gap:20px;padding-bottom:22px;
     border-bottom:1px solid var(--line);flex-wrap:wrap}
-  .brand{display:flex;align-items:baseline;gap:12px}
-  h1{font-family:var(--disp);font-size:23px;font-weight:800;letter-spacing:-.03em;margin:0}
+  /* line-height:1 keeps a 36px wordmark inside the 38px button row, so the
+     header does not grow. Without it the line box is ~43px and everything
+     shifts down. */
+  h1{font-family:var(--disp);font-size:36px;font-weight:800;letter-spacing:-.03em;
+    margin:0;line-height:1}
   h1 b{color:var(--sig);font-weight:800}
-  .tag{font-family:var(--mono);font-weight:500;color:var(--dim);font-size:9.5px;
-    letter-spacing:.26em;text-transform:uppercase}
-  @media(max-width:760px){.tag{display:none}}
   /* Decorative. Generated in JS: jittered, but with no distinctive feature
      anywhere, because a landmark is what lets the eye spot the loop. */
   /* Owns the whole middle of the header now that the clock is gone. The fade
@@ -2578,7 +2578,7 @@ PAGE = """<!doctype html>
   @media(max-width:760px){
     .wrap{padding:16px 12px 50px}
     .bar{gap:10px}
-    h1{font-size:14px}
+    h1{font-size:26px}
     .msort{display:flex;margin-left:auto}
     .legend{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:0}
     .legend div{border-bottom:1px solid var(--line);min-width:0;padding:7px 9px}
@@ -2773,7 +2773,7 @@ PAGE = """<!doctype html>
   }
 </style></head><body><div class="wrap">
 
-<div class="bar"><div class="brand"><h1>idl<b>a</b>rr</h1><span class="tag">tracker monitor</span></div>
+<div class="bar"><h1>idl<b>a</b>rr</h1>
   <div class="pulse" id="pulse"></div>
   <div class="msort"><select id="msf" aria-label="sort by">
     <option value="st">state</option><option value="nm">tracker</option>
