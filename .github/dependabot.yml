@@ -1,0 +1,52 @@
+# Dependency updates.
+#
+# The reason this file exists is `requirements.txt`: every line there is an
+# EXACT pin, so nothing ever moves on its own. Rebuilding the image does not
+# pick up a security fix, and neither does anything else. Without this the four
+# runtime dependencies quietly rot.
+#
+# This covers routine version bumps only. Security notifications are a separate
+# feature that needs no file: Settings -> Code security -> Dependabot alerts.
+# Turn that on too; it is the half that matters when something is actually
+# wrong.
+#
+# Every pull request here runs tests.yml (it triggers on `pull_request`), which
+# installs the proposed versions and runs the full suite. Merging one pushes to
+# main, which publishes a fresh `:edge` image. `latest` does not move: that
+# follows a v* tag.
+version: 2
+updates:
+  # ---------------------------------------------------------------- python
+  # Grouped and monthly on purpose. These four move together often enough that
+  # separate PRs would mostly be four reviews of the same decision, and a
+  # weekly cadence on a project that changes this slowly is noise rather than
+  # diligence.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps"
+
+  # ---------------------------------------------------------- github actions
+  # Lower value than it looks: every `uses:` here is pinned to a major, so
+  # patch and minor releases are picked up already. This only fires on a major
+  # bump, which is exactly the one worth reading before it lands.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+# Deliberately NOT watching Docker. The base image is `python:3.12-slim`, a
+# floating tag that already refreshes on every build, so the only pull request
+# Dependabot could raise is 3.12 -> 3.13. That is a decision to make on
+# purpose, not a routine bump to approve.
