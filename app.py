@@ -2704,7 +2704,13 @@ PAGE = """<!doctype html>
     border-bottom:1px solid var(--line)}
   .sheet .row:last-child{border-bottom:0}
   .sheet .row .lbl{flex:1;min-width:0}
-  .sheet .row .lbl b{display:block;font-weight:600;font-size:14.5px;color:var(--fg)}
+  /* DIRECT child only. As `.lbl b` it also matched any <b> inside the help
+     text below the label, turning an emphasised phrase into a second
+     block-level 14.5px heading mid-sentence — so "…<b>nothing due</b> means…"
+     rendered as three broken lines. The Install row's "<b>status page URL</b>"
+     had the same fault. */
+  .sheet .row .lbl>b{display:block;font-weight:600;font-size:14.5px;color:var(--fg)}
+  .sheet .row .lbl span b{color:var(--dim2);font-weight:600}
   .sheet .row .lbl span{color:var(--dim);font-size:12.5px;line-height:1.5;
     display:block;margin-top:2px}
   .sheet .row .val{font-family:var(--mono);font-weight:500;font-size:12.5px;color:var(--dim2)}

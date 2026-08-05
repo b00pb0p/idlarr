@@ -235,6 +235,18 @@ def test_table_column_count_agrees_everywhere(page):
     assert spans == {n}, f"{n} columns but colspan is {spans}"
 
 
+def test_settings_label_bold_does_not_leak_into_help_text(page):
+    """`.sheet .row .lbl b` matched any <b> inside the row's help text too, so
+    an emphasised phrase became a block-level 14.5px heading mid-sentence and
+    split the sentence across three lines. Two rows already did this. The rule
+    must stay a DIRECT-child selector."""
+    css = _base_stylesheet(re.search(r"<style>(.*?)</style>", page, re.S).group(1))
+    assert ".sheet .row .lbl>b{" in css, \
+        "label bold must be `.lbl>b`, or <b> in help text renders as a heading"
+    assert re.search(r"\.sheet \.row \.lbl b\{", css) is None, \
+        "descendant form is back; <b> in help text will break the layout again"
+
+
 @pytest.mark.parametrize("method,shown", [("none", False), ("forms", True),
                                           ("basic", False)])
 def test_signout_appears_only_where_it_works(client, method, shown):
