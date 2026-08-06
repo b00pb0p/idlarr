@@ -2089,33 +2089,33 @@ def userscript_version(payload: str) -> str:
     return f"{USERSCRIPT_BASE_VERSION}.{get_state('userscript_rev', '1')}"
 
 
-def userscript_stale() -> tuple[str, str] | None:
-    """(installed, why) when the browser's copy no longer matches your config.
+def userscript_stale() -> tuple[str, str, str] | None:
+    """(installed, why, dismiss_key) when the browser's script is behind.
 
-    TWO conditions, because the version counter is lazy. `userscript_rev` only
-    moves inside render_userscript(), which runs when the script is FETCHED, so
-    importing ten trackers changes nothing about the counter until something
-    asks for the script. Comparing revs alone therefore said "up to date"
-    immediately after an import, which is exactly when you need telling.
+    Three ways it can be behind, and the third is the one that matters on an
+    upgrade:
 
-      1. the browser reports a rev behind the last one served, or
-      2. the config has moved past the script that was last generated, which
-         means whatever the browser holds cannot cover it either.
+      1. a browser reported a rev lower than the last one served, or
+      2. the config has moved past the script that was last generated, so
+         whatever anyone holds cannot cover it.
 
-    Returns None when nothing has ever reported: unknown is not stale, and a
-    first-run install must not be told to reinstall what it has not got.
+    The second does NOT require anyone to have reported a version. It used to,
+    and that made the whole warning useless exactly when it was first needed:
+    a script installed before version reporting existed sends no version, so
+    `script_seen` is empty, so adding a tracker warned nobody. The feature could
+    not help until you had already done the thing it exists to remind you about.
+
+    Returns None when no script has ever been generated: nothing can be behind
+    a thing that does not exist, and a first-run install must not be told to
+    reinstall what it has not got.
     """
-    installed = get_state("script_seen", "") or ""
     rev = get_state("userscript_rev", "0") or "0"
-    if not installed or rev == "0":
+    if rev == "0":
         return None
 
-    try:
-        behind = int(installed.rsplit(".", 1)[-1]) < int(rev)
-    except ValueError:
-        return None            # unparseable: say nothing rather than cry wolf
+    installed = get_state("script_seen", "") or ""
 
-    changed = False
+    changed, digest = False, ""
     base = status_url()
     if base:
         # Same payload the generator hashes, from the same helper, so this
@@ -2124,11 +2124,20 @@ def userscript_stale() -> tuple[str, str] | None:
         digest = hashlib.sha256(payload.encode()).hexdigest()[:16]
         changed = get_state("userscript_hash", "") != digest
 
+    behind = False
+    if installed:
+        try:
+            behind = int(installed.rsplit(".", 1)[-1]) < int(rev)
+        except ValueError:
+            installed = ""     # unparseable: unknown, rather than a wrong claim
+
     if not (behind or changed):
         return None
     why = ("your tracker list has changed since it was generated" if changed
            else f"{USERSCRIPT_BASE_VERSION}.{rev} is being served")
-    return installed, why
+    # Keyed on the CONFIG when the config is what moved, so dismissing after
+    # adding one tracker does not stay dismissed after adding the next.
+    return installed, why, (digest if changed else rev)
 
 
 def userscript_version_peek() -> str:
@@ -3963,7 +3972,7 @@ async def index(request: Request):
     # @updateURL, but on its own schedule, so say both.
     stale = userscript_stale()
     if stale and js_url:
-        installed, why = stale
+        installed, why, dkey = stale
         # Stated as an adjacent fact, not a cause. A tracker that has never
         # reported is what a stale script looks like, but it is also what a
         # broken selector or a site you have not visited looks like, and this
@@ -3973,9 +3982,13 @@ async def index(request: Request):
                   f"{'has' if n_new == 1 else 'have'} never reported."
                   if n_new else "")
         banner += (
-            f'<div class="banner warn" id="stale" data-v="{esc(installed)}|{esc(why)}">'
+            f'<div class="banner warn" id="stale" data-v="{esc(dkey)}">'
             '<b>Your userscript is out of date.</b> '
-            f'The browser has {esc(installed)} and {esc(why)}.{covers} '
+            # The installed version is only known once a browser has reported
+            # one. Say nothing about it rather than printing an empty string.
+            + (f'The browser has {esc(installed)} and {esc(why)}.'
+               if installed else f'{esc(why[0].upper() + why[1:])}.')
+            + f'{covers} '
             'Your script manager picks this up on its own next update check, '
             'if automatic updates are switched on.'
             '<span class="sp">'

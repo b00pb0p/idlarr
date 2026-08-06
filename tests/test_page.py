@@ -366,11 +366,64 @@ def test_removing_a_tracker_marks_the_script_stale_too(client, cfg):
     assert "tracker list has changed" in body
 
 
-def test_no_stale_warning_before_anything_has_reported(client, cfg):
-    """Unknown is not the same as stale. A fresh install must not be told to
-    reinstall a script it has not got yet."""
-    app.set_state("userscript_rev", "4")
+def test_no_stale_warning_before_a_script_has_been_generated(client, cfg):
+    """Nothing can be behind a script that does not exist. A first-run install
+    must not be told to reinstall what it has not got."""
+    assert (app.get_state("userscript_rev", "0") or "0") == "0"
     assert 'id="stale"' not in client.get("/").text
+
+
+def test_no_stale_warning_while_the_script_matches_the_config(client, cfg):
+    """Serving the script records the hash of what it contains. Until the
+    config moves past that, there is nothing to warn about, even though no
+    browser has reported a version."""
+    client.get(f"/idlarr.user.js?token={app.TOKEN}")
+    assert 'id="stale"' not in client.get("/").text
+
+
+def test_the_dismiss_key_changes_when_the_config_changes(client, cfg):
+    """Dismissing the banner stores its key so it stays hidden. If that key did
+    not move when the config moved, dismissing after adding one tracker would
+    hide the warning for every tracker you added afterwards, silently. Keyed on
+    the config hash for exactly that reason."""
+    client.get(f"/idlarr.user.js?token={app.TOKEN}")
+
+    def key_after(tid):
+        client.post("/api/tracker", json={
+            "id": tid, "name": tid, "url": f"https://{tid}.example/",
+            "inactivity_days": 30})
+        m = re.search(r'id="stale" data-v="([^"]+)"', client.get("/").text)
+        assert m, f"no banner after adding {tid}"
+        return m.group(1)
+
+    first, second = key_after("one"), key_after("two")
+    assert first != second, \
+        "dismissing the first warning would have hidden the second"
+
+
+def test_stale_warning_without_any_reported_version(client, cfg):
+    """THE upgrade case, reported from the field on 1.6.0.
+
+    A userscript installed before version reporting existed sends no version,
+    so `script_seen` is empty. Requiring it made the warning useless exactly
+    when it was first needed: adding a tracker warned nobody, because the only
+    way to start reporting a version is to install the new script, which is the
+    very thing the banner exists to prompt.
+
+    The earlier test here asserted the opposite and passed, because it set up
+    the precondition the real upgrade does not have."""
+    client.get(f"/idlarr.user.js?token={app.TOKEN}")      # a script exists
+    assert not app.get_state("script_seen"), "nobody has reported a version"
+
+    r = client.post("/api/tracker", json={
+        "id": "test1", "name": "Test 1", "url": "https://test1.example/",
+        "inactivity_days": 30})
+    assert r.status_code == 200, r.text
+
+    body = client.get("/").text
+    assert 'id="stale"' in body, \
+        "added a tracker with an unreported script version and said nothing"
+    assert "tracker list has changed" in body
 
 
 def test_ping_records_the_reported_script_version(client, cfg):
