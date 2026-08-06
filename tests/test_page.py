@@ -881,3 +881,48 @@ def test_the_selected_section_is_still_marked_without_the_bracket():
     assert "border-left-color" not in on.group(1), "the bracket is back"
     assert "background:" in on.group(1) and "color:" in on.group(1), \
         "nothing marks the selected section"
+
+
+def test_the_close_bar_divider_does_not_light_up_on_hover():
+    """`button:hover` sets border-color on EVERY button. `.xclose` carries no
+    outline, only a bottom border acting as the bar's divider, so that generic
+    rule repainted the divider brighter whenever the pointer was anywhere on
+    the bar and it read as a stray bracket beneath it. Reported 2026-08-06.
+
+    Same shape as the `.pulse g` animation overriding a transform attribute: a
+    broad selector reaching into an element it was not written for.
+    """
+    css = _base_stylesheet(app.PAGE)
+    hover = re.search(r"\.xclose:hover\{([^}]*)\}", css)
+    assert hover, "no .xclose:hover rule"
+    assert "border-color" in hover.group(1), \
+        "button:hover will repaint the close bar's divider"
+
+
+def test_every_panel_sized_box_is_rounded():
+    """The settings window was square while `.modal .box` and the login form,
+    which carry an identical background and border, were both 14px. Nothing
+    made it a choice; it was simply missed, and it read as the one container on
+    the site that did not fit. Reported 2026-08-06.
+
+    Written as a sweep rather than a check on that one selector, so the next
+    container added with the same box gets caught rather than shipping square.
+    """
+    boxes = []
+    for m in re.finditer(r"([.#][\w .>\-]+)\{([^}]*)\}", app.PAGE):
+        sel, body = m.group(1).strip(), m.group(2)
+        if "border:1px solid var(--line2)" in body and "background:var(--head)" in body:
+            boxes.append((sel, "border-radius" in body))
+    assert boxes, "the sweep matched nothing, so it proves nothing"
+    square = [sel for sel, rounded in boxes if not rounded]
+    assert not square, f"square container(s): {square}"
+
+
+def test_the_settings_window_clips_its_corners():
+    """The radius alone is not enough. nav and the close bar paint their own
+    backgrounds into the corners, so without overflow:hidden on the window they
+    square the radius straight off again and it looks like the fix never landed.
+    """
+    win = re.search(r"\.sheet \.win\{([^}]*)\}", _base_stylesheet(app.PAGE))
+    assert win and "overflow:hidden" in win.group(1), \
+        "children will paint over the rounded corners"

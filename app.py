@@ -3025,7 +3025,12 @@ PAGE = """<!doctype html>
      the nav and the pane without wrapping them in another element. Source
      order is close / nav / pane, so auto-placement puts nav and pane in row 2
      on their own. */
+  /* 14px, the same as `.modal .box` and the login form, which carry an
+     identical background and border. overflow:hidden is load-bearing here and
+     not just tidiness: nav and the close bar paint their own backgrounds right
+     into the corners, so without it they square off the radius. */
   .sheet .win{background:var(--head);border:1px solid var(--line2);position:relative;
+    border-radius:14px;
     width:min(790px,94vw);height:min(584px,88vh);overflow:hidden;
     display:grid;grid-template-columns:180px 1fr;grid-template-rows:auto 1fr}
   .sheet nav{width:180px;border-right:1px solid var(--line);background:var(--bg);
@@ -3096,7 +3101,11 @@ PAGE = """<!doctype html>
     background:var(--head);border:0;border-bottom:1px solid var(--line);
     color:var(--dim);font-size:19px;cursor:pointer;line-height:1;
     padding:8px 15px;z-index:2}
-  .xclose:hover{color:var(--fg)}
+  /* border-color is pinned, not inherited. The generic `button:hover` sets it
+     on every button, and .xclose has no outline, only a bottom border acting
+     as this bar's divider — so hovering lit that divider up and it read as a
+     stray bracket under the bar. */
+  .xclose:hover{color:var(--fg);border-color:var(--line)}
   /* scrollbar-gutter reserves the track so content never sits under it; the
      row's right padding is the fallback for engines without it. 10px was not
      enough — desktop scrollbars run 15-17px, so "already configured" was still
