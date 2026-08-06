@@ -468,6 +468,59 @@ def test_closing_settings_discards_unsaved_edits(page):
         "general save does not update the defaults; closing would undo it"
 
 
+def test_a_note_shows_a_marker_on_the_row(client, cfg):
+    """Only the FIRST word of notes reaches the row, as the software line, so a
+    note that does not begin with a known software name changed nothing visible
+    and read as not having saved."""
+    with_notes = [t for t in app.load_config()["trackers"]
+                  if (t.get("notes") or "").strip()]
+    assert with_notes, "fixture has no notes, so this proves nothing"
+    assert client.get("/").text.count('class="note"') == len(with_notes)
+
+    tid = with_notes[0]["id"]
+    client.post(f"/api/limit/{tid}", json={"notes": ""})
+    assert client.get("/").text.count('class="note"') == len(with_notes) - 1, \
+        "clearing a note left its marker behind"
+
+    # The reported case: a note that is not a software name at all.
+    client.post(f"/api/limit/{tid}", json={"notes": "lost this one once already"})
+    body = client.get("/").text
+    assert body.count('class="note"') == len(with_notes)
+    assert 'title="lost this one once already"' in body
+
+
+def test_the_note_marker_is_not_the_hand_marker(page):
+    """The pencil already means "last auth was marked by hand". Two identical
+    glyphs meaning different things is worse than having neither."""
+    m = re.search(r'<span class="note"[^>]*>(.*?)</span>', page, re.S)
+    assert m, "no note marker rendered"
+    assert "&#9998;" not in m.group(1), "the note marker reuses the hand pencil"
+    assert "<svg" in m.group(1)
+
+
+def test_note_text_is_escaped_into_the_marker_title(client, cfg):
+    """It is user text going into an attribute. The drawer's XSS guard covers
+    the client-built markup; this one is server-rendered and needs its own."""
+    tid = app.load_config()["trackers"][0]["id"]
+    client.post(f"/api/limit/{tid}", json={"notes": 'x" onmouseover="alert(1)'})
+    body = client.get("/").text
+    assert 'onmouseover="alert(1)' not in body
+    assert "&quot;" in body or "&#34;" in body
+
+
+def test_paint_keeps_the_software_line_and_marker_in_step(page):
+    """Both are derived from `notes`, and editing notes in the drawer repaints
+    the row. paint() was not touching the software line at all, despite a
+    comment at the notes handler saying it did, so changing the software word
+    left the old one on the row until a reload."""
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    paint = re.search(r"function paint\(tr,d\)\{(.*?)\n \}", script, re.S)
+    assert paint, "paint() not found"
+    body = paint.group(1)
+    assert "d.software" in body, "paint never updates the software line"
+    assert "'.note'" in body or '".note"' in body, "paint never updates the marker"
+
+
 def test_add_tracker_dialog_forgets_what_you_typed(page):
     """Same shape as the settings panel: rendered once, and closing it only
     removed a CSS class. Reported after adding a tracker, removing it, then

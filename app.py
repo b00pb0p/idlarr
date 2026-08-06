@@ -2548,6 +2548,10 @@ PAGE = """<!doctype html>
   td.nm .t{font-family:var(--disp);font-weight:700;font-size:16.5px;letter-spacing:-.012em;
     display:block;overflow:hidden;text-overflow:ellipsis}
   td.nm i{font-style:normal;color:var(--dim);font-size:11px;margin-left:7px;font-weight:400}
+  td.nm .note{display:inline-block;margin-left:7px;color:var(--dim);vertical-align:1px;
+    cursor:help}
+  td.nm .note:hover{color:var(--dim2)}
+  td.nm .note svg{display:block}
   /* Stacked, not inline: the badge beside the software read as a second word
      of it, and a long software name pushed the badge out of the column. */
   td.nm .m2{display:flex;flex-direction:column;align-items:flex-start;gap:4px;
@@ -3028,6 +3032,24 @@ __SHEET__
    tr.querySelector('.meter').classList.toggle('none',!!d.immune);
    const q=tr.querySelector('.q');
    if(q)q.style.display=(d.verified||d.immune)?'none':'';
+   // Both of these are derived from `notes`, and editing notes in the drawer
+   // calls paint(). The software line was NOT being updated despite a comment
+   // at the notes handler saying it was, so changing "UNIT3D..." to
+   // "Gazelle..." left the old value on the row until a reload.
+   const sw=tr.querySelector('.sw'); if(sw)sw.textContent=d.software||'';
+   const nm=tr.querySelector('td.nm'), had=nm.querySelector('.note');
+   const has=!!(d.notes||'').trim();
+   if(has&&!had){
+     const el=document.createElement('span');
+     el.className='note';
+     el.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" '+
+       'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '+
+       'aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg>';
+     nm.insertBefore(el, nm.querySelector('.m2'));
+   }
+   if(had&&!has)had.remove();
+   const mark=nm.querySelector('.note');
+   if(mark)mark.title=d.notes||'';
    tr.classList.remove('flash');void tr.offsetWidth;tr.classList.add('flash');
  }
 
@@ -3914,6 +3936,17 @@ async def index(request: Request):
         name = (f'<a href="{esc(r["url"])}" target="_blank" rel="noreferrer">{esc(r["name"])}</a>'
                 if r["url"] else f'<span class="t">{esc(r["name"])}</span>')
         hand = ' <i title="last auth was marked by hand">&#9998;</i>' if r.get("auth_source") == "manual" else ""
+        # Only the FIRST word of notes reaches the row, as the software line, so
+        # a note like "lost this once already" changed nothing visible and read
+        # as not having saved. This says one exists without putting free text on
+        # a fixed-width row; the note itself is the tooltip and the drawer.
+        # Deliberately NOT the pencil: that already means "marked by hand", and
+        # two identical glyphs meaning different things is worse than neither.
+        note = (f'<span class="note" title="{esc(r["notes"])}">'
+                '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" '
+                'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
+                'aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg></span>'
+                if (r.get("notes") or "").strip() else "")
         q = ("" if (r["verified"] or r["immune"]) else
              '<span class="q" title="limit is a placeholder, not researched">unconfirmed</span>')
         state_txt = (r["immune_reason"] if (r["immune"] and r["immune_reason"])
@@ -3928,7 +3961,7 @@ async def index(request: Request):
             f"data-row='{json.dumps(p).replace(chr(39), '&#39;')}' "
             f'style="--c:var(--{s})">'
             f'<td class="s"></td>'
-            f'<td class="nm">{name}{hand}'
+            f'<td class="nm">{name}{hand}{note}'
             f'<span class="m2"><span class="sw">{esc(r["software"])}</span>{q}</span></td>'
             f'<td class="st">{esc(state_txt)}</td>'
             f'<td class="n">{big}<small>{unit}</small></td>'
