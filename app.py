@@ -1241,6 +1241,33 @@ def backup_db(today: str) -> Path | None:
     return dest
 
 
+def next_check() -> tuple[str, bool]:
+    """When the daily check will next run, as (text, overdue).
+
+    This RESTATES the gate in scheduler() below, which is why it lives against
+    it rather than beside the page code that calls it. If that condition ever
+    changes, this is the other copy, and `test_scheduler.py` compares the two
+    across a sweep rather than trusting them to stay in step.
+
+    It exists because the panel showed only what had already happened. Moving
+    `check_hour` to 23:00 during a day whose check had already run at 09:00
+    correctly produced no run that evening, and the panel gave no way to tell
+    that from a stalled scheduler. Reported from the field 2026-08-06.
+
+    `overdue` is the case worth having a flag for: the hour has passed, the day
+    has not been checked, and the loop wakes every 10 minutes, so anything
+    still saying this on a reload is genuinely stuck rather than merely waiting.
+    """
+    cfg = load_config()
+    hour = int(cfg["check_hour"])
+    now = datetime.now(local_tz())
+    if get_state("last_check") == now.date().isoformat():
+        return f"next tomorrow {hour:02d}:00", False
+    if now.hour >= hour:
+        return "due now", True
+    return f"next today {hour:02d}:00", False
+
+
 async def scheduler() -> None:
     """Wake often, act once per local day. Survives restarts without drift."""
     while True:
@@ -2996,6 +3023,7 @@ PAGE = """<!doctype html>
   .sheet .row .ctl2{flex-wrap:wrap}
   .sheet .act-d{width:100%;text-align:right;font-style:normal;color:var(--dim);
     font-size:10.5px;margin-top:2px}
+  .sheet .act-d.due{color:var(--due)}
   .sheet .row .ctl2>button{flex:1}
   .sheet .stack{margin:0 0 14px}
   .sheet .stack input,.sheet .stack select{width:100%;margin-bottom:9px}
@@ -3815,7 +3843,8 @@ def _tz_options(current: str) -> str:
     return "".join(out)
 
 
-def _act_row(label: str, job: str, sub: str = "") -> str:
+def _act_row(label: str, job: str, sub: str = "",
+             extra: tuple[str, bool] | None = None) -> str:
     """One line of the recent-activity block: when it last ran and how it went.
 
     "never" is meaningful rather than missing: a backup that has never run on
@@ -3827,13 +3856,20 @@ def _act_row(label: str, job: str, sub: str = "") -> str:
     inside one another — which reads as a bug until something says otherwise.
     """
     a = read_activity(job)
+    # The next-run line shows even when nothing has ever run. On a fresh
+    # install "never" is the whole story otherwise, and "never" plus a date is
+    # what tells you the thing is scheduled rather than broken.
+    nxt = ""
+    if extra:
+        text, overdue = extra
+        nxt = f'<em class="act-d{" due" if overdue else ""}">{esc(text)}</em>'
     if not a:
-        return _row(label, sub, '<span class="val">never</span>')
+        return _row(label, sub, f'<span class="val">never</span>{nxt}')
     cls = "on" if a.get("ok") else "off"
     detail = esc(a.get("detail", ""))
     return _row(label, sub,
                 f'<span class="val {cls}">{esc(a.get("at", ""))}</span>'
-                f'<em class="act-d">{detail}</em>')
+                f'<em class="act-d">{detail}</em>{nxt}')
 
 
 def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
@@ -3896,7 +3932,8 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         # records only that the step ran.
         + _act_row("Daily check", "check",
                    "Runs at the check hour. The two below happen inside it, "
-                   "which is why they share its timestamp.")
+                   "which is why they share its timestamp.",
+                   extra=next_check())
         + _act_row("Database backup", "backup",
                    "Taken at the start of the check, before any alert, so a "
                    "failed backup can never stop one.")
