@@ -122,19 +122,110 @@ Returns `{"ok": true, "version": ..., "trackers": N}`.
 
 ## Recipes
 
-**Uptime Kuma**, alerting when anything needs you. Use an HTTP(s) - Keyword
-monitor against `/api/summary` with the header set, and the keyword
-`"needs_attention":0`, inverted.
+All four assume `YOUR_KEY` from *Settings, API* and your own hostname.
 
-**A shell check**, for a cron or a status script:
+### A dashboard tile
 
-```bash
-curl -sH "X-Api-Key: $KEY" https://idlarr.example/api/summary \
-  | jq -r '"\(.needs_attention) need attention; worst: \(.worst.name // "none")"'
+The commonest use. Homepage's `customapi` widget, which Glance, Dashy and most
+others mirror closely enough to adapt:
+
+```yaml
+- Idlarr:
+    icon: mdi-account-clock
+    href: https://idlarr.example
+    widget:
+      type: customapi
+      url: https://idlarr.example/api/summary
+      refreshInterval: 3600000        # hourly is plenty, this changes daily
+      headers:
+        X-Api-Key: YOUR_KEY
+      mappings:
+        - field: needs_attention
+          label: Attention
+        - field:
+            counts: expired
+          label: Expired
+        - field:
+            soonest_deadline: days_left
+          label: Next
+          format: number
 ```
 
-**Homepage-style widgets** generally accept a URL, a header and a JSON path.
-Point them at `/api/summary` and read `needs_attention` or `counts.expired`.
+`counts` always carries all nine states, so a tile mapping states to colors
+never hits a missing key and shows a blank. `soonest_deadline` **can** be
+`null`, on a fresh install or when every tracker is immune, so pick a widget
+that tolerates that or map `needs_attention` alone.
+
+### Uptime Kuma, red when something needs you
+
+An **HTTP(s) - Keyword** monitor:
+
+| | |
+|---|---|
+| URL | `https://idlarr.example/api/summary` |
+| Keyword | `"needs_attention":0` |
+| Invert Keyword | **on** |
+| Headers | `{ "X-Api-Key": "YOUR_KEY" }` |
+| Heartbeat Interval | 3600 |
+
+Inverted, so the monitor is up while the count is zero and goes down the moment
+anything is expired, critical, warn, due or logged out. Worth having even
+though Idlarr pushes its own alerts: this one fails through a different service,
+so a broken ntfy token does not take both out at once.
+
+### Noticing the daily check stopped
+
+`last_check` is the date the scheduler last ran. If it is behind today, alerts
+are not being evaluated at all, and nothing else reports that. `/healthz` is
+green the whole time, because the web server is fine; it is the loop behind it
+that is not.
+
+```bash
+#!/bin/sh
+# Exits 1 if Idlarr has not run its daily check today. Cron it after check_hour.
+json=$(curl -sf --max-time 10 -H "X-Api-Key: $KEY" \
+         https://idlarr.example/api/summary) || {
+  echo "idlarr unreachable"
+  exit 1
+}
+last=$(echo "$json" | jq -r '.last_check // "never"')
+[ "$last" = "$(date +%F)" ] || {
+  echo "idlarr last checked: $last"
+  exit 1
+}
+```
+
+Keep the unreachable case separate, as above. Folding it in reports a service
+that is down as one whose scheduler has stalled, and those want different
+fixes. Note `jq -r` prints a JSON `null` as the four characters `null`, so the
+`// "never"` is doing real work: without it the fallback never fires.
+
+Run it on a box in the same timezone as Idlarr's `timezone` setting, or compare
+against that zone explicitly. `last_check` is a local date, so an hour of
+disagreement either side of midnight reads as a day behind.
+
+`never` means no check has ever completed, which on an install more than a day
+old means the scheduler has not come up since the container did.
+
+### In your shell prompt or MOTD
+
+You open a terminal more often than you open a dashboard.
+
+```bash
+# ~/.bashrc
+idlarr() {
+  curl -sf --max-time 2 -H "X-Api-Key: $IDLARR_KEY" \
+    https://idlarr.example/api/summary \
+  | jq -r 'if .needs_attention == 0
+           then "idlarr: all \(.trackers) ok"
+           else "idlarr: \(.needs_attention) need attention, worst \(.worst.name) (\(.worst.state))"
+           end'
+}
+idlarr
+```
+
+`--max-time 2` matters if you call it on every shell start. Without it, a box
+that is down or unreachable hangs your prompt instead of printing nothing.
 
 ## If it stops working
 
