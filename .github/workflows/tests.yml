@@ -8,6 +8,10 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    # The suite runs in about 15 seconds. Anything approaching this is a
+    # hung step, not a slow one, and without a cap it burns runner time up
+    # to GitHub's 6 hour default before reporting anything useful.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

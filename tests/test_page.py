@@ -142,7 +142,7 @@ def test_banner_button_targets_the_signin_section(page):
 def test_test_notify_takes_a_session_or_the_token(client, monkeypatch):
     """It is a button in Settings now, and a fetch from the page sends a cookie,
     never a bearer header. The token path stays for scripts and the docs."""
-    monkeypatch.setattr(app, "NOTIFY_URLS", ["json://localhost/"])
+    monkeypatch.setattr(app, "NOTIFY_ENV", ["json://localhost/"])
     monkeypatch.setattr(app, "dispatch", lambda *a: (True, ""))
     client.post("/api/auth", json={"method": "forms", "username": "jared",
                                    "password": "correct-horse"})
@@ -159,7 +159,7 @@ def test_test_notify_sends_even_when_nothing_is_due(client, monkeypatch):
     nothing is due — so on a healthy install the test silently succeeded
     without notifying, and could not tell working alerts from broken ones."""
     sent = []
-    monkeypatch.setattr(app, "NOTIFY_URLS", ["json://localhost/"])
+    monkeypatch.setattr(app, "NOTIFY_ENV", ["json://localhost/"])
     monkeypatch.setattr(app, "dispatch",
                         lambda title, body, prio: (sent.append((title, body)), (True, ""))[1])
     assert app.build_notification(app.statuses()) is None      # nothing due
@@ -171,7 +171,7 @@ def test_test_notify_sends_even_when_nothing_is_due(client, monkeypatch):
 def test_test_notify_reports_why_a_send_failed(client, monkeypatch):
     """Apprise signals refusal by returning False and logging the reason. Not
     surfacing it makes a bad token look identical to a delivered message."""
-    monkeypatch.setattr(app, "NOTIFY_URLS", ["json://localhost/"])
+    monkeypatch.setattr(app, "NOTIFY_ENV", ["json://localhost/"])
     monkeypatch.setattr(app, "dispatch", lambda *a: (False, "403 forbidden"))
     r = client.post("/api/test-notify")
     assert r.status_code == 502
@@ -179,10 +179,15 @@ def test_test_notify_reports_why_a_send_failed(client, monkeypatch):
 
 
 def test_test_notify_says_so_when_nothing_is_configured(client, monkeypatch):
-    monkeypatch.setattr(app, "NOTIFY_URLS", [])
+    monkeypatch.setattr(app, "NOTIFY_ENV", [])
     r = client.post("/api/test-notify")
     assert r.status_code == 400
-    assert "IDLARR_NOTIFY_URLS" in r.json()["detail"]
+    detail = r.json()["detail"]
+    # Names BOTH routes now that there are two. Pointing only at .env would
+    # send a new install to a file it never has to touch, and pointing only at
+    # the panel would strand anyone deliberately keeping credentials out of
+    # the database.
+    assert "IDLARR_NOTIFY_URLS" in detail and "Add one below" in detail
 
 
 # ---------------------------------------------------------------- structure

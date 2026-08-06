@@ -13,6 +13,9 @@ env:
 jobs:
   image:
     runs-on: ubuntu-latest
+    # A healthy multi-arch build and push lands around 7 minutes. This is a
+    # backstop against a hung registry push, not a target.
+    timeout-minutes: 30
     permissions:
       contents: read
       # This is the only permission the push needs. It uses the built-in

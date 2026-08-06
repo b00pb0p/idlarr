@@ -67,7 +67,7 @@ def test_corrupt_row_does_not_crash_the_page(cfg):
 def test_a_failed_alert_is_recorded_as_failed(cfg, monkeypatch):
     """The case that matters. A refused push previously left nothing on screen
     and the dashboard looked identical to a healthy night."""
-    monkeypatch.setattr(app, "NOTIFY_URLS", ["json://localhost/"])
+    monkeypatch.setattr(app, "NOTIFY_ENV", ["json://localhost/"])
     monkeypatch.setattr(app, "dispatch", lambda t, b, p: (False, "403 forbidden"))
     app.record("alpha", "auth")
     with app.db() as conn:
@@ -81,7 +81,7 @@ def test_a_failed_alert_is_recorded_as_failed(cfg, monkeypatch):
 def test_nothing_due_still_counts_as_a_successful_run(cfg, monkeypatch):
     """A quiet night is a healthy night, not a missing one. Recording it is
     what makes 'never' meaningful for an install that has been up for days."""
-    monkeypatch.setattr(app, "NOTIFY_URLS", ["json://localhost/"])
+    monkeypatch.setattr(app, "NOTIFY_ENV", ["json://localhost/"])
     asyncio.run(app.notify(app.statuses()))
     a = app.read_activity("alert")
     assert a["ok"] is True and a["detail"] == "nothing due"

@@ -108,7 +108,9 @@ WRITES = [
     ("delete", "/api/tracker/alpha"), ("post", "/api/settings"),
     ("post", "/api/import"), ("post", "/api/config"),
     ("post", "/api/auth"), ("post", "/api/apikey"),
-    ("post", "/api/check"),
+    ("post", "/api/check"), ("post", "/api/notify"),
+    ("post", "/api/notify/x"), ("delete", "/api/notify/x"),
+    ("post", "/api/notify/x/test"),
 ]
 
 

@@ -203,7 +203,7 @@ sections. Closing the panel discards anything you have not saved.
 | **Sign-in** | method, credentials, and sign out when the method is Forms |
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
 | **Import** | Prowlarr or Jackett, torrent and usenet |
-| **Notifications** | destination count, and a **Send test** button |
+| **Notifications** | add, name, mute, test and remove destinations, and a **Send test** for all |
 | **API** | the read-only key, masked behind an eye, with **Copy** and **Regenerate** |
 | **System** | what the daily check, backup, alert and heartbeat last did, when the check runs next, a **Run now** button, and config download and restore |
 | **About** | version, tracker count, userscript version, last check, database size, `/healthz` |
@@ -423,8 +423,10 @@ cross-origin from tracker pages, where cookies do not apply.
   history, so restoring an older config resumes those countdowns rather than
   restarting them.
 - **A backup contains every secret the service holds**: your tracker list, the
-  API token, the session secret, the read-only API key, and a saved Prowlarr
-  key. The database and its backups are written `0600` so other local users
+  API token, the session secret, the read-only API key, a saved Prowlarr key,
+  and any notification destination added in Settings.  Destinations listed in
+  `IDLARR_NOTIFY_URLS` are **not** among them: `.env` is not in `/data`, which
+  is the reason that route is still supported. The database and its backups are written `0600` so other local users
   cannot read them, and snapshots written before that was enforced are
   restricted on startup, so an upgrade does not leave old ones readable. That
   only protects them *on the box*. If you sync `/data` anywhere (an appdata

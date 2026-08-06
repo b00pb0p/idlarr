@@ -58,7 +58,16 @@ def status_url() -> str:
 # ntfys://. One code path, ~100 services, nothing bespoke to maintain. See
 # https://github.com/caronc/apprise/wiki for each service's URL scheme.
 # These strings carry credentials, so they are never printed.
-NOTIFY_URLS = [u.strip() for u in os.environ.get("IDLARR_NOTIFY_URLS", "").split(",") if u.strip()]
+# Destinations come from TWO places and both stay supported: this variable, and
+# the list managed in Settings. They ADD to one list rather than competing for
+# one value, so there is no precedence rule to get wrong -- which is what made
+# the old dual-source `backup_keep` design bad, not the fact of two sources.
+#
+# The reason to keep this one is privacy, not compatibility. A destination
+# added in the panel lives in the database, so it lives in every backup. Anyone
+# who would rather no credential ever touched the database keeps using this,
+# and .env is not in /data.
+NOTIFY_ENV = [u.strip() for u in os.environ.get("IDLARR_NOTIFY_URLS", "").split(",") if u.strip()]
 
 # One event per kind per tracker per this window. Server-side on purpose — see
 # the note in /ping. Must be >= the userscript's client-side cooldown.
@@ -695,6 +704,75 @@ def drop_last_auth(tracker_id: str) -> dict | None:
     return {"ts": row["ts"], "source": row["source"] or ""}
 
 
+def notify_dests() -> list[dict]:
+    """Every configured destination: [{id, name, url, enabled}, ...].
+
+    Stored as JSON in `state` rather than its own table: it is a short list
+    edited whole, and a table would need a migration for no gain.
+
+    These are credentials, so they are in the database in plaintext, which puts
+    them in every nightly backup. That is deliberate and documented rather than
+    hidden: an Apprise URL has to be SENT to the provider, so it cannot be
+    hashed, and encrypting it with a key the container reads unattended is
+    obfuscation. It is also what the *arrs do with their own notification
+    settings. See the backup note in the README.
+    """
+    try:
+        out = json.loads(get_state("notify_dests", "") or "[]")
+        return out if isinstance(out, list) else []
+    except (ValueError, TypeError):
+        # A corrupt blob must not take alerting down silently; an empty list
+        # reads as "nothing configured", which the page announces loudly.
+        print("[notify] destinations are unreadable, treating as none")
+        return []
+
+
+def save_notify_dests(dests: list[dict]) -> None:
+    set_state("notify_dests", json.dumps(dests))
+
+
+def notify_urls() -> list[str]:
+    """Every destination that will actually receive: env first, then the panel.
+
+    Deduplicated, because the same URL configured in both places would
+    otherwise send twice, and a doubled push looks like a bug in the alerting
+    rather than a duplicated config line.
+    """
+    out, seen = [], set()
+    for url in NOTIFY_ENV + [d["url"] for d in notify_dests()
+                             if d.get("enabled", True) and d.get("url")]:
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def scheme_name(url: str) -> str:
+    """`discord://x/y` -> `Discord`. A fallback label when none was typed, so
+    an unnamed row still says what it is rather than showing a bare mask."""
+    raw = url.split("://", 1)[0] if "://" in url else "unknown"
+    return {"ntfy": "ntfy", "ntfys": "ntfy"}.get(raw, raw.capitalize())
+
+
+def mask_url(url: str) -> str:
+    """`discord://... a3f1`. Scheme, plus a fingerprint that is not the URL.
+
+    The tail of the real URL was the obvious thing to show, the way a card
+    number shows its last four, and it is wrong here: for ntfy the topic IS the
+    secret, and four characters of a short topic is a lot of it. The name field
+    already tells two destinations apart, so the tail bought nothing and leaked
+    something. A truncated hash disambiguates just as well and reveals none of
+    the input.
+
+    Same rule as `import_key`, which reaches the page only as a boolean. It
+    matters more here because with sign-in off the page is open to anything
+    that can reach the port, and one of these is enough to post into someone
+    else's Discord channel.
+    """
+    scheme = url.split("://", 1)[0] if "://" in url else "?"
+    return f"{scheme}://\u2026 {hashlib.sha256(url.encode()).hexdigest()[:4]}"
+
+
 def note_activity(job: str, ok: bool, detail: str) -> None:
     """Record the outcome of an unattended job so the page can show it.
 
@@ -1097,11 +1175,22 @@ def apprise_type(priority: str) -> str:
 
 
 def dispatch(title: str, body: str, priority: str) -> tuple[bool, str]:
+    """Send to every enabled destination."""
+    return dispatch_to(notify_urls(), title, body, priority)
+
+
+def dispatch_to(urls: list[str], title: str, body: str,
+                priority: str) -> tuple[bool, str]:
     """Send one message through Apprise. Returns (ok, reason).
 
     The reason matters: Apprise reports a refused push by returning False and
     logging why, so without capturing its log a bad token or a topic the server
     will not accept is indistinguishable from a successful send.
+
+    Takes the URL list rather than reading it, so ONE destination can be tested
+    on its own. Apprise returns a single boolean for the whole batch, so with
+    three configured a refusal from any one of them reads as "notifications are
+    broken" and names none of them.
     """
     try:
         import apprise
@@ -1119,7 +1208,7 @@ def dispatch(title: str, body: str, priority: str) -> tuple[bool, str]:
     logger.addHandler(handler)
     try:
         ap = apprise.Apprise()
-        for url in NOTIFY_URLS:
+        for url in urls:
             if not ap.add(url):
                 # Never print the URL itself: these contain credentials.
                 seen.append(f"rejected a URL (scheme '{url.split('://')[0]}')")
@@ -1184,8 +1273,8 @@ async def notify(rows: list[dict]) -> None:
         print("[notify] nothing due")
         note_activity("alert", True, "nothing due")
         return
-    if not NOTIFY_URLS:
-        print("[notify] IDLARR_NOTIFY_URLS is empty -- alert not sent")
+    if not notify_urls():
+        print("[notify] no destinations configured -- alert not sent")
         note_activity("alert", False, "no destinations configured")
         return
     try:
@@ -1339,12 +1428,6 @@ async def scheduler() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not NOTIFY_URLS:
-        # Not fatal -- the status page still works -- but a watchdog that
-        # cannot reach you is the exact failure this project exists to avoid,
-        # and silence is indistinguishable from "nothing is due".
-        print("[startup] WARNING: IDLARR_NOTIFY_URLS is empty. "
-              "Alerts will go nowhere. See .env.example.")
     # The next two are what a first-time user actually hits. Both used to
     # surface as a raw traceback in a restart loop, which says nothing about
     # the fix. They still refuse to start on purpose: auto-creating either one
@@ -1362,6 +1445,21 @@ async def lifespan(app: FastAPI):
             f"  If /data looks empty when it should not be, the mount is pointing\n"
             f"  somewhere other than you think."
         ) from exc
+
+    # AFTER init_db(): this reads the destination list out of `state`, and on a
+    # first boot that table does not exist until init_db() has run. Placed
+    # above it, a fresh install died with "no such table: state" before ever
+    # reaching the handler that explains a mis-mounted /data.
+    # IDLARR_NOTIFY_URLS is deliberately NOT copied into the database. Someone
+    # setting it is quite likely doing so to keep credentials out of /data, and
+    # seeding would defeat exactly that.
+    if not notify_urls():
+        # Not fatal -- the status page still works -- but a watchdog that
+        # cannot reach you is the exact failure this project exists to avoid,
+        # and silence is indistinguishable from "nothing is due".
+        print("[startup] WARNING: no notification destinations. Alerts will go "
+              "nowhere. Add one in Settings, Notifications, or set "
+              "IDLARR_NOTIFY_URLS.")
 
     secure_existing_backups()
 
@@ -2619,6 +2717,104 @@ async def api_check():
     return {"ok": True, **result, "ran_at": read_activity("check") or {}}
 
 
+def _valid_apprise(url: str) -> str:
+    """Return an error string, or "" if Apprise will take it.
+
+    Checked at ADD time. Left until send time, a typo shows up as a missed
+    alert on the night something was actually due, which is the failure this
+    whole service exists to prevent.
+    """
+    if "://" not in url:
+        return "that does not look like an Apprise URL (no scheme)"
+    try:
+        import apprise
+    except ImportError:
+        return ""          # cannot validate; let the send report it instead
+    try:
+        if not apprise.Apprise().add(url):
+            # Never echo the URL: it carries a credential.
+            return (f"Apprise did not accept a '{url.split('://')[0]}://' URL. "
+                    f"Check the scheme and the fields after it.")
+    except Exception as exc:
+        return f"Apprise could not parse it: {exc}"
+    return ""
+
+
+@app.post("/api/notify", dependencies=[Depends(require_ui)])
+async def add_notify_dest(payload: dict = Body(...)):
+    url = str(payload.get("url", "")).strip()
+    name = str(payload.get("name", "")).strip()[:40]
+    if not url:
+        raise HTTPException(400, "an Apprise URL is required")
+    bad = _valid_apprise(url)
+    if bad:
+        raise HTTPException(400, bad)
+    dests = notify_dests()
+    if any(d.get("url") == url for d in dests):
+        raise HTTPException(400, "that destination is already configured")
+    dests.append({"id": secrets.token_hex(4), "name": name, "url": url,
+                  "enabled": True})
+    save_notify_dests(dests)
+    print(f"[notify] added a {url.split('://')[0]} destination")
+    return {"ok": True, "id": dests[-1]["id"]}
+
+
+@app.post("/api/notify/{dest_id}", dependencies=[Depends(require_ui)])
+async def edit_notify_dest(dest_id: str, payload: dict = Body(...)):
+    """A BLANK url means keep the stored one, the same rule the import key
+    uses. The page never renders a URL back, so without this you could not
+    rename a destination or mute it without retyping a credential you cannot
+    read."""
+    dests = notify_dests()
+    for d in dests:
+        if d.get("id") != dest_id:
+            continue
+        if "name" in payload:
+            d["name"] = str(payload["name"]).strip()[:40]
+        if "enabled" in payload:
+            d["enabled"] = bool(payload["enabled"])
+        url = str(payload.get("url", "")).strip()
+        if url:
+            bad = _valid_apprise(url)
+            if bad:
+                raise HTTPException(400, bad)
+            d["url"] = url
+        save_notify_dests(dests)
+        return {"ok": True}
+    raise HTTPException(404, "no such destination")
+
+
+@app.delete("/api/notify/{dest_id}", dependencies=[Depends(require_ui)])
+async def remove_notify_dest(dest_id: str):
+    dests = notify_dests()
+    kept = [d for d in dests if d.get("id") != dest_id]
+    if len(kept) == len(dests):
+        raise HTTPException(404, "no such destination")
+    save_notify_dests(kept)
+    print("[notify] removed a destination")
+    return {"ok": True}
+
+
+@app.post("/api/notify/{dest_id}/test", dependencies=[Depends(require_ui)])
+async def test_one_notify_dest(dest_id: str):
+    """Sends through ONE destination, so a failure names the one that failed.
+
+    The all-at-once test cannot: Apprise reports a single boolean for the whole
+    batch, so with three destinations configured a refusal from any one of them
+    reads as "notifications are broken".
+    """
+    for d in notify_dests():
+        if d.get("id") == dest_id:
+            ok, reason = await asyncio.to_thread(
+                dispatch_to, [d["url"]],
+                "Idlarr test", "If you can read this, this destination works.",
+                "default")
+            if not ok:
+                raise HTTPException(502, f"not accepted: {reason}")
+            return {"ok": True}
+    raise HTTPException(404, "no such destination")
+
+
 @app.post("/api/test-notify")
 async def test_notify(request: Request,
                       authorization: str | None = Header(default=None)):
@@ -2635,9 +2831,10 @@ async def test_notify(request: Request,
     if not (tok and hmac.compare_digest(authorization or "", f"Bearer {tok}")) \
             and not authed(request):
         raise HTTPException(401, "bad token")
-    if not NOTIFY_URLS:
-        raise HTTPException(400, "IDLARR_NOTIFY_URLS is empty, alerts have "
-                                 "nowhere to go. Set it in .env and restart.")
+    if not notify_urls():
+        raise HTTPException(400, "no notification destinations are configured, so "
+                                 "alerts have nowhere to go. Add one below, or "
+                                 "set IDLARR_NOTIFY_URLS in .env.")
 
     when = datetime.now(local_tz()).strftime("%d %b %Y %H:%M %Z")
     body = (f"Test from Idlarr at {when}.\n"
@@ -2648,7 +2845,7 @@ async def test_notify(request: Request,
         print(f"[notify] test FAILED: {reason}")
         raise HTTPException(502, f"not accepted: {reason}")
     print("[notify] test sent")
-    return {"ok": True, "destinations": len(NOTIFY_URLS)}
+    return {"ok": True, "destinations": len(notify_urls())}
 
 
 # ---------------------------------------------------------------- view
@@ -3088,6 +3285,21 @@ PAGE = """<!doctype html>
     font-size:10.5px;margin-top:2px}
   .sheet .act-d.due{color:var(--due)}
   .sheet .row .ctl2>button{flex:1}
+  /* Destination rows span the pane rather than sitting in the 200px control
+     column: a name, a masked URL and three buttons do not fit there, and the
+     URL is the part you need room to read. */
+  .ndlist{margin:0 0 16px;border-top:1px solid var(--line)}
+  .nd{display:flex;align-items:center;gap:9px;padding:10px 0;
+    border-bottom:1px solid var(--line)}
+  .nd-n{font-family:var(--body);font-weight:600;font-size:13px;color:var(--fg);
+    flex:none;min-width:88px}
+  .nd-u{font-family:var(--mono);font-size:10.5px;color:var(--dim);
+    flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nd .lk{flex:none;padding:6px 10px}
+  .nd.off .nd-n,.nd.off .nd-u{opacity:.45}
+  .nd-src{font-family:var(--body);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--dim);flex:none}
+  .sheet .w-half{width:auto;flex:1;min-width:0}
   /* The key field shares its cell with the reveal button, so it may not take
      the full width the way every other input in this column does. */
   .sheet .row .ctl2>.keyf{width:auto;flex:1;min-width:0}
@@ -3729,6 +3941,61 @@ __SHEET__
    location.reload();
  });
 
+ // ---- notification destinations ---------------------------------------
+ // Delegated from the list, so rows added after load are wired without a
+ // second registration path that could drift from this one.
+ const nde=document.getElementById('nde');
+ const ndsay=(m,good)=>{if(nde){nde.className=good?'e good':'e';nde.textContent=m;}};
+ const ndlist=document.querySelector('.ndlist');
+ if(ndlist)ndlist.addEventListener('click',async(ev)=>{
+   const b=ev.target.closest('button[data-act]'); if(!b)return;
+   const row=b.closest('.nd'), id=row&&row.dataset.id; if(!id)return;
+   const act=b.dataset.act, was=b.textContent;
+   b.disabled=true; ndsay('');
+   try{
+     let r;
+     if(act==='del'){
+       // Two-step. A removed destination cannot be undone from the page: the
+       // URL is never rendered back, so there is nothing left to retype from.
+       if(b.dataset.arm!=='1'){
+         b.dataset.arm='1';b.classList.add('arm');b.textContent='Confirm';
+         b.disabled=false;return;
+       }
+       r=await fetch('/api/notify/'+encodeURIComponent(id),{method:'DELETE'});
+     }else if(act==='toggle'){
+       r=await fetch('/api/notify/'+encodeURIComponent(id),{method:'POST',
+         headers:{'Content-Type':'application/json'},
+         body:JSON.stringify({enabled:was!=='On'})});
+     }else{
+       b.textContent='Sending\u2026';
+       r=await fetch('/api/notify/'+encodeURIComponent(id)+'/test',{method:'POST'});
+     }
+     const d=await r.json().catch(()=>({}));
+     if(!r.ok){b.textContent=was;b.disabled=false;
+              b.dataset.arm='';b.classList.remove('arm');
+              ndsay(d.detail||('failed ('+r.status+')'));return;}
+     if(act==='test'){b.textContent='Sent';b.disabled=false;
+                      setTimeout(()=>b.textContent=was,1800);
+                      ndsay('sent, check that destination',true);return;}
+     location.reload();
+   }catch(e){b.textContent=was;b.disabled=false;ndsay('failed: '+e.message);}
+ });
+
+ const ndadd=document.getElementById('ndadd');
+ if(ndadd)ndadd.addEventListener('click',async()=>{
+   const url=document.getElementById('ndurl').value.trim();
+   if(!url){ndsay('paste an Apprise URL first');return;}
+   ndadd.disabled=true;ndsay('checking\u2026');
+   try{
+     const r=await fetch('/api/notify',{method:'POST',
+       headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({url:url,name:document.getElementById('ndname').value})});
+     const d=await r.json().catch(()=>({}));
+     if(!r.ok){ndadd.disabled=false;ndsay(d.detail||('failed ('+r.status+')'));return;}
+     location.reload();
+   }catch(e){ndadd.disabled=false;ndsay('failed: '+e.message);}
+ });
+
  const ntest=document.getElementById('ntest'),nte=document.getElementById('nte');
  if(ntest)ntest.addEventListener('click',async()=>{
    nte.className='e';nte.textContent='sending\u2026';ntest.disabled=true;
@@ -4179,19 +4446,60 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
            if (saved_key or iurl) else "")
         + '<p class="e" id="ime"></p>')
 
+    # Destinations are listed, not hidden behind a count. The count alone could
+    # not tell you WHICH one was failing, and with the URL masked there is
+    # nothing sensitive about showing that a Discord destination exists.
+    rows = []
+    for d in notify_dests():
+        off = not d.get("enabled", True)
+        rows.append(
+            f'<div class="nd{" off" if off else ""}" data-id="{esc(d["id"])}">'
+            f'<span class="nd-n">{esc(d.get("name") or scheme_name(d["url"]))}</span>'
+            f'<span class="nd-u">{esc(mask_url(d["url"]))}</span>'
+            f'<button class="lk" data-act="toggle">{"Off" if off else "On"}</button>'
+            f'<button class="lk" data-act="test">Test</button>'
+            f'<button class="lk" data-act="del">Remove</button></div>')
+    # Env-sourced ones are shown so the list is not a lie about what will
+    # receive, but they are not editable here: they belong to .env.
+    for url in NOTIFY_ENV:
+        rows.append(
+            '<div class="nd env">'
+            f'<span class="nd-n">{esc(scheme_name(url))}</span>'
+            f'<span class="nd-u">{esc(mask_url(url))}</span>'
+            '<span class="nd-src">from .env</span></div>')
+
     notify = (
-        _row("Configured",
-             "" if NOTIFY_URLS else "Alerts have nowhere to go.",
-             f'<span class="val {"on" if NOTIFY_URLS else "off"}">'
-             f'{len(NOTIFY_URLS)} destination{"" if len(NOTIFY_URLS) == 1 else "s"}</span>')
+        _row("Destinations",
+             "Where alerts go. Each one is an Apprise URL, so anything Apprise "
+             "supports works: ntfy, Discord, Telegram, Pushover, Gotify, email.",
+             f'<span class="val {"on" if notify_urls() else "off"}">'
+             f'{len(notify_urls())} destination'
+             f'{"" if len(notify_urls()) == 1 else "s"}</span>')
+        + (f'<div class="ndlist">{"".join(rows)}</div>' if rows else
+           '<p class="sub" style="margin:0 0 14px">Nothing configured, so '
+           'alerts have nowhere to go.</p>')
+        + _row("Add one",
+               'Paste an Apprise URL, for example '
+               '<code>discord://webhook_id/webhook_token</code> or '
+               '<code>ntfy://your-topic</code>. A name is optional and is only '
+               'a label. It is checked with Apprise before it is saved.',
+               '<input id="ndurl" placeholder="scheme://..." autocomplete="off">')
+        + _row("", "",
+               '<input id="ndname" class="w-half" placeholder="name (optional)" '
+               'autocomplete="off">'
+               '<button class="lk pri" id="ndadd">Add</button>')
+        + '<p class="e" id="nde"></p>'
         + _row("Send a test",
-               "Sends a real message now, whether or not anything is due. "
-               "A failure reports the provider's own reason.",
+               "Goes to every destination at once. Test a single one from its "
+               "own row above, which is the only way to learn WHICH is failing.",
                '<button class="lk" id="ntest">Send test</button>')
         + '<p class="e" id="nte"></p>'
-        + '<p class="sub" style="margin:15px 0 0">Destinations are Apprise URLs '
-          'in <code>IDLARR_NOTIFY_URLS</code>. They carry credentials, so they '
-          'stay in <code>.env</code> and are never shown here.</p>')
+        + '<p class="sub" style="margin:15px 0 0">A destination added here is '
+          'stored in the database, so it is in every nightly backup. To keep '
+          'credentials out of <code>/data</code> entirely, list them in '
+          '<code>IDLARR_NOTIFY_URLS</code> in <code>.env</code> instead: both '
+          'sources are used, and neither replaces the other. Saved URLs are '
+          'never shown again, only their scheme.</p>')
 
     about = (
         _row("Version", "", f'<span class="val">{IDLARR_VERSION}</span>')
