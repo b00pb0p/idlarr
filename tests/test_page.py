@@ -462,8 +462,13 @@ def test_the_build_chain_passes_the_version_through():
     assert "ENV IDLARR_VERSION=${IDLARR_VERSION}" in dockerfile
 
     publish = (root / ".github" / "workflows" / "publish.yml").read_text()
-    builds = publish.count("uses: docker/build-push-action@v6")
+    # Match the action WITHOUT its version. Counting `@v6` made this fail the
+    # moment Dependabot proposed `@v7`: builds dropped to 0 while passes stayed
+    # at 2, so a routine bump looked like a broken release chain. The invariant
+    # is "every build step passes the version", not "the action is at v6".
+    builds = len(re.findall(r"uses:\s*docker/build-push-action@", publish))
     passes = publish.count("build-args: IDLARR_VERSION=")
+    assert builds, "no docker build steps found; did the action get renamed?"
     assert builds == passes, f"{builds} build steps but {passes} pass the version"
 
 
