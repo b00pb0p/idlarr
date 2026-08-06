@@ -27,9 +27,20 @@ once you have checked.
 ## Importing from Prowlarr or Jackett
 
 Settings gear → **Import**. Point it at your own Prowlarr or Jackett with an API key and
-it lists the private indexers it found, marking which are new. Nothing is
-written until you click Import — an API key aimed at the wrong instance should
-cost you a list on screen, not a rewritten config.
+it lists the private indexers it found, marking which are new and which protocol
+each uses. Nothing is written until you click Import — an API key aimed at the
+wrong instance should cost you a list on screen, not a rewritten config.
+
+**Torrent and usenet, both ticked by default.** Prowlarr holds both, and a
+usenet account at somewhere like omgwtfnzbs or NZBs.in lapses for inactivity in
+the same way a tracker account does, so there is no reason to watch one and not
+the other. Untick either if you only want the one. Jackett is torrent-only and
+has nothing else to offer.
+
+Public indexers are never imported, whichever protocol: there is no account to
+lose. For usenet the test is inverted — anything not explicitly marked public
+counts as private — because Prowlarr does not reliably populate that field for
+usenet, and requiring it would drop exactly the sites you came here for.
 
 | | URL | API key |
 |---|---|---|

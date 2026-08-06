@@ -41,6 +41,12 @@ PROWLARR = [
      "indexerUrls": ["https://pub.example/"]},
     {"name": "Usenet One", "protocol": "usenet", "privacy": "private",
      "indexerUrls": ["https://nzb.example/"]},
+    # Prowlarr does not reliably set `privacy` on usenet indexers. Requiring an
+    # explicit "private" there drops the sites the import exists to find.
+    {"name": "Usenet Two", "protocol": "usenet",
+     "indexerUrls": ["https://nzb2.example/"]},
+    {"name": "Usenet Public", "protocol": "usenet", "privacy": "public",
+     "indexerUrls": ["https://openzb.example/"]},
     {"name": "Alpha Tracker", "protocol": "torrent", "privacy": "private",
      "indexerUrls": ["https://alpha.example/"]},          # already configured
 ]
@@ -92,12 +98,30 @@ BODY = {"source": "prowlarr", "url": "http://prowlarr.example:9696", "api_key": 
 
 # ------------------------------------------------------------- normalising
 
-def test_prowlarr_keeps_private_torrent_indexers(prowlarr):
+def test_prowlarr_keeps_private_indexers_of_both_protocols(prowlarr):
+    """Usenet accounts lapse for inactivity exactly like tracker accounts, and
+    Prowlarr holds both. This used to drop everything non-torrent, so an OMG or
+    NZBs.in account was invisible to a tool that exists to watch for that."""
+    got = {i["name"]: i.get("protocol") for i in app.prowlarr_indexers("http://x", "k")}
+    assert got.get("Real One") == "torrent"
+    assert got.get("Semi One") == "torrent"   # semi-private still prunes
+    assert got.get("Usenet One") == "usenet"
+    assert "Public One" not in got            # no account to lose
+    assert "Usenet Public" not in got         # an explicit public stays out
+
+
+def test_usenet_without_a_privacy_field_is_kept(prowlarr):
+    """The defensive half. Prowlarr does not always populate `privacy` for
+    usenet, and requiring it would drop those silently, which is the failure
+    this change is fixing rather than one to reintroduce."""
     names = [i["name"] for i in app.prowlarr_indexers("http://x", "k")]
-    assert "Real One" in names
-    assert "Semi One" in names            # semi-private still prunes for inactivity
-    assert "Public One" not in names      # no account to lose
-    assert "Usenet One" not in names      # not a tracker
+    assert "Usenet Two" in names
+
+
+def test_jackett_declares_torrent(jackett):
+    """Jackett has no usenet concept. Saying so explicitly keeps the protocol
+    filter from having to guess."""
+    assert {i["protocol"] for i in app.jackett_indexers("http://x", "k")} == {"torrent"}
 
 
 def test_prowlarr_reads_cardigann_base_url(prowlarr):
@@ -141,7 +165,8 @@ def test_apply_adds_the_new_ones(client, cfg, prowlarr):
     r = client.post("/api/import", json={**BODY, "apply": True})
     assert r.status_code == 200
     body = r.json()
-    assert set(body["added"]) == {"realone", "cardigannone", "semione"}
+    assert set(body["added"]) == {"realone", "cardigannone", "semione",
+                                  "usenetone", "usenettwo"}
     assert not body["failed"]
     for tid in body["added"]:
         assert tid in ids(cfg)
@@ -151,12 +176,51 @@ def test_imported_limits_are_never_treated_as_fact(client, cfg, prowlarr):
     """Neither tool knows an inactivity policy. A limit that arrives looking
     authoritative and is too high is precisely what loses an account."""
     client.post("/api/import", json={**BODY, "apply": True})
+    # Usenet included: neither tool knows a usenet retention policy either, and
+    # OMG's is nothing like a tracker's, so it must not arrive looking checked.
     added = [t for t in yaml.safe_load(cfg.read_text())["trackers"]
-             if t["id"] in ("realone", "cardigannone", "semione")]
-    assert len(added) == 3
+             if t["id"] in ("realone", "cardigannone", "semione",
+                            "usenetone", "usenettwo")]
+    assert len(added) == 5
     for t in added:
         assert t["inactivity_days"] == 30
         assert t["verified"] is False
+
+
+def test_protocols_filter_narrows_the_import(client, cfg, prowlarr):
+    """The panel offers a checkbox per protocol. Preview and apply must honour
+    it identically, or you confirm one list and get another."""
+    r = client.post("/api/import", json={**BODY, "protocols": ["torrent"]})
+    got = {c["id"] for c in r.json()["candidates"]}
+    assert "realone" in got
+    assert not {"usenetone", "usenettwo"} & got
+
+    r = client.post("/api/import", json={**BODY, "protocols": ["usenet"]})
+    got = {c["id"] for c in r.json()["candidates"]}
+    assert got == {"usenetone", "usenettwo"}
+
+
+def test_omitting_protocols_takes_both(client, cfg, prowlarr):
+    """A scripted caller that predates the checkboxes must get the WIDER set.
+    Defaulting to torrent-only would silently reinstate the old bug."""
+    got = {c["id"] for c in client.post("/api/import", json=BODY).json()["candidates"]}
+    assert {"realone", "usenetone"} <= got
+
+
+def test_selecting_no_protocol_is_refused(client, cfg, prowlarr):
+    """Silently importing nothing looks identical to a broken connection."""
+    r = client.post("/api/import", json={**BODY, "protocols": []})
+    assert r.status_code == 400
+    assert "torrent" in r.json()["detail"]
+
+
+def test_candidates_report_their_protocol(client, cfg, prowlarr):
+    """The preview shows it per row, so you can see what you are about to add
+    rather than trusting the checkbox."""
+    got = {c["id"]: c["protocol"] for c in
+           client.post("/api/import", json=BODY).json()["candidates"]}
+    assert got["realone"] == "torrent"
+    assert got["usenetone"] == "usenet"
 
 
 def test_apply_preserves_comments(client, cfg, prowlarr):
@@ -393,7 +457,7 @@ def test_a_write_failure_is_reported_per_tracker_not_as_a_500(client, cfg, prowl
     assert r.status_code == 200
     body = r.json()
     assert body["added"] == []
-    assert len(body["failed"]) == 3
+    assert len(body["failed"]) == 5
     assert "cannot write" in body["failed"][0]["error"]
 
 
@@ -402,7 +466,7 @@ def test_write_failures_are_logged(client, cfg, prowlarr, monkeypatch, capsys):
                         lambda e: (_ for _ in ()).throw(ValueError("refusing write")))
     client.post("/api/import", json={**BODY, "apply": True})
     out = capsys.readouterr().out
-    assert "0 added, 3 failed" in out and "refusing write" in out
+    assert "0 added, 5 failed" in out and "refusing write" in out
 
 
 # ---------------------------------------------------------------- SSRF surface

@@ -1750,6 +1750,19 @@ IMPORT_TIMEOUT = 10
 PRIVATE = {"private", "semiprivate", "semi-private"}
 
 
+def _worth_watching(item: dict, protocol: str) -> bool:
+    """A public tracker needs no account, so there is nothing to keep alive.
+
+    Usenet inverts the test rather than sharing it. Every usenet indexer worth
+    watching sits behind an account, and Prowlarr does not reliably populate
+    `privacy` for them, so requiring an explicit "private" there drops exactly
+    the sites this import is meant to find, silently. Anything not explicitly
+    public counts.
+    """
+    p = str(item.get("privacy", "")).lower().replace("_", "")
+    return p != "public" if protocol == "usenet" else p in PRIVATE
+
+
 def same_site(a: str, b: str) -> bool:
     """True when two hosts belong to the same tracker.
 
@@ -1801,9 +1814,12 @@ def prowlarr_indexers(base: str, api_key: str) -> list[dict]:
     data = _fetch_json(f"{base.rstrip('/')}/api/v1/indexer", {"X-Api-Key": api_key})
     out = []
     for item in data if isinstance(data, list) else []:
-        if str(item.get("protocol", "torrent")).lower() != "torrent":
+        # Usenet accounts lapse for inactivity the same way tracker accounts do,
+        # and Prowlarr holds both. This used to drop everything non-torrent.
+        protocol = str(item.get("protocol", "torrent")).lower()
+        if protocol not in ("torrent", "usenet"):
             continue
-        if str(item.get("privacy", "")).lower().replace("_", "") not in PRIVATE:
+        if not _worth_watching(item, protocol):
             continue
         urls = item.get("indexerUrls") or []
         url = urls[0] if urls else ""
@@ -1813,7 +1829,8 @@ def prowlarr_indexers(base: str, api_key: str) -> list[dict]:
                 if field.get("name") == "baseUrl" and field.get("value"):
                     url = str(field["value"])
                     break
-        out.append({"name": str(item.get("name", "")).strip(), "url": url})
+        out.append({"name": str(item.get("name", "")).strip(), "url": url,
+                    "protocol": protocol})
     return out
 
 
@@ -1826,8 +1843,10 @@ def jackett_indexers(base: str, api_key: str) -> list[dict]:
             continue
         if str(item.get("type", "")).lower().replace("_", "") not in PRIVATE:
             continue
+        # Jackett is torrent-only; it has no usenet concept to report.
         out.append({"name": str(item.get("name", "")).strip(),
-                    "url": str(item.get("site_link", "")).strip()})
+                    "url": str(item.get("site_link", "")).strip(),
+                    "protocol": "torrent"})
     return out
 
 
@@ -1866,6 +1885,14 @@ async def import_indexers(payload: dict = Body(...)):
     if not api_key:
         raise HTTPException(400, "an API key is required")
 
+    # Which protocols to take. Absent means both, so a scripted call or an
+    # older client gets the wider set rather than silently the narrower one.
+    raw = payload.get("protocols")
+    wanted = ({"torrent", "usenet"} if raw is None
+              else {str(p).lower() for p in raw} & {"torrent", "usenet"})
+    if not wanted:
+        raise HTTPException(400, "select torrent, usenet, or both")
+
     fetch = prowlarr_indexers if source == "prowlarr" else jackett_indexers
     try:
         found = await asyncio.to_thread(fetch, base, api_key)
@@ -1888,6 +1915,8 @@ async def import_indexers(payload: dict = Body(...)):
     for item in found:
         if not item["name"]:
             continue
+        if item.get("protocol", "torrent") not in wanted:
+            continue
         tid = slugify(item["name"])
         url, host = browsable(item["url"], host_from_url(item["url"]))
         if not tid or tid in seen:
@@ -1899,7 +1928,8 @@ async def import_indexers(payload: dict = Body(...)):
         known = tid in known_ids or any(same_site(host, k) for k in known_hosts)
         why = "already configured" if known else "" if host else "no usable URL"
         candidates.append({"id": tid, "name": item["name"], "url": url,
-                           "host": host, "skip": why})
+                           "host": host, "skip": why,
+                           "protocol": item.get("protocol", "torrent")})
 
     if not payload.get("apply"):
         return {"source": source, "found": len(found), "candidates": candidates}
@@ -2641,8 +2671,15 @@ PAGE = """<!doctype html>
   .modal input:focus,.modal select:focus{outline:none;border-color:var(--sig)}
   .modal .rowb{display:flex;gap:8px;margin-top:22px;padding-top:18px;
     border-top:1px solid var(--line)}
-  .modal .rowb button{flex:1;padding:9px;font-family:var(--mono);font-weight:500;
+  /* Buttons size to their content now, so the import prompt can hold the left
+     of the row. flex:1 stretched two words across half the dialog each. */
+  .modal .rowb button{padding:9px 14px;font-family:var(--mono);font-weight:500;
     font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;cursor:pointer}
+  .modal .rowb .alt{margin-right:auto;font-size:12px;color:var(--dim);
+    align-self:center;line-height:1.35}
+  .modal .rowb .alt a{color:var(--sig);cursor:pointer;text-decoration:none;
+    border-bottom:1px solid var(--sigdim);white-space:nowrap}
+  .modal .rowb .alt a:hover{border-bottom-color:var(--sig)}
   .modal .e{color:var(--critical);font-size:11.5px;min-height:15px;margin:7px 0 0}
   .modal .box.wide{width:410px}
   .modal .rowb button:disabled{opacity:.4;cursor:default}
@@ -2750,6 +2787,18 @@ PAGE = """<!doctype html>
   .imlist .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .imlist .sk{color:var(--dim);font-size:10px;white-space:nowrap}
   .imlist .new{color:var(--ok);font-size:10px;white-space:nowrap}
+  .imlist .pr{color:var(--dim);font-size:9.5px;letter-spacing:.09em;
+    text-transform:uppercase;white-space:nowrap;font-family:var(--mono)}
+  .improt{display:flex;align-items:center;gap:16px;margin:2px 0 8px;font-size:12px;
+    color:var(--dim2)}
+  .improt label{display:flex;align-items:center;gap:6px;cursor:pointer}
+  .improt input{width:14px;height:14px;accent-color:var(--sig);cursor:pointer;
+    padding:0;margin:0}
+  .improt em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
+    max-width:52%;line-height:1.35;text-align:right}
+  .improt em[hidden]{display:none}
+  .improt label.off{opacity:.4;cursor:not-allowed}
+  .improt label.off input{cursor:not-allowed}
   @media(max-width:760px){
     .sheet .win{flex-direction:column;height:92vh}
     /* Six tabs don't fit at phone width, so the nav must scroll — and any
@@ -2818,7 +2867,9 @@ __SHEET__
   <input id="tmd" type="text" inputmode="numeric" value="30">
   <label for="tmo">notes</label>
   <input id="tmo" placeholder="Gazelle. Seeding counts.">
-  <div class="rowb"><button class="lk" id="tmcancel">Cancel</button>
+  <div class="rowb">
+    <span class="alt">Have Prowlarr/Jackett? <a id="tmimp">Import</a></span>
+    <button class="lk" id="tmcancel">Cancel</button>
     <button class="lk pri" id="tmsave">Add</button></div>
   <p class="e" id="tme"></p>
 </div></div>
@@ -3219,6 +3270,10 @@ __SHEET__
  document.getElementById('addtrk').addEventListener('click',()=>{
    tme.textContent='';tmi.dataset.dirty='';tm.classList.add('on');tmn.focus();});
  document.getElementById('tmcancel').addEventListener('click',closeTrk);
+ // The two ways to add a tracker sat in different places with nothing linking
+ // them: this dialog, and Import inside Settings. Offer the other from here.
+ document.getElementById('tmimp').addEventListener('click',()=>{
+   closeTrk(); openSheet('import');});
  tm.addEventListener('click',e=>{if(e.target===tm)closeTrk();});
  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeTrk();});
  document.getElementById('tmsave').addEventListener('click',async()=>{
@@ -3240,9 +3295,22 @@ __SHEET__
    c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const ime=document.getElementById('ime');
  const imlist=document.getElementById('imlist'),imapply=document.getElementById('imapply');
+ // Jackett has no usenet indexers, so the box would be a control that does
+ // nothing. Disable it and say why, rather than letting a preview come back
+ // empty and look like a broken connection.
+ const ims=document.getElementById('ims'),impu=document.getElementById('impu');
+ const impul=document.getElementById('impul'),impnote=document.getElementById('impnote');
+ const imsync=()=>{const jack=ims.value==='jackett';
+   impu.disabled=jack; impul.classList.toggle('off',jack);
+   impnote.hidden=!jack;};
+ ims.addEventListener('change',imsync); imsync();
+
  const imbody=()=>({source:document.getElementById('ims').value,
    url:document.getElementById('imu').value,
-   api_key:document.getElementById('imk').value});
+   api_key:document.getElementById('imk').value,
+   protocols:[['impt','torrent'],['impu','usenet']]
+     .map(p=>[document.getElementById(p[0]),p[1]])
+     .filter(p=>p[0].checked&&!p[0].disabled).map(p=>p[1])});
 
  const impost=extra=>fetch('/api/import',{method:'POST',
    headers:{'Content-Type':'application/json'},
@@ -3258,9 +3326,10 @@ __SHEET__
    if(!r.ok){imlist.innerHTML='';ime.textContent=d.detail||('failed ('+r.status+')');return;}
    const c=d.candidates||[], fresh=c.filter(x=>!x.skip).length;
    imlist.innerHTML=c.length?c.map(x=>'<div class="r"><span class="nm">'+hesc(x.name)
-     +'</span>'+(x.skip?'<span class="sk">'+hesc(x.skip)+'</span>'
-                       :'<span class="new">will add</span>')+'</div>').join('')
-     :'<div class="r"><span class="nm">no private trackers found</span></div>';
+     +'</span><span class="pr">'+hesc(x.protocol||'')+'</span>'
+     +(x.skip?'<span class="sk">'+hesc(x.skip)+'</span>'
+             :'<span class="new">will add</span>')+'</div>').join('')
+     :'<div class="r"><span class="nm">nothing private found for that selection</span></div>';
    imapply.disabled=fresh===0;
    imapply.textContent=fresh?('Import '+fresh):'Import';
  });
@@ -3628,6 +3697,18 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         f'<input id="imu" placeholder="http://prowlarr.local:9696" value="{esc(iurl)}">'
         f'<input id="imk" type="password" autocomplete="off" placeholder="'
         f'{"saved &mdash; leave blank to reuse" if saved_key else "API key"}">'
+        '</div>'
+        # Two boxes, not one per site. The decision is which KIND of account to
+        # watch; per-indexer ticking would be twenty controls answering a
+        # question already answered. Both on, because excluding usenet by
+        # default is the behaviour this is fixing.
+        '<div class="improt">'
+        '<label><input type="checkbox" id="impt" checked> torrent</label>'
+        '<label id="impul"><input type="checkbox" id="impu" checked> usenet</label>'
+        # Only shown once it applies. Sitting there permanently, it read as a
+        # fact about the panel rather than an explanation of a disabled box.
+        '<em id="impnote" hidden>Jackett indexes torrents only, so there is no '
+        'usenet to fetch. Switch the source to Prowlarr for that.</em>'
         '</div>'
         '<div class="imlist" id="imlist"></div>'
         + _row("", "Preview first. Nothing is written until you confirm.",

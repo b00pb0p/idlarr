@@ -72,7 +72,8 @@ def test_settings_panel_is_present_with_every_section(page):
     "sheet", "sx", "gear", "addtrk",                       # panel and header
     "amm", "amc", "amu", "amp", "amsave", "ame",           # sign-in form
     "ims", "imu", "imk", "imlist", "impreview", "imapply",  # import form
-    "ntest", "nte", "cpjs", "tm", "tmn", "tmsave",         # test, copy, add
+    "impt", "impu", "impul", "impnote",                    # import protocols
+    "ntest", "nte", "cpjs", "tm", "tmn", "tmsave", "tmimp",  # test, copy, add
     "setTz", "setHour", "setPct", "setAlive", "setSave", "setErr",  # general
     "cfgUp", "cfgFile",                                    # config restore
 ])
@@ -233,6 +234,41 @@ def test_table_column_count_agrees_everywhere(page):
     assert heads == n, f"--cols has {n} tracks {tracks} but {heads} <th>"
     assert cells == {n}, f"{n} columns but rows have {cells} <td>"
     assert spans == {n}, f"{n} columns but colspan is {spans}"
+
+
+def test_import_offers_both_protocols_checked(page):
+    """Usenet accounts lapse for inactivity too, and the import used to drop
+    them. Both boxes must default to CHECKED: shipping usenet unticked would
+    reproduce the old behaviour for anyone who does not notice the control."""
+    css = _base_stylesheet(re.search(r"<style>(.*?)</style>", page, re.S).group(1))
+    assert ".improt{" in css, "checkboxes have no styling"
+    for eid in ('id="impt"', 'id="impu"'):
+        m = re.search(r'<input type="checkbox" ' + eid + r'([^>]*)>', page)
+        assert m, f"{eid} missing"
+        assert "checked" in m.group(1), f"{eid} does not default to checked"
+    script = re.search(r"<style>(.*?)</style>", page, re.S).group(1) and \
+        re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    assert "protocols:" in script, "the selection is never sent to the endpoint"
+    # Jackett has no usenet, so the box is disabled when it is the source. A
+    # disabled box must not contribute to the payload whatever its checked
+    # state, or picking Jackett would ask for a protocol it cannot serve.
+    assert "imsync" in script, "the usenet box never reacts to the source"
+    assert "!p[0].disabled" in script, "a disabled protocol box is still sent"
+    assert re.search(r'<em id="impnote" hidden>', page), \
+        "the Jackett note must start hidden; it only applies to one source"
+
+
+def test_add_tracker_offers_the_import_route(page):
+    """The two ways to add a tracker live in different places, with nothing
+    linking them: this dialog, and Import inside Settings. A new user finds one
+    and never learns the other exists. The prompt must actually open the Import
+    section, not merely the settings panel."""
+    assert 'id="tmimp"' in page
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    m = re.search(r"tmimp'\)\.addEventListener\('click',\(\)=>\{(.*?)\}\)", script, re.S)
+    assert m, "the import prompt has no click handler"
+    assert "openSheet('import')" in m.group(1), \
+        f"prompt does not open the Import section: {m.group(1).strip()}"
 
 
 def test_timezone_is_a_picker_not_free_text(page):

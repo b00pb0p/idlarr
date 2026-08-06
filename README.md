@@ -189,7 +189,7 @@ sections. Closing the panel discards anything you have not saved.
 | **General** | timezone, check hour, alert threshold, still-alive push, status page URL, backup retention, config download and restore, recent activity |
 | **Sign-in** | method, credentials, and sign out when the method is Forms |
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
-| **Import** | Prowlarr or Jackett |
+| **Import** | Prowlarr or Jackett, torrent and usenet |
 | **Notifications** | destination count, and a **Send test** button |
 | **About** | version, tracker count, userscript version, last check, database size, `/healthz` |
 
@@ -212,9 +212,13 @@ settings panel. Remove one by opening its row. Everything lands at **30 days,
 unconfirmed**, because a limit nobody has read off the tracker's own rules page
 is a guess — and a guess that is too high is the one that loses the account.
 
-Imports never carry a limit: neither Prowlarr nor Jackett knows a tracker's
-inactivity policy, and a wrong number arriving with the authority of an import
-is worse than no number.
+Imports cover **torrent and usenet**, both ticked by default. Prowlarr holds
+both, and a usenet account lapses for inactivity the same way a tracker account
+does. Jackett is torrent-only.
+
+Imports never carry a limit: neither Prowlarr nor Jackett knows an inactivity
+policy, and a wrong number arriving with the authority of an import is worse
+than no number.
 
 Full detail — importing, editing `trackers.yml` by hand, `host` overrides, and
 the `auth_sel` escape hatch for sites the auth heuristic cannot read — is in
