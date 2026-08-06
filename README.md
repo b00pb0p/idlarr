@@ -26,9 +26,12 @@ one, it doesn't.
 ## Requirements
 
 - Docker and Docker Compose
-- A browser with [Violentmonkey](https://violentmonkey.github.io/) or Tampermonkey
+- A browser with [Violentmonkey](https://violentmonkey.github.io/),
+  [Tampermonkey](https://www.tampermonkey.net/) or
+  [Greasemonkey](https://www.greasespot.net/)
 - Somewhere to host it. It has its own optional sign-in; behind Tailscale or a VPN is still the belt-and-braces answer
-- Somewhere to send notifications — [ntfy](https://ntfy.sh), Pushover, Discord, Telegram, or anything else [Apprise](https://github.com/caronc/apprise) supports
+- Somewhere to send notifications: [ntfy](https://ntfy.sh), Pushover, Discord,
+  Telegram, or anything else [Apprise](https://github.com/caronc/apprise) supports
 
 FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
 
@@ -40,8 +43,8 @@ FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
 1. You visit a tracker in your normal browser.
 2. The userscript checks whether you're authenticated and POSTs `{tracker, kind}`
    to the service. Two event kinds:
-   - `visit` — fires on every page load
-   - `auth` — fires only when you're actually logged in
+   - `visit`: fires on every page load
+   - `auth`: fires only when you're actually logged in
 3. Daily, the service compares `last auth` against that tracker's inactivity limit
    and pushes an escalating alert if you're getting close.
 
@@ -50,8 +53,8 @@ there in two months"* from *"the userscript broke."*
 
 ## Quickstart
 
-Five minutes if nothing surprises you. The full walkthrough — every environment
-variable, a different UID, building from source, worked config examples — is in
+Five minutes if nothing surprises you. The full walkthrough, covering every environment
+variable, a different UID, building from source and worked config examples, is in
 **[docs/setup.md](docs/setup.md)**.
 
 **1. Directories.** The `chown` matters: the container runs as UID 1001 and
@@ -65,19 +68,19 @@ curl -fsSLO https://raw.githubusercontent.com/b00pb0p/idlarr/main/.env.example
 cp .env.example .env
 ```
 
-There is no config to copy — an empty `trackers.yml` is created on first boot,
+There is no config to copy. An empty `trackers.yml` is created on first boot,
 and you add trackers from the page.
 
 **2. Settings.** Only one thing is worth setting before you start:
-`IDLARR_NOTIFY_URLS`, an [Apprise](https://github.com/caronc/apprise) URL —
+`IDLARR_NOTIFY_URLS`, an [Apprise](https://github.com/caronc/apprise) URL,
 `ntfy://ntfy.sh/your-topic`, `pover://USER@TOKEN`, `discord://ID/TOKEN`, and
 ~100 more. Without it the service runs and warns, but nothing can reach you.
 
-Set `STATUS_URL` to the address you'll reach the page on — the userscript is
+Set `STATUS_URL` to the address you'll reach the page on. The userscript is
 generated from it. It seeds the config on first run; afterwards you change it
 in **Settings → General** rather than here.
 
-`IDLARR_TOKEN` is optional — one is generated on first boot and the userscript
+`IDLARR_TOKEN` is optional. One is generated on first boot and the userscript
 you install already carries it. Set it only to pin a specific value.
 
 **3. Deploy.** A prebuilt multi-arch image is published to GHCR:
@@ -102,20 +105,23 @@ docker compose up -d
 
 `latest` follows releases, `1.2` pins a minor, `edge` tracks `main`.
 
-**4. Userscript.** Install a userscript manager ([Violentmonkey](https://violentmonkey.github.io/), Tampermonkey, or Greasemonkey),
+**4. Userscript.** Install a userscript manager
+([Violentmonkey](https://violentmonkey.github.io/),
+[Tampermonkey](https://www.tampermonkey.net/) or
+[Greasemonkey](https://www.greasespot.net/)),
 open the status page, and click **Install** in the Userscript section of
-settings. The script is generated from your tracker list — nothing to fill in —
+settings. The script is generated from your tracker list, with nothing to fill in, and
 and it updates itself when you add a tracker.
 
 **5. Bootstrap.** Everything starts at `no data`. Visit each tracker while
 logged in, or open a row and click **seen** to assert it by hand.
 
 Then add your real trackers from the page, or import them from Prowlarr or
-Jackett — see **[docs/trackers.md](docs/trackers.md)**.
+Jackett. See **[docs/trackers.md](docs/trackers.md)**.
 
 ## Signing in
 
-Optional, and off until you set it up. Configure it from the status page —
+Optional, and off until you set it up. Configure it from the status page:
 there is no password in `.env`, and nothing to edit in a file. The credentials
 are stored **hashed** (PBKDF2-HMAC-SHA256) in the database, so they ride along
 in the daily backup and change without recreating the container.
@@ -132,11 +138,12 @@ and scripts work without a login round-trip. The setting decides how you are
 
 ### Do I need it?
 
-Behind Tailscale, a VPN, or an authenticating reverse proxy — no, and the
-default costs you nothing. On a shared network — university halls, shared
-housing, an office — yes. The risk is not that someone reads your tracker list,
-though they can. It is that `POST /api/mark/{id}` needs no credentials with auth
-off, and one call silently resets a countdown. Your dashboard then reads `ok`
+Behind Tailscale, a VPN, or an authenticating reverse proxy: no, and the
+default costs you nothing. On a shared network such as university halls,
+shared housing or an office: yes. The risk is not that someone reads your
+tracker list, though they can. It is that `POST /api/mark/{id}` needs no
+credentials with auth off, and one call silently resets a countdown. Your
+dashboard then reads `ok`
 while the account ages out, which is the precise failure this whole service
 exists to prevent.
 
@@ -152,7 +159,7 @@ There is no config file to hand-edit, so there is an env var instead:
 IDLARR_RESET_AUTH=1
 ```
 
-Start once — the login is cleared and every existing session is invalidated —
+Start once. The login is cleared and every existing session is invalidated,
 then **remove the variable and restart again**, or the next boot clears it
 right back.
 
@@ -161,24 +168,24 @@ right back.
 `/healthz` stays open so an uptime monitor needs no credentials. `/ping` keeps
 using `IDLARR_TOKEN`, which is unchanged: one credential for the userscript,
 one for you, the same split the *arr apps use. And the login is only as strong
-as the transport — over plain HTTP on an untrusted network, use a VPN or put
+as the transport. Over plain HTTP on an untrusted network, use a VPN or put
 TLS in front of it.
 
 ## The status page
 
 One card per account, worst first: **tracker · state · left · elapsed**, with
 the software under each name, and last auth and the limit on the elapsed line.
-Click **tracker**, **state**, **left** or **elapsed** to sort by it — elapsed
+Click **tracker**, **state**, **left** or **elapsed** to sort by it, elapsed
 being how much of that tracker's window has burned. Blanks always sort last, so
 a tracker with no data can never outrank one that's expiring.
 
 Click a **name** to open that tracker in a new tab. Click anywhere else on the
 row to expand a drawer with three panels:
 
-- **controls** — limit, alert threshold, snooze, notes, `confirm`, `immune`
+- **controls**: limit, alert threshold, snooze, notes, `confirm`, `immune`
   (with a reason field), `seen`, `undo`, `remove`
-- **alert schedule** — the exact date each rung fires, or why it won't
-- **auth history** — recent auth events, and whether each was observed or asserted
+- **alert schedule**: the exact date each rung fires, or why it won't
+- **auth history**: recent auth events, and whether each was observed or asserted
 
 **Add tracker**, the settings gear and, when sign-in uses Forms, a **sign-out**
 icon sit top right. Everything configurable lives behind the gear, in six
@@ -198,8 +205,8 @@ The userscript version and the date of the last daily check live in **About**;
 sign-in state is announced by the red banner and the **Sign-in** panel rather
 than repeated in a footer.
 
-On a phone each card re-grids to fit — the countdown moves beside the name and
-the elapsed bar spans the full width — and the settings nav becomes a scrolling
+On a phone each card re-grids to fit: the countdown moves beside the name and
+the elapsed bar spans the full width. The settings nav becomes a scrolling
 tab strip.
 
 Limits written here go straight into `trackers.yml`, comments intact,
@@ -210,7 +217,7 @@ hot-reloaded, no restart. `seen` is two-step on purpose.
 **Add** from the header, or **Import** from your own Prowlarr or Jackett in the
 settings panel. Remove one by opening its row. Everything lands at **30 days,
 unconfirmed**, because a limit nobody has read off the tracker's own rules page
-is a guess — and a guess that is too high is the one that loses the account.
+is a guess, and a guess that is too high is the one that loses the account.
 
 Imports cover **torrent and usenet**, both ticked by default. Prowlarr holds
 both, and a usenet account lapses for inactivity the same way a tracker account
@@ -220,8 +227,8 @@ Imports never carry a limit: neither Prowlarr nor Jackett knows an inactivity
 policy, and a wrong number arriving with the authority of an import is worse
 than no number.
 
-Full detail — importing, editing `trackers.yml` by hand, `host` overrides, and
-the `auth_sel` escape hatch for sites the auth heuristic cannot read — is in
+Full detail on importing, editing `trackers.yml` by hand, `host` overrides and
+the `auth_sel` escape hatch for sites the auth heuristic cannot read is in
 **[docs/trackers.md](docs/trackers.md)**.
 
 ## Alert escalation
@@ -230,45 +237,52 @@ Relative to each tracker's inactivity limit:
 
 | Remaining | State | Priority | Reaches you as |
 |---|---|---|---|
-| immune | immune | — | never alerts |
-| snoozed (date in future) | snoozed | — | never alerts, expires by itself |
-| > 35% | ok | — | silent |
+| immune | immune | none | never alerts |
+| snoozed (date in future) | snoozed | none | never alerts, expires by itself |
+| > 35% | ok | none | silent |
 | ≤ 35% (or past `alert_at_pct`) | due | `default` | *info* |
 | ≤ 14 days | warn | `high` | *warning* |
 | ≤ 5 days | critical | `urgent` | *failure* |
 | past the limit | expired | `urgent` | *failure* |
 | visited while logged out | session, shown as **logged out** | `high` | *warning* |
+| no auth event ever recorded | unknown | none | silent |
 
 The right-hand column is the Apprise severity, which each service renders in its
-own way — a colour in Discord, a priority level in Pushover, a tag in ntfy.
+own way: a colour in Discord, a priority level in Pushover, a tag in ntfy.
+
+`unknown` is the state every tracker starts in, and it stays there until the
+userscript reports an authenticated visit. It is silent on purpose: there is no
+baseline to count from, so there is nothing to be late for. A tracker stuck on
+`unknown` after you have visited it means the script is not reporting, which
+[Troubleshooting](docs/troubleshooting.md) covers.
 
 ## Still-alive push
 
 Nothing else watches the watchdog. If this container dies, the daily check and
-the backup it takes both stop — and **silence is exactly what a healthy quiet
+the backup it takes both stop, and **silence is exactly what a healthy quiet
 day looks like**. You would not find out until an account was gone.
 
 Turn on a heartbeat in *Settings → General → Still-alive push*: daily, weekly or
-fortnightly. It sends one low-priority message — *"Idlarr is running. Watching
+monthly. It sends one low-priority message, *"Idlarr is running. Watching
 23 trackers. Closest: Anthelion, 4 days left."* Once you expect one every
 Monday, its absence means something.
 
 Off by default. Unrequested notifications are how people learn to ignore the
 ones that matter. It runs after the daily check and only when nothing was due,
 so a day with a real alert never also gets a heartbeat, and a failed send is not
-recorded as sent — otherwise one lost push would silence the next one too.
+recorded as sent. Otherwise one lost push would silence the next one too.
 
 The alternative, if you already run monitoring: point an uptime monitor at
 `/healthz`, which needs no credentials for exactly this reason.
 
 Alerts batch into **one message per day**, not one per tracker. A dozen separate
 pushes is how someone starts ignoring them. It repeats daily while anything is
-actionable — one 3am push is how accounts get lost.
+actionable. One 3am push is how accounts get lost.
 
 ## Notifications
 
 Everything goes through [Apprise](https://github.com/caronc/apprise), which
-speaks around a hundred services — **including ntfy**. One setting, one code
+speaks around a hundred services, **including ntfy**. One setting, one code
 path, nothing bespoke to maintain.
 
 ```bash
@@ -302,7 +316,7 @@ different on your phone from a routine nudge: `default` becomes *info*, `high`
 becomes *warning*, `urgent` becomes *failure*.
 
 The status page URL, if set, is appended to the message body rather than used as a
-provider-specific click action — every service renders a URL, only some support
+provider-specific click action. Every service renders a URL, only some support
 a tap target.
 
 **With `IDLARR_NOTIFY_URLS` empty, nothing can reach you.** Compose refuses to
@@ -330,15 +344,15 @@ start without it, and the service warns if it ends up empty anyway.
 | `POST /api/import` | Preview (default) or apply a Prowlarr/Jackett import |
 | `GET /api/config` | Download `trackers.yml` as it is on disk |
 | `POST /api/config` | Replace `trackers.yml`. Validates first, backs up what was there |
-| `POST /api/settings` | Edit the `defaults:` block — timezone, check hour, thresholds |
+| `POST /api/settings` | Edit the `defaults:` block: timezone, check hour, thresholds |
 | `GET`/`POST /api/auth` | Read or change the UI login |
 | `POST /login` · `POST /logout` | Session in, session out |
 | `POST /api/test-notify` | Send a test notification. Bearer token or a session |
-| `GET /healthz` | Health check — **always open**, so an uptime monitor needs no credentials |
+| `GET /healthz` | Health check, **always open**, so an uptime monitor needs no credentials |
 
 Everything above `/api/test-notify` sits behind the UI login **when one is
 configured**; with none set they are open, which is the 1.0 behaviour. `/ping`
-always uses the bearer token, never the login — the userscript posts to it
+always uses the bearer token, never the login. The userscript posts to it
 cross-origin from tracker pages, where cookies do not apply.
 
 </details>
@@ -354,33 +368,33 @@ cross-origin from tracker pages, where cookies do not apply.
 - **The `seen` button is a bootstrap tool, not a workflow.** The week you tap it
   out of habit without logging in is the week this stops working. It's two-step
   in the UI for that reason, and every row shows whether its last auth was
-  *seen by userscript* or *marked by hand*. If a mark was wrong — site was down,
-  page came from cache — `undo` removes it.
+  *seen by userscript* or *marked by hand*. If a mark was wrong (site was down,
+  page came from cache), `undo` removes it.
 - **Auth detection is a heuristic**: a `logout` link present, no password field.
   Works on Gazelle/UNIT3D and most PHP trackers. If a site redesigns, it silently
-  stops recording `auth` — you'll get alerts you don't deserve. That's the safe
+  stops recording `auth`, so you'll get alerts you don't deserve. That's the safe
   failure direction, but check the console (`[idlarr]` logs) before assuming
   the tracker is at fault. Use `auth_sel` to override per-site.
 - **`trackers.yml` hot-reloads.** Edit it live; no restart.
 - **The database is backed up once a day**, at the start of the daily check
   rather than overnight, to `/data/backups/idlarr-YYYY-MM-DD.db`. 14 days by
   default, set in **Settings → General**. It is the only record of when each
-  account was last seen — losing it risks no account, but resets every countdown
+  account was last seen. Losing it risks no account, but resets every countdown
   to `no data` until you re-visit all of them. See
   [Restoring a backup](docs/troubleshooting.md#restoring-a-backup); it has been tested, and there is one
   surprise in it.
 - **Your tracker list can be downloaded and restored** from *Settings →
   General*. The download is the file as it is on disk, comments included.
-  Restoring **replaces** it — the current file is saved beside it as
+  Restoring **replaces** it. The current file is saved beside it as
   `trackers.yml.<timestamp>.bak` first, and anything that does not validate is
   refused before a single byte is written. Removed trackers keep their auth
   history, so restoring an older config resumes those countdowns rather than
   restarting them.
-- **A backup contains every secret the service holds** — your tracker list, the
+- **A backup contains every secret the service holds**: your tracker list, the
   API token, the session secret, and a saved Prowlarr key. The database and its
   backups are written `0600` so other local users cannot read them, but that
-  only protects them *on the box*. If you sync `/data` anywhere — an appdata
-  backup plugin, rsync, cloud storage — encrypt it at that layer. Idlarr does
+  only protects them *on the box*. If you sync `/data` anywhere (an appdata
+  backup plugin, rsync, cloud storage), encrypt it at that layer. Idlarr does
   not encrypt them itself: the key would have to live somewhere it could read
   unattended, and a backup you cannot decrypt is not a backup.
 - **The clock is `last auth`, not `last visit`.** Passing by while logged out
@@ -400,7 +414,7 @@ Diagnosis table, the stale-script case, and how to restore from a backup:
 If you contribute one, **screenshot a demo instance, not your own**. The status
 page lists every tracker you're a member of, and that is not something to publish.
 
-`tools/demo-seed.py` builds one that looks like a real install — twelve
+`tools/demo-seed.py` builds one that looks like a real install: twelve
 fictional trackers, every state on the ladder represented, and enough auth
 history that an expanded drawer has something in it:
 
@@ -414,10 +428,10 @@ docker run --rm -p 8090:8080 \
 ```
 
 **`:edge`, not `:latest`.** `latest` follows releases, so it will not show
-anything merged since the last tag — you would be photographing an older app
+anything merged since the last tag, so you would be photographing an older app
 than the one you are documenting.
 
-No `python3` on the host — common on NAS distributions? Run the seeder inside
+No `python3` on the host, common on NAS distributions? Run the seeder inside
 the image, which has one. `--user 0` is needed so it can write the mount and
 chown it afterwards:
 
@@ -430,7 +444,7 @@ Seed **before** starting the container. Docker creates a missing bind-mount
 source as an empty root-owned directory, so starting first gets you
 `No tracker config at /config/trackers.yml` and a database it cannot write.
 
-It boots screenshot-ready — a sign-in already configured, so there is no red
+It boots screenshot-ready, with a sign-in already configured, so there is no red
 banner. Log in with **`demo` / `demo-password`**.
 
 Set `STATUS_URL` to the address you will actually browse. `localhost` is right
@@ -438,13 +452,13 @@ only if you are on the machine running it; from anywhere else the Install link
 points at your own computer.
 
 Run it rather than saving the HTML: the drawer fetches its history from
-`/api/history`, which cannot work from a `file://` page — and an expanded drawer
+`/api/history`, which cannot work from a `file://` page, and an expanded drawer
 is the part of the page a table of rows does not show.
 
 ## Contributing
 
 Issues and pull requests welcome. `pytest` runs on every push; please keep it
-green and add a test for behaviour changes — most of the suite exists because
+green and add a test for behaviour changes. Most of the suite exists because
 something silently did the wrong thing once.
 
 ```bash
@@ -455,10 +469,10 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
 ## A note on scope
 
 Idlarr reminds you to log in. That's all it does. It doesn't automate logins,
-touch your ratio, seed, download, or interact with a tracker in any way — it only
+touch your ratio, seed, download, or interact with a tracker in any way. It only
 reads a page your browser already loaded. Respect the rules of the sites you're a
 member of; this tool won't help you break them.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

@@ -1,17 +1,17 @@
 # Managing trackers
 
 Adding, removing and importing them, plus the escape hatch for a site the auth
-heuristic cannot read. All of this happens after you are running — see
+heuristic cannot read. All of this happens after you are running; see
 [Setup](setup.md) to get there.
 
 **From the status page.** **+ Add tracker**, top right. Name and URL are
-enough — the id is derived from the name and the host from the URL, both
+enough: the id is derived from the name and the host from the URL, both
 editable. The entry is appended to `trackers.yml` with its comments intact, and
 the generated userscript changes with it, so the browser picks up the new
 `@match` on your manager's next update check.
 
 Open a row to change its **limit**, mark it **confirmed** or **immune**, or edit
-its **notes** — the first word of which sets the software shown under the
+its **notes**, the first word of which sets the software shown under the
 tracker's name, so correcting one corrects the other.
 
 To remove one, open its row and click **remove**, then confirm. Its **auth
@@ -19,7 +19,7 @@ history stays in the database** on purpose: re-adding the same id restores the
 countdown rather than silently restarting it, which is the failure this whole
 service exists to prevent.
 
-New trackers always start at **30 days, unconfirmed**. That is not laziness — a
+New trackers always start at **30 days, unconfirmed**. That is not laziness. A
 limit nobody has read off the tracker's own rules page is a guess, and a guess
 that is too high is the one that loses the account. Raise it and tick *confirm*
 once you have checked.
@@ -28,7 +28,7 @@ once you have checked.
 
 Settings gear → **Import**. Point it at your own Prowlarr or Jackett with an API key and
 it lists the private indexers it found, marking which are new and which protocol
-each uses. Nothing is written until you click Import — an API key aimed at the
+each uses. Nothing is written until you click Import. An API key aimed at the
 wrong instance should cost you a list on screen, not a rewritten config.
 
 **Torrent and usenet, both ticked by default.** Prowlarr holds both, and a
@@ -38,8 +38,8 @@ the other. Untick either if you only want the one. Jackett is torrent-only and
 has nothing else to offer.
 
 Public indexers are never imported, whichever protocol: there is no account to
-lose. For usenet the test is inverted — anything not explicitly marked public
-counts as private — because Prowlarr does not reliably populate that field for
+lose. For usenet the test is inverted (anything not explicitly marked public
+counts as private) because Prowlarr does not reliably populate that field for
 usenet, and requiring it would drop exactly the sites you came here for.
 
 | | URL | API key |
@@ -50,11 +50,11 @@ usenet, and requiring it would drop exactly the sites you came here for.
 A connection that works is **remembered**, so a container recreate does not send
 you back for the key. Leave the key field blank to reuse it; it is only reused
 for the same source and URL, never sent to a different host. It is stored in the
-database in plaintext and included in the daily backup — there is a **Forget**
+database in plaintext and included in the daily backup. There is a **Forget**
 button beside it if that is not what you want. The key is never sent back to the
 browser; the field only shows that one is saved.
 
-Public indexers and usenet are skipped — there is no account to lose. Trackers
+Public indexers and usenet are skipped: there is no account to lose. Trackers
 already in your config are skipped too, matched on **site** as well as id, so a
 tracker Prowlarr names differently is not added twice.
 
@@ -89,7 +89,7 @@ directly works and needs no restart:
     notes: "Gazelle"
 ```
 
-`url` should point at a page that requires a login — the status page links to
+`url` should point at a page that requires a login. The status page links to
 it, and it's where you'll land to reset the clock. `notes` starting with the
 tracker software (`Gazelle`, `UNIT3D`, `TBDev`, `Custom`) fills the software
 line under the tracker's name for free.
@@ -121,7 +121,7 @@ expose them:
 
 | key | why it is not in the UI |
 |---|---|
-| `auth_sel` | a CSS selector — a text box for one would invite guesses, and a wrong selector means that tracker silently never records |
+| `auth_sel` | a CSS selector. A text box for one would invite guesses, and a wrong selector means that tracker silently never records |
 | `host` | derived from `url`; overriding it is rare and easy to get wrong |
 | `alert_at_pct` | per-tracker alert timing. See the note about short limits in [Alert escalation](../README.md#alert-escalation) |
 | `software` | normally derived from the first word of `notes` |
@@ -132,7 +132,7 @@ dialogs on the page and one search-and-replace in the file.
 
 # Alerting earlier on a short limit
 
-The `due` rung fires at `alert_at_pct` of a tracker's limit — 65% by default.
+The `due` rung fires at `alert_at_pct` of a tracker's limit, 65% by default.
 On a short limit that is often past `warn` already, so `due` never fires: at 30
 days, 65% is day 20 and `warn` starts at day 16.
 
@@ -147,7 +147,7 @@ worse than no alerts.
 
 Single-page apps often keep no logout control in the DOM until you open a user
 menu, which passive detection can't do. Set `auth_sel` on that tracker to
-anything that only exists when you're authenticated — a per-account download
+anything that only exists when you're authenticated: a per-account download
 link, an upload button, your username:
 
 ```yaml
@@ -161,7 +161,7 @@ It goes straight into the generated userscript's `SITES` entry as `authSel`.
 
 A passkey in a download URL is stronger evidence than a logout link, since it
 cannot be rendered for an anonymous visitor. Note that such links usually only
-appear on torrent-listing pages — point that tracker's `url` at its browse page.
+appear on torrent-listing pages. Point that tracker's `url` at its browse page.
 
 **Removing** a tracker is the reverse: delete both entries and reinstall. Its
 recorded events stay in the database, so re-adding the same `id` later resumes
@@ -173,7 +173,7 @@ the old countdown rather than starting fresh.
 Trackers with a **vacation mode**, or an account you have parked deliberately.
 Open the row, set a date under **snooze**, and it stops alerting until then.
 
-The countdown keeps running and stays on screen — you still want to know when
+The countdown keeps running and stays on screen, because you still want to know when
 the account actually expires while deciding whether to extend. Only the alerts
 are suppressed.
 
@@ -182,7 +182,7 @@ are suppressed.
 forgetting means an account you still care about is silently no longer watched.
 A snooze that runs out simply resumes counting.
 
-Clear the date to resume immediately. A snooze longer than a year is refused —
+Clear the date to resume immediately. A snooze longer than a year is refused:
 past that you want `immune`, which says so on the row instead of hiding a
 countdown behind a date nobody will revisit. A date the service cannot parse is
 ignored rather than honoured, so a typo keeps alerting instead of silently
@@ -192,14 +192,14 @@ muting.
 
 Some accounts can't be pruned at all: you donated, your user class is exempt, or
 the site has a standing exemption. Hit `immune` on that row and it moves to its
-own section — no countdown, no alerts ever, and it leaves the unconfirmed-limits
+own section: no countdown, no alerts ever, and it leaves the unconfirmed-limits
 denominator, so `1/21` means 21 trackers still actually need a number.
 
 A reason field appears when you toggle it on. Fill it in. In six months you will
 not remember whether it was the donation or the user class, and if the site
 changes its policy that's the only thing that tells you what to re-check.
 
-Immunity outranks every other state, including `expired` — an immune tracker that
+Immunity outranks every other state, including `expired`. An immune tracker that
 hasn't been touched in 200 days is still fine, and saying otherwise would train
 you to ignore the alerts that matter.
 
