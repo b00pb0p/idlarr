@@ -324,6 +324,29 @@ def test_the_userscript_backs_off_on_a_4xx(client):
     assert js.count("GM_setValue(key, Date.now())") == 2
 
 
+def test_an_import_marks_the_script_stale_with_no_fetch(client, cfg):
+    """The version counter is LAZY: `userscript_rev` moves only inside
+    render_userscript(), which runs when the script is fetched. Comparing revs
+    alone therefore reported "up to date" for the entire window between an
+    import and the browser's next update check, which is precisely when you
+    need telling. Reported from the field after a usenet import.
+
+    Nothing here fetches the script after the change, on purpose."""
+    client.get(f"/idlarr.user.js?token={app.TOKEN}")     # a version now exists
+    app.set_state("script_seen", app.userscript_version_peek())
+    assert 'id="stale"' not in client.get("/").text, "should be current"
+
+    r = client.post("/api/tracker", json={
+        "id": "nzbsin", "name": "NZBs.in", "url": "https://nzbs.in/",
+        "inactivity_days": 30})
+    assert r.status_code == 200, r.text
+
+    body = client.get("/").text
+    assert 'id="stale"' in body, \
+        "an import left the browser's script uncovered and said nothing"
+    assert "tracker list has changed" in body
+
+
 def test_no_stale_warning_before_anything_has_reported(client, cfg):
     """Unknown is not the same as stale. A fresh install must not be told to
     reinstall a script it has not got yet."""
