@@ -289,6 +289,41 @@ def test_page_renders_once_a_browser_has_reported_a_version(client, cfg):
     assert "1.1.1" in r.text and "1.1.4" in r.text
 
 
+def test_ping_without_a_version_still_works(client, cfg):
+    """Backwards compatibility both ways. A script installed before versions
+    were reported sends no `v`, and must not be rejected, and must not wipe a
+    version some other browser already reported."""
+    app.set_state("script_seen", "1.1.5")
+    r = client.post("/ping", json={"tracker": "alpha", "kind": "visit"},
+                    headers={"Authorization": f"Bearer {app.TOKEN}"})
+    assert r.status_code == 200
+    assert app.get_state("script_seen") == "1.1.5"
+
+
+def test_a_removed_tracker_gets_a_useful_404(client, cfg):
+    """The browser keeps its @match until the next update check, so a tracker
+    you removed still pings. "add it to trackers.yml" was exactly wrong advice
+    for that case."""
+    r = client.post("/ping", json={"tracker": "deleted-one", "kind": "auth"},
+                    headers={"Authorization": f"Bearer {app.TOKEN}"})
+    assert r.status_code == 404
+    d = r.json()["detail"]
+    assert "removed" in d and "typo" in d
+    assert "add it to trackers.yml" not in d
+
+
+def test_the_userscript_backs_off_on_a_4xx(client):
+    """The cooldown is written only on success, so failures retry next page
+    load. That is right for a timeout and wrong for a 404: a removed tracker
+    would POST and fail on EVERY page load of that site until the script
+    updates. 5xx must still retry."""
+    js = (Path(__file__).resolve().parent.parent / "idlarr.user.js").read_text()
+    assert "res.status >= 400 && res.status < 500" in js, \
+        "no 4xx back-off; a removed tracker will hammer /ping"
+    # the success path must still be the only one that counts as recorded
+    assert js.count("GM_setValue(key, Date.now())") == 2
+
+
 def test_no_stale_warning_before_anything_has_reported(client, cfg):
     """Unknown is not the same as stale. A fresh install must not be told to
     reinstall a script it has not got yet."""

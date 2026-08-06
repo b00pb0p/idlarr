@@ -1384,7 +1384,12 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
 
     known = {t["id"] for t in load_config()["trackers"]}
     if tid not in known:
-        raise HTTPException(404, f"unknown tracker '{tid}' — add it to trackers.yml")
+        # Reached by a REMOVED tracker as well as a typo: the browser's script
+        # keeps its @match until the next update check. Name both, because
+        # "add it to trackers.yml" is wrong advice for the removal case.
+        raise HTTPException(
+            404, f"unknown tracker '{tid}' — removed from your config, or a "
+                 f"typo. Nothing was recorded.")
 
     # Dedupe HERE, not in the browser. The userscript used to hold a 12h
     # cooldown in GM storage, which meant /api/unmark could delete an event the
@@ -3939,7 +3944,8 @@ async def index(request: Request):
             f'<div class="banner warn" id="stale" data-v="{esc(serving)}">'
             '<b>Your userscript is out of date.</b> '
             f'The browser has {esc(installed)}; {esc(serving)} is being served.{covers} '
-            'Violentmonkey updates it on its own within a day.'
+            'Your script manager picks this up on its own next update check, '
+            'if automatic updates are switched on.'
             '<span class="sp">'
             f'<a class="lk pri" href="{esc(js_url)}">Update now</a>'
             '<button class="lk" id="stalex">Dismiss</button></span></div>')

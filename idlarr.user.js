@@ -137,6 +137,13 @@
           console.log(`[idlarr] ${site.id} ${kind} ` +
                       (deduped ? 'already on record (server dedupe)' : 'recorded'));
         } else {
+          // Back off on a 4xx. The cooldown is normally written only on
+          // success, so a transient failure retries on the next page load --
+          // but a 4xx is not transient. A tracker you REMOVED from Idlarr is
+          // still in this script's @match until the next update check, so
+          // without this it POSTs and 404s on every single page load of that
+          // site. 5xx and network errors still retry immediately.
+          if (res.status >= 400 && res.status < 500) GM_setValue(key, Date.now());
           console.warn(`[idlarr] ${res.status}: ${res.responseText}`);
         }
       },
