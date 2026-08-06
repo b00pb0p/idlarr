@@ -347,6 +347,25 @@ def test_an_import_marks_the_script_stale_with_no_fetch(client, cfg):
     assert "tracker list has changed" in body
 
 
+def test_removing_a_tracker_marks_the_script_stale_too(client, cfg):
+    """Removal is the same lazy-counter problem as an import, from the other
+    direction: the browser keeps the removed site in its @match until it
+    updates, so it carries on pinging a tracker that no longer exists. The page
+    has to say the script is behind for that to ever resolve.
+
+    Nothing re-fetches the script here either."""
+    client.get(f"/idlarr.user.js?token={app.TOKEN}")
+    app.set_state("script_seen", app.userscript_version_peek())
+    assert 'id="stale"' not in client.get("/").text
+
+    victim = app.load_config()["trackers"][0]["id"]
+    assert client.delete(f"/api/tracker/{victim}").status_code == 200
+
+    body = client.get("/").text
+    assert 'id="stale"' in body, "a removal left the script matching a dead site"
+    assert "tracker list has changed" in body
+
+
 def test_no_stale_warning_before_anything_has_reported(client, cfg):
     """Unknown is not the same as stale. A fresh install must not be told to
     reinstall a script it has not got yet."""
