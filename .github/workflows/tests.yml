@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Kickable by hand from the Actions tab. During the 2026-08-06 Actions
+  # incident GitHub throttled webhooks to ~15%, so pushes stopped creating runs
+  # at all: there was no failed run to retry, and re-pushing was a coin flip.
+  # publish.yml already had this; this one could not be started by any means.
+  workflow_dispatch:
 
 jobs:
   pytest:
