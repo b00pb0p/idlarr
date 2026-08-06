@@ -3021,8 +3021,13 @@ PAGE = """<!doctype html>
   .sheet{position:fixed;inset:0;background:rgba(0,0,0,.66);display:none;z-index:40;
     align-items:center;justify-content:center}
   .sheet.on{display:flex}
+  /* Grid, not flex, so the close button can span the full width above BOTH
+     the nav and the pane without wrapping them in another element. Source
+     order is close / nav / pane, so auto-placement puts nav and pane in row 2
+     on their own. */
   .sheet .win{background:var(--head);border:1px solid var(--line2);position:relative;
-    width:min(790px,94vw);height:min(584px,88vh);display:flex;overflow:hidden}
+    width:min(790px,94vw);height:min(584px,88vh);overflow:hidden;
+    display:grid;grid-template-columns:180px 1fr;grid-template-rows:auto 1fr}
   .sheet nav{width:180px;border-right:1px solid var(--line);background:var(--bg);
     padding:14px 0;flex:none}
   .sheet nav button{display:block;width:100%;text-align:left;background:none;
@@ -3030,8 +3035,7 @@ PAGE = """<!doctype html>
     font-weight:600;font-size:12px;letter-spacing:.13em;text-transform:uppercase;
     padding:12px 20px;cursor:pointer}
   .sheet nav button:hover{color:var(--fg)}
-  .sheet nav button.on{color:var(--fg);border-left-color:var(--sig);
-    background:var(--head)}
+  .sheet nav button.on{color:var(--fg);background:var(--head)}
   .sheet .pane{flex:1;overflow:auto;padding:20px 22px}
   .sheet .pane section{display:none}
   .sheet .pane section.on{display:block}
@@ -3083,8 +3087,15 @@ PAGE = """<!doctype html>
   .sheet .stack input,.sheet .stack select{width:100%;margin-bottom:9px}
   .sheet .e{color:var(--critical);font-size:12px;min-height:16px;margin:9px 0 0}
   .sheet .e.good{color:var(--ok)}
-  .xclose{position:absolute;top:14px;right:16px;background:none;border:0;
-    color:var(--dim);font-size:18px;cursor:pointer;line-height:1;z-index:2}
+  /* Its own bar rather than floating in the corner. Absolutely positioned it
+     sat over the pane, so it landed on whatever control happened to be at the
+     top right and got harder to pick out the further you scrolled. The phone
+     layout already did this; it turned out to be the better answer at every
+     width. */
+  .xclose{grid-column:1/-1;display:flex;justify-content:flex-end;align-items:center;
+    background:var(--head);border:0;border-bottom:1px solid var(--line);
+    color:var(--dim);font-size:19px;cursor:pointer;line-height:1;
+    padding:8px 15px;z-index:2}
   .xclose:hover{color:var(--fg)}
   /* scrollbar-gutter reserves the track so content never sits under it; the
      row's right padding is the fallback for engines without it. 10px was not
@@ -3114,15 +3125,12 @@ PAGE = """<!doctype html>
   .improt label.off{opacity:.4;cursor:not-allowed}
   .improt label.off input{cursor:not-allowed}
   @media(max-width:760px){
-    .sheet .win{flex-direction:column;height:92vh}
-    /* Six tabs don't fit at phone width, so the nav must scroll, and any
-       close button sharing that row collides with whatever tab is at the right
-       edge. Lift the × into its own slim bar above the nav (position:static
-       makes it the first flex child), so the tabs scroll freely underneath
-       with nothing overlapping. */
-    .xclose{position:static;width:100%;height:auto;display:flex;
-      justify-content:flex-end;padding:9px 13px;font-size:20px;
-      background:var(--head);border-bottom:1px solid var(--line)}
+    .sheet .win{grid-template-columns:1fr;grid-template-rows:auto auto 1fr;
+      height:92vh}
+    /* Eight tabs don't fit at phone width, so the nav scrolls sideways here.
+       The × already sits in its own bar at every width, so nothing shares that
+       row and the tabs scroll freely underneath. */
+    .xclose{padding:9px 13px;font-size:20px}
     .sheet nav{width:100%;display:flex;overflow-x:auto;padding:0;
       border-right:0;border-bottom:1px solid var(--line)}
     .sheet nav button{border-left:0;border-bottom:2px solid transparent;

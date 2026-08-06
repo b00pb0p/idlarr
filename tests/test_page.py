@@ -844,3 +844,40 @@ def test_healthz_version_matches_what_the_about_panel_shows(client):
     shown = client.get("/healthz").json()["version"]
     page = client.get("/").text
     assert f'<span class="val">{shown}</span>' in page
+
+
+def test_the_close_button_owns_a_bar_rather_than_floating_over_the_pane():
+    """It was position:absolute in the top-right corner of the panel, so it sat
+    on top of whatever control happened to be at the top of the pane and got
+    steadily harder to pick out as you scrolled. Reported from the field
+    2026-08-06.
+
+    The phone layout had already solved this by lifting it into its own bar;
+    that turned out to be the better answer at every width, so the override is
+    gone and the base rule does it. Checked against the BASE stylesheet, since
+    a rule that only holds inside a media query is exactly the bug.
+    """
+    css = _base_stylesheet(app.PAGE)
+    rule = re.search(r"\.xclose\{([^}]*)\}", css)
+    assert rule, "no base .xclose rule"
+    assert "position:absolute" not in rule.group(1), \
+        "the close button is floating over the pane again"
+    assert "grid-column:1/-1" in rule.group(1), \
+        "the close button no longer spans its own bar"
+
+    win = re.search(r"\.sheet \.win\{([^}]*)\}", css)
+    assert win and "grid-template-rows" in win.group(1), \
+        "the panel must reserve a row for that bar, or it overlaps the nav"
+
+
+def test_the_selected_section_is_still_marked_without_the_bracket():
+    """The green left border came off the selected nav item at the user's
+    request. Something must still distinguish it, or there is no way to tell
+    which pane is open once the panel is scrolled away from its heading.
+    """
+    css = _base_stylesheet(app.PAGE)
+    on = re.search(r"\.sheet nav button\.on\{([^}]*)\}", css)
+    assert on, "no rule for the selected nav item"
+    assert "border-left-color" not in on.group(1), "the bracket is back"
+    assert "background:" in on.group(1) and "color:" in on.group(1), \
+        "nothing marks the selected section"
