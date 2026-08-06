@@ -457,7 +457,7 @@ def test_closing_settings_discards_unsaved_edits(page):
     script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
     close = re.search(r"const closeSheet=\(\)=>\{(.*?)\};", script)
     assert close, "closeSheet not found in its expected form"
-    assert "resetSheet" in close.group(1), \
+    assert "resetFields" in close.group(1), \
         "closing only hides the panel; unsaved edits survive into the next open"
     assert "defaultValue" in script and "defaultSelected" in script
     # ...and a save must move the defaults forward, or closing after saving
@@ -466,6 +466,37 @@ def test_closing_settings_discards_unsaved_edits(page):
     # deleted, because the function itself was still defined.
     assert "keepAsSaved(document.getElementById('s-general'))" in script, \
         "general save does not update the defaults; closing would undo it"
+
+
+def test_add_tracker_dialog_forgets_what_you_typed(page):
+    """Same shape as the settings panel: rendered once, and closing it only
+    removed a CSS class. Reported after adding a tracker, removing it, then
+    reopening the dialog to find every field still filled in.
+
+    Two causes, both needed. closeTrk() has to restore the fields, AND the
+    inputs have to opt out of form restoration: a successful add ends in
+    location.reload(), and browsers repopulate inputs across a reload unless
+    told not to. Fixing only the close handler leaves the reload path."""
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    close = re.search(r"const closeTrk=\(\)=>\{(.*?)\};", script)
+    assert close, "closeTrk not found in its expected form"
+    assert "resetFields" in close.group(1), \
+        "closing the dialog leaves what you typed in the DOM"
+
+    for eid in ("tmn", "tmu", "tmi", "tmd", "tmo"):
+        m = re.search(r'<input id="' + eid + r'"([^>]*)>', page)
+        assert m, eid
+        assert 'autocomplete="off"' in m.group(1), \
+            f"{eid} will be repopulated by the browser after location.reload()"
+
+
+def test_one_reset_helper_serves_every_panel(page):
+    """There were two panels of the same shape and only one got fixed. The
+    helper takes a root now, so the next one cannot be forgotten by being
+    written against a different container."""
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    assert "const resetFields=root=>" in script
+    assert "resetFields(sheet)" in script and "resetFields(tm)" in script
 
 
 def test_settings_label_bold_does_not_leak_into_help_text(page):

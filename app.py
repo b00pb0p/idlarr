@@ -2711,8 +2711,12 @@ PAGE = """<!doctype html>
     tr.drawer td{border-radius:0 0 10px 10px}
       .foot{font-size:9.5px}
   }
-  .banner{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:13px 0 0;
-    padding:9px 13px;border:1px solid var(--critical);background:#251619;font-size:12px}
+  /* Rounded like every other container, and readable: 12px was smaller than
+     the body text it interrupts. The colour is stated rather than inherited,
+     so the message cannot pick one up from whatever encloses it. */
+  .banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0 0;
+    padding:13px 16px;border:1px solid var(--critical);background:#251619;
+    border-radius:12px;font-size:13.5px;line-height:1.5;color:var(--fg)}
   .banner b{color:var(--critical);letter-spacing:.04em}
   /* Amber, not red. An out-of-date script is a thing to fix today, not a
      security hole, and using the same colour for both teaches you to ignore it. */
@@ -2941,15 +2945,15 @@ __SHEET__
   you read that tracker's own rules page. A limit set too high is the one that
   loses the account, so this errs short on purpose.</p>
   <label for="tmn">name</label>
-  <input id="tmn" placeholder="Alpha Tracker">
+  <input id="tmn" autocomplete="off" placeholder="Alpha Tracker">
   <label for="tmu">url</label>
-  <input id="tmu" placeholder="https://alpha.example/">
+  <input id="tmu" autocomplete="off" placeholder="https://alpha.example/">
   <label for="tmi">id &mdash; ping and script id</label>
-  <input id="tmi" placeholder="derived from the name">
+  <input id="tmi" autocomplete="off" placeholder="derived from the name">
   <label for="tmd">inactivity limit, in days</label>
-  <input id="tmd" type="text" inputmode="numeric" value="30">
+  <input id="tmd" type="text" inputmode="numeric" autocomplete="off" value="30">
   <label for="tmo">notes</label>
-  <input id="tmo" placeholder="Gazelle. Seeding counts.">
+  <input id="tmo" autocomplete="off" placeholder="Gazelle. Seeding counts.">
   <div class="rowb">
     <span class="alt">Have Prowlarr/Jackett? <a id="tmimp">Import</a></span>
     <button class="lk" id="tmcancel">Cancel</button>
@@ -3316,7 +3320,10 @@ __SHEET__
  // abandoned edit stayed in the DOM: reopening showed the edited value as if
  // it were the saved config, and the next Save posted it. Closing discards.
  const eachField=(root,fn)=>root.querySelectorAll('input,select').forEach(fn);
- const resetSheet=()=>eachField(sheet,el=>{
+ // Takes a root, because the settings sheet is not the only panel rendered
+ // once and merely hidden on close. The add-tracker dialog is the same shape,
+ // and fixing only the sheet left its twin next door still remembering.
+ const resetFields=root=>eachField(root,el=>{
    if(el.type==='checkbox'||el.type==='radio')el.checked=el.defaultChecked;
    else if(el.tagName==='SELECT')
      Array.from(el.options).forEach(o=>{o.selected=o.defaultSelected;});
@@ -3328,7 +3335,7 @@ __SHEET__
    else if(el.tagName==='SELECT')
      Array.from(el.options).forEach(o=>{o.defaultSelected=o.selected;});
    else el.defaultValue=el.value;});
- const closeSheet=()=>{sheet.classList.remove('on');resetSheet();};
+ const closeSheet=()=>{sheet.classList.remove('on');resetFields(sheet);};
  document.getElementById('gear').addEventListener('click',()=>openSheet());
  document.getElementById('sx').addEventListener('click',closeSheet);
  sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet();});
@@ -3361,7 +3368,7 @@ __SHEET__
  tmi.addEventListener('input',()=>{tmi.dataset.dirty=tmi.value?'1':'';});
  tmn.addEventListener('input',()=>{
    if(tmi.dataset.dirty!=='1')tmi.value=slug(tmn.value);});
- const closeTrk=()=>tm.classList.remove('on');
+ const closeTrk=()=>{tm.classList.remove('on');resetFields(tm);tmi.dataset.dirty='';};
  document.getElementById('addtrk').addEventListener('click',()=>{
    tme.textContent='';tmi.dataset.dirty='';tm.classList.add('on');tmn.focus();});
  document.getElementById('tmcancel').addEventListener('click',closeTrk);
