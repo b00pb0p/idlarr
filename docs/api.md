@@ -79,7 +79,7 @@ underneath you.
   "worst": { "id": "anthelion", "name": "Anthelion", "state": "critical", "days_left": 4 },
   "soonest_deadline": { "id": "anthelion", "name": "Anthelion", "days_left": 4 },
   "last_check": "2026-08-06",
-  "version": "1.7.0"
+  "version": "1.7.1"
 }
 ```
 

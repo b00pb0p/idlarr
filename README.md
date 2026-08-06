@@ -189,17 +189,22 @@ row to expand a drawer with three panels:
 - **auth history**: recent auth events, and whether each was observed or asserted
 
 **Add tracker**, the settings gear and, when sign-in uses Forms, a **sign-out**
-icon sit top right. Everything configurable lives behind the gear, in six
+icon sit top right. Everything configurable lives behind the gear, in eight
 sections. Closing the panel discards anything you have not saved.
 
 | | |
 |---|---|
-| **General** | timezone, check hour, alert threshold, still-alive push, status page URL, backup retention, config download and restore, recent activity |
+| **General** | timezone, check hour, alert threshold, still-alive push, status page URL, backup retention |
 | **Sign-in** | method, credentials, and sign out when the method is Forms |
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
 | **Import** | Prowlarr or Jackett, torrent and usenet |
 | **Notifications** | destination count, and a **Send test** button |
+| **API** | the read-only key, **Copy** and **Regenerate** |
+| **System** | what the daily check, backup, alert and heartbeat last did, when the check runs next, a **Run now** button, and config download and restore |
 | **About** | version, tracker count, userscript version, last check, database size, `/healthz` |
+
+General holds exactly what the **Save** button writes. Anything read-only, and
+the two file actions, live in **System**.
 
 The tracker total leads the count strip at the top, beside the per-state counts.
 The userscript version and the date of the last daily check live in **About**;
@@ -258,6 +263,12 @@ baseline to count from, so there is nothing to be late for. A tracker stuck on
 [Troubleshooting](docs/troubleshooting.md) covers.
 
 ## Still-alive push
+
+The check runs once per local day, at `check_hour`. **Settings → System** shows
+when it last ran and when it runs next, and **Run now** runs one immediately:
+back up, evaluate every countdown, send anything due. Use it after a restart
+that spanned the check hour, since a missed window is not retried until the
+same hour tomorrow.
 
 Nothing else watches the watchdog. If this container dies, the daily check and
 the backup it takes both stop, and **silence is exactly what a healthy quiet
@@ -393,21 +404,24 @@ cross-origin from tracker pages, where cookies do not apply.
 - **`trackers.yml` hot-reloads.** Edit it live; no restart.
 - **The database is backed up once a day**, at the start of the daily check
   rather than overnight, to `/data/backups/idlarr-YYYY-MM-DD.db`. 14 days by
-  default, set in **Settings → General**. It is the only record of when each
+  default, set in **Settings → General**. What it last did is in
+  **Settings → System**. It is the only record of when each
   account was last seen. Losing it risks no account, but resets every countdown
   to `no data` until you re-visit all of them. See
   [Restoring a backup](docs/troubleshooting.md#restoring-a-backup); it has been tested, and there is one
   surprise in it.
 - **Your tracker list can be downloaded and restored** from *Settings →
-  General*. The download is the file as it is on disk, comments included.
+  System*. The download is the file as it is on disk, comments included.
   Restoring **replaces** it. The current file is saved beside it as
   `trackers.yml.<timestamp>.bak` first, and anything that does not validate is
   refused before a single byte is written. Removed trackers keep their auth
   history, so restoring an older config resumes those countdowns rather than
   restarting them.
 - **A backup contains every secret the service holds**: your tracker list, the
-  API token, the session secret, and a saved Prowlarr key. The database and its
-  backups are written `0600` so other local users cannot read them, but that
+  API token, the session secret, the read-only API key, and a saved Prowlarr
+  key. The database and its backups are written `0600` so other local users
+  cannot read them, and snapshots written before that was enforced are
+  restricted on startup, so an upgrade does not leave old ones readable. That
   only protects them *on the box*. If you sync `/data` anywhere (an appdata
   backup plugin, rsync, cloud storage), encrypt it at that layer. Idlarr does
   not encrypt them itself: the key would have to live somewhere it could read
@@ -421,7 +435,8 @@ Run `__idlarr()` in the browser console on the tracker that won't record. It
 reports the script's own view of the page and answers nearly every "why isn't
 this working" question without guessing.
 
-Diagnosis table, the stale-script case, and how to restore from a backup:
+Diagnosis table, the stale-script case, why the daily check may not have run,
+and how to restore from a backup:
 **[docs/troubleshooting.md](docs/troubleshooting.md)**.
 
 The read-only API, what it can and cannot do, and recipes for Uptime Kuma and

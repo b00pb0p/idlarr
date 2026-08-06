@@ -35,6 +35,46 @@ Compare the `@version` in the installed script against the one the service is
 serving; if they differ, that's the whole answer.
 
 
+# The daily check has not run
+
+**Settings → System** tells you directly. The **Daily check** row carries the
+timestamp of the last run and, beneath it, when the next one is due: `runs today
+at 23:00`, `runs tomorrow at 23:00`, or `due now`.
+
+Three things look identical from a stale timestamp alone, and the next-run line
+is what separates them.
+
+**It already ran today, and you moved the check hour later.** The scheduler is
+keyed on a *date*, not a time: a day it has already checked is finished, so
+moving `check_hour` from 09:00 to 23:00 at lunchtime produces no second run that
+evening. The new hour takes effect tomorrow. The row reads `runs tomorrow at
+23:00` and nothing is wrong.
+
+**The container was down across the check hour.** The gate is `hour >=
+check_hour`, so the catch-up window is the rest of the day. At 09:00 that leaves
+fifteen hours and a container that missed nine o'clock still checks when it comes
+back. At 23:00 it leaves one, and a restart spanning midnight skips that day
+outright: at 00:10 the hour test fails and nothing runs until 23:00 tomorrow.
+Press **Run now** to cover the gap.
+
+**The scheduler is genuinely stuck.** The row reads `due now` and keeps reading
+it. The loop wakes every ten minutes, so that state should be almost impossible
+to catch; still seeing it after a reload means the loop is not running. Check
+`docker logs` for a traceback and restart the container.
+
+A useful cross-check: the **Daily check** row shows the tracker count *at the
+time it ran*. If that number disagrees with what the page shows now, nothing has
+run since you last added or imported a tracker.
+
+## Running one by hand
+
+**Settings → System → Run now** does the real thing: it takes the backup,
+evaluates every countdown and sends whatever is due. It is not a dry run, and it
+is not the notification test, which only proves the delivery path works.
+
+It counts as that day's run, so the scheduled one will not fire again today, and
+the row records that it was run by hand. It does not send a heartbeat.
+
 # Restoring a backup
 
 Snapshots land in `/data/backups/` as `idlarr-YYYY-MM-DD.db`, written during
