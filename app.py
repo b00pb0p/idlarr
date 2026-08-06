@@ -3299,7 +3299,16 @@ PAGE = """<!doctype html>
   .nd.off .nd-n,.nd.off .nd-u{opacity:.45}
   .nd-src{font-family:var(--body);font-size:10.5px;letter-spacing:.1em;
     text-transform:uppercase;color:var(--dim);flex:none}
-  .sheet .w-half{width:auto;flex:1;min-width:0}
+  /* A row whose control spans the pane instead of sitting in the 200px
+     column. An Apprise URL does not fit in 200px, and splitting the form
+     across two rows left the entire left half of one of them empty. */
+  .sheet .row.wide{flex-wrap:wrap}
+  .sheet .row.wide>.lbl{flex:1 0 100%}
+  .ndform{display:flex;gap:9px;align-items:center;width:100%;margin-top:11px}
+  .ndform input{min-width:0}
+  .ndform .f2{flex:2}
+  .ndform .f1{flex:1}
+  .ndform button{flex:none}
   /* The key field shares its cell with the reveal button, so it may not take
      the full width the way every other input in this column does. */
   .sheet .row .ctl2>.keyf{width:auto;flex:1;min-width:0}
@@ -4478,16 +4487,21 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         + (f'<div class="ndlist">{"".join(rows)}</div>' if rows else
            '<p class="sub" style="margin:0 0 14px">Nothing configured, so '
            'alerts have nowhere to go.</p>')
-        + _row("Add one",
-               'Paste an Apprise URL, for example '
-               '<code>discord://webhook_id/webhook_token</code> or '
-               '<code>ntfy://your-topic</code>. A name is optional and is only '
-               'a label. It is checked with Apprise before it is saved.',
-               '<input id="ndurl" placeholder="scheme://..." autocomplete="off">')
-        + _row("", "",
-               '<input id="ndname" class="w-half" placeholder="name (optional)" '
-               'autocomplete="off">'
-               '<button class="lk pri" id="ndadd">Add</button>')
+        # One row, not two. The fields sat in the 200px control column, which is
+        # far too narrow for an Apprise URL, and the name ended up stranded on
+        # a row of its own with the whole left half empty.
+        + ('<div class="row wide"><div class="lbl"><b>Add one</b><span>'
+           'Paste an Apprise URL, for example '
+           '<code>discord://webhook_id/webhook_token</code> or '
+           '<code>ntfy://your-topic</code>. A name is optional and is only a '
+           'label. It is checked with Apprise before it is saved.'
+           '</span></div>'
+           '<div class="ndform">'
+           '<input id="ndurl" class="f2" placeholder="scheme://..." '
+           'autocomplete="off" spellcheck="false">'
+           '<input id="ndname" class="f1" placeholder="name (optional)" '
+           'autocomplete="off">'
+           '<button class="lk pri" id="ndadd">Add</button></div></div>')
         + '<p class="e" id="nde"></p>'
         + _row("Send a test",
                "Goes to every destination at once. Test a single one from its "

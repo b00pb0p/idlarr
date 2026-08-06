@@ -240,3 +240,41 @@ def test_the_backup_tradeoff_is_stated_where_you_add_one(cfg):
     it lands, at the moment they do it, not only in the README."""
     html = app.settings_sheet("none", 7, 7, "/idlarr.user.js")
     assert "backup" in html and "IDLARR_NOTIFY_URLS" in html
+
+
+def test_the_add_form_is_one_full_width_row(cfg):
+    """Both fields sat in the 200px control column, which cannot show an
+    Apprise URL, and the name was pushed onto a row of its own with the whole
+    left half empty. Reported 2026-08-06.
+
+    The rule that keeps it fixed is that `.ndform` is a direct child of the
+    row rather than of `.ctl2`: anything inside `.ctl2` is capped at 200px no
+    matter what width it asks for.
+    """
+    html = app.settings_sheet("none", 7, 7, "/idlarr.user.js")
+    form = re.search(r'<div class="ndform">.*?</div>', html, re.S)
+    assert form, "no full-width add form"
+    assert 'id="ndurl"' in form.group(0) and 'id="ndname"' in form.group(0), \
+        "the URL and name fields are not on the same row"
+    assert 'class="ctl2"><input id="ndurl"' not in html, \
+        "the URL field is back in the 200px control column"
+
+    # Assert against the RULE BODY, not the whole stylesheet. The first version
+    # checked `"width:100%" in css`, which any other rule in the page satisfies,
+    # so narrowing .ndform back to `display:flex` alone kept it green.
+    css = app.PAGE
+    rule = re.search(r"\.ndform\{([^}]*)\}", css)
+    assert rule, "no .ndform rule"
+    assert "display:flex" in rule.group(1)
+    assert "width:100%" in rule.group(1), \
+        "the form will only be as wide as its contents"
+
+    # And the URL field has to be the one that grows, or it renders at the same
+    # width as the name field.
+    assert re.search(r'<input id="ndurl"[^>]*class="f2"', html), \
+        "the URL field does not carry the growing class"
+    assert re.search(r"\.ndform \.f2\{[^}]*flex:2", css), \
+        ".f2 has no flex rule, so the class on the URL field does nothing"
+
+    assert ".sheet .row.wide>.lbl{flex:1 0 100%}" in css, \
+        "the help text will sit beside the form instead of above it"
