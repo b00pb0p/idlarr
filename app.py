@@ -3088,6 +3088,13 @@ PAGE = """<!doctype html>
     font-size:10.5px;margin-top:2px}
   .sheet .act-d.due{color:var(--due)}
   .sheet .row .ctl2>button{flex:1}
+  /* The key field shares its cell with the reveal button, so it may not take
+     the full width the way every other input in this column does. */
+  .sheet .row .ctl2>.keyf{width:auto;flex:1;min-width:0}
+  .sheet .row .ctl2>.ico{flex:none;padding:8px 9px}
+  .ico .i-hide{display:none}
+  .ico.on .i-show{display:none}
+  .ico.on .i-hide{display:inline}
   .sheet .stack{margin:0 0 14px}
   .sheet .stack input,.sheet .stack select{width:100%;margin-bottom:9px}
   .sheet .e{color:var(--critical);font-size:12px;min-height:16px;margin:9px 0 0}
@@ -3801,6 +3808,18 @@ __SHEET__
 
  // ---- read-only API key ------------------------------------------------
  const apik=document.getElementById('apik'), apie=document.getElementById('apie');
+ // ---- reveal the key --------------------------------------------------
+ // type=password is shoulder-surfing cover, not secrecy: the value is in the
+ // page source either way, because Copy has to be able to read it. What it
+ // stops is the key sitting on screen during a screen-share or a screenshot.
+ const apieye=document.getElementById('apieye'), apik0=document.getElementById('apik');
+ if(apieye&&apik0)apieye.addEventListener('click',()=>{
+   const show=apik0.type==='password';
+   apik0.type=show?'text':'password';
+   apieye.classList.toggle('on',show);
+   apieye.title=apieye.ariaLabel=show?'hide the key':'show the key';
+ });
+
  const apicopy=document.getElementById('apicopy'), apinew=document.getElementById('apinew');
  if(apicopy)apicopy.addEventListener('click',()=>{
    const done=()=>{const o=apicopy.textContent;
@@ -3959,6 +3978,11 @@ def _act_row(label: str, job: str, sub: str = "",
     return _row(label, sub,
                 f'<span class="val {cls}">{esc(a.get("at", ""))}</span>'
                 f'<em class="act-d">{detail}</em>{nxt}')
+
+
+EYE_ICON = ('<svg class="i-show" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>')
+
+EYEOFF_ICON = ('<svg class="i-hide" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10.1 10.1 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.1-5.9M9.9 4.2A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2m-6.7-1.1a3 3 0 1 1-4.2-4.2"/><line x1="1" y1="1" x2="23" y2="23"/></svg>')
 
 
 def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
@@ -4197,7 +4221,10 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         _row("Read-only key",
              "For dashboards and monitors. Send it as <code>X-Api-Key</code> or "
              "<code>?apikey=</code>. It cannot change anything.",
-             f'<input id="apik" readonly value="{esc(api_key())}">')
+             f'<input id="apik" type="password" readonly autocomplete="off" '
+             f'class="keyf" value="{esc(api_key())}">'
+             '<button class="lk ico" id="apieye" title="show the key" '
+             'aria-label="show the key">' + EYE_ICON + EYEOFF_ICON + '</button>')
         + _row("", "Regenerate if it leaks. The old key stops working "
                    "immediately and anything using it will need the new one.",
                '<button class="lk" id="apicopy">Copy</button>'

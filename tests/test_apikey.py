@@ -10,6 +10,7 @@ Run:  .venv/bin/python -m pytest tests/test_apikey.py -q
 """
 
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -212,3 +213,63 @@ def test_the_key_is_never_logged():
         for line in src.split("\n"):
             if "print(" in line:
                 assert "api_key()" not in line and "{k}" not in line, line.strip()
+
+
+# ------------------------------------------------------------- the reveal
+
+def _pane(cfg):
+    return app.settings_sheet("none", 7, 7, "/idlarr.user.js")
+
+
+def test_the_key_is_masked_until_you_ask_for_it(cfg):
+    """It sits on screen the whole time the panel is open, so a screen-share or
+    a screenshot of Settings hands it over. Masked by default, revealed by the
+    eye. Asked for 2026-08-06."""
+    html = _pane(cfg)
+    field = re.search(r'<input id="apik"[^>]*>', html)
+    assert field, "no key field"
+    assert 'type="password"' in field.group(0), "the key renders in the clear"
+    assert 'id="apieye"' in html, "nothing to reveal it with"
+
+
+def test_revealing_it_is_a_toggle_the_script_actually_wires(cfg):
+    """Pins the call site. The button rendering proves nothing if no handler
+    flips the type, and a dead eye icon is worse than none."""
+    assert "apieye" in app.PAGE, "the script never reaches the reveal button"
+    # An ASSIGNMENT, not a mention. The first version of this asserted
+    # `"apik0.type" in app.PAGE`, which the comparison one line above the
+    # assignment satisfies on its own, so gutting the handler kept it green.
+    assert re.search(r"apik0\.type\s*=\s*[^=]", app.PAGE), \
+        "the handler never assigns the field type, so the eye does nothing"
+
+
+def test_copy_still_reads_the_value_while_masked(cfg):
+    """A masked input still exposes .value, which is why Copy keeps working
+    hidden. If this ever moved to reading rendered text it would copy the dots.
+    """
+    assert "writeText(apik.value)" in app.PAGE
+
+
+def test_the_key_field_does_not_ask_a_password_manager_to_save_it(cfg):
+    """type=password invites the browser to offer to save it as a credential,
+    which is the wrong store for a rotatable service key."""
+    field = re.search(r'<input id="apik"[^>]*>', _pane(cfg)).group(0)
+    assert 'autocomplete="off"' in field
+
+
+def test_both_eye_icons_ship_and_css_picks_one(cfg):
+    """Both live in the markup with CSS choosing. Swapping innerHTML from the
+    script would mean a second copy of each path, which is the duplication that
+    has already cost this project twice."""
+    html = _pane(cfg)
+    assert 'class="i-show"' in html and 'class="i-hide"' in html
+    assert ".ico .i-hide{display:none}" in app.PAGE
+    assert ".ico.on .i-show{display:none}" in app.PAGE
+
+
+def test_the_key_field_leaves_room_for_the_button(cfg):
+    """Every other input in that column is width:100%. Left alone, this one
+    would push the eye out of the cell."""
+    assert ".sheet .row .ctl2>.keyf{width:auto;flex:1" in app.PAGE
+    assert ".sheet .row .ctl2>.ico{flex:none" in app.PAGE, \
+        "ctl2>button{flex:1} would stretch the icon button across the cell"

@@ -5,7 +5,9 @@ status without being able to change it. It is meant for dashboard widgets,
 uptime checks and small scripts.
 
 The key is in **Settings, API**. One is generated the first time you look, so
-there is nothing to create.
+there is nothing to create. It is masked until you click the eye beside it, so
+opening Settings during a screen-share does not hand it over. **Copy** works
+whether it is showing or not.
 
 ## What it can and cannot do
 

@@ -199,7 +199,7 @@ sections. Closing the panel discards anything you have not saved.
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
 | **Import** | Prowlarr or Jackett, torrent and usenet |
 | **Notifications** | destination count, and a **Send test** button |
-| **API** | the read-only key, **Copy** and **Regenerate** |
+| **API** | the read-only key, masked behind an eye, with **Copy** and **Regenerate** |
 | **System** | what the daily check, backup, alert and heartbeat last did, when the check runs next, a **Run now** button, and config download and restore |
 | **About** | version, tracker count, userscript version, last check, database size, `/healthz` |
 
