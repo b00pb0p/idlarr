@@ -29,8 +29,10 @@ once you have checked.
 Settings gear → **Import**. Point it at your own Prowlarr or Jackett with an API key and
 it lists the private indexers it found, marking which are new and which protocol
 each uses. Nothing is written until you click Import. The key is saved so you
-can leave the field blank next time; untick **remember this key** and it is
-used for that import and never written. An API key aimed at the
+can leave the field blank next time. Untick **Remember this key** and that import
+does not store the key it was given; untick it and press **Save** to remove a key
+already stored. Removing is its own click on purpose, so a stored credential is
+never destroyed as a side effect of previewing. An API key aimed at the
 wrong instance should cost you a list on screen, not a rewritten config.
 
 **Torrent and usenet, both ticked by default.** Prowlarr holds both, and a

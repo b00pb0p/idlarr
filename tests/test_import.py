@@ -421,11 +421,20 @@ def test_blank_key_is_not_reused_for_a_different_instance(client, cfg, prowlarr)
     assert r.status_code == 400
 
 
-def test_forget_clears_it(client, cfg, prowlarr):
+def test_saving_with_remember_off_clears_the_key(client, cfg, prowlarr):
+    """Replaces the Forget button, which did the same job with a second
+    control. Two controls for one outcome is how one of them ends up stale.
+
+    It clears the KEY only. The source and URL are not secrets and keeping
+    them means the form is still filled in next time.
+    """
     client.post("/api/import", json=BODY)
-    assert client.post("/api/import", json={"forget": True}).json() == {"forgotten": True}
-    for k in ("import_source", "import_url", "import_key"):
-        assert not app.get_state(k)
+    assert app.get_state("import_key")
+
+    r = client.post("/api/import", json={"set_remember": False})
+    assert r.json() == {"ok": True, "remembered": False}
+    assert not app.get_state("import_key")
+    assert app.get_state("import_url"), "the URL was cleared too"
 
 
 def test_the_key_is_never_sent_back_to_the_browser(client, cfg, prowlarr):
@@ -536,10 +545,12 @@ def test_unticking_remember_never_writes_the_key(client, cfg, monkeypatch):
     assert app.get_state("import_url") == "http://prowlarr.local"
 
 
-def test_unticking_it_clears_a_key_already_saved(client, cfg, monkeypatch):
-    """Declining to write a NEW key while leaving the old one behind is the
-    opposite of what the box promises, and it would keep working, so nothing
-    would ever say so."""
+def test_an_import_never_destroys_a_stored_key(client, cfg, monkeypatch):
+    """An earlier version cleared it here as well, so unticking the box and
+    pressing Preview silently destroyed a saved credential. Removing one is
+    Save's job and only Save's: a destructive action needs its own click, or
+    there is no moment at which you could change your mind.
+    """
     _fake_fetch(monkeypatch)
     client.post("/api/import", json={"source": "prowlarr",
                                      "url": "http://prowlarr.local",
@@ -548,8 +559,36 @@ def test_unticking_it_clears_a_key_already_saved(client, cfg, monkeypatch):
 
     client.post("/api/import", json={"source": "prowlarr",
                                      "url": "http://prowlarr.local",
-                                     "api_key": "OLDKEY", "remember": False})
-    assert not app.get_state("import_key"), "the previously saved key survived"
+                                     "api_key": "NEWKEY", "remember": False})
+    assert app.get_state("import_key") == "OLDKEY", \
+        "a preview destroyed the stored key"
+
+
+def test_the_box_survives_a_reload(client, cfg, monkeypatch):
+    """Derived from "is a key saved" instead, a fresh install and one you had
+    just cleared would render identically while meaning opposite things."""
+    _fake_fetch(monkeypatch)
+    def box(html):
+        return re.search(r'<input type="checkbox" id="imrem"[^>]*>', html).group(0)
+
+    assert "checked" in box(app.settings_sheet("none", 7, 7, "/x.js")), \
+        "a fresh install must default to remembering"
+    client.post("/api/import", json={"set_remember": False})
+    assert "checked" not in box(app.settings_sheet("none", 7, 7, "/x.js"))
+    client.post("/api/import", json={"set_remember": True})
+    assert "checked" in box(app.settings_sheet("none", 7, 7, "/x.js"))
+
+
+def test_the_forget_row_is_gone(cfg):
+    """Its whole job is now the remember box plus Save."""
+    html = app.settings_sheet("none", 7, 7, "/x.js")
+    assert 'id="imforget"' not in html and "Saved connection" not in html
+
+
+def test_save_reaches_the_panel_and_posts_the_flag(cfg):
+    html = app.settings_sheet("none", 7, 7, "/x.js")
+    assert 'id="imsave"' in html
+    assert "set_remember:on" in app.PAGE, "Save never sends the flag"
 
 
 def test_an_absent_flag_still_remembers(client, cfg, monkeypatch):
@@ -610,3 +649,61 @@ def test_a_read_timeout_reports_instead_of_a_500(client, cfg, monkeypatch):
     assert r.status_code == 502, f"got {r.status_code}, not a reported failure"
     assert "did not answer" in r.json()["detail"]
     assert not app.get_state("import_key"), "a timed-out key was remembered"
+
+
+def test_the_checkbox_labels_are_capitalized(cfg):
+    """Sentence case on every control label, asked for 2026-08-06. Pinned
+    because nothing else would notice one drifting back: a lowercase label
+    renders perfectly and reads as a typo only to whoever asked for it.
+    """
+    html = app.settings_sheet("none", 7, 7, "/x.js")
+    for cid in ("imrem", "impt", "impu"):
+        m = re.search(rf'<input type="checkbox" id="{cid}"[^>]*>\s*([A-Za-z])', html)
+        assert m, f"no label text after the {cid} checkbox"
+        assert m.group(1).isupper(), \
+            f"the {cid} label starts lowercase ({m.group(1)!r})"
+
+
+def test_all_three_checkboxes_share_one_row(cfg):
+    """They are one set of options, not three scattered decisions. Remember
+    lived beside the key field for a while and read as a fourth thing."""
+    html = app.settings_sheet("none", 7, 7, "/x.js")
+    row = re.search(r'<div class="improt">.*?</div>', html, re.S)
+    assert row, "no protocol row"
+    for cid in ("impt", "impu", "imrem", "imsave"):
+        assert f'id="{cid}"' in row.group(0), f"{cid} is not on that row"
+
+
+def test_save_matches_the_save_in_general_and_sign_in(cfg):
+    """Those are `lk pri`. A plain `lk` made this the one Save on the panel
+    that looked like a secondary action."""
+    html = app.settings_sheet("none", 7, 7, "/x.js")
+    assert '<button class="lk pri" id="imsave">' in html
+    # And nothing may resize it. `.lk` sizes every button in this panel; a rule
+    # scoped narrower is a second source for one decision, and it already made
+    # Save visibly smaller than Preview once.
+    rule = re.search(r"\.improt button\{([^}]*)\}", app.PAGE)
+    assert rule and "padding" not in rule.group(1), \
+        "Save is being sized separately from the other buttons again"
+
+
+def test_save_sits_on_the_pane_edge(cfg):
+    """Its right edge has to land where the full-width key field above ends.
+    Everything here is width:100% under box-sizing:border-box, so margin-left:
+    auto on the button is the whole mechanism."""
+    rule = re.search(r"\.improt button\{([^}]*)\}", app.PAGE)
+    assert rule, "no rule for the button on that row"
+    assert "margin-left:auto" in rule.group(1), \
+        "Save will sit next to the checkboxes instead of on the pane edge"
+
+
+def test_the_jackett_note_left_the_row(cfg):
+    """It used margin-left:auto to hold the right end, which is Save's edge
+    now. Two things claiming one edge means each moves whenever the other
+    appears."""
+    html = app.settings_sheet("none", 7, 7, "/x.js")
+    row = re.search(r'<div class="improt">.*?</div>', html, re.S).group(0)
+    assert 'id="impnote"' not in row, "the note is back on Save's row"
+    assert 'class="impnote" id="impnote" hidden' in html, "the note is gone entirely"
+    assert ".impnote[hidden]{display:none}" in app.PAGE, \
+        "it will show permanently, as a fact about the panel rather than a reason"

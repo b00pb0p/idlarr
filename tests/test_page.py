@@ -260,7 +260,10 @@ def test_import_offers_both_protocols_checked(page):
     # state, or picking Jackett would ask for a protocol it cannot serve.
     assert "imsync" in script, "the usenet box never reacts to the source"
     assert "!p[0].disabled" in script, "a disabled protocol box is still sent"
-    assert re.search(r'<em id="impnote" hidden>', page), \
+    # Element-agnostic: it moved from an <em> inside the checkbox row to a <p>
+    # beneath it, because it and Save both wanted the right edge of that row.
+    # What matters is that it starts hidden, not which tag carries it.
+    assert re.search(r'id="impnote"[^>]*\shidden', page), \
         "the Jackett note must start hidden; it only applies to one source"
 
 

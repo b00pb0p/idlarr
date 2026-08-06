@@ -2133,10 +2133,17 @@ async def import_indexers(payload: dict = Body(...)):
     in plaintext, on the same disk as everything else this service knows — see
     the Import section of the docs, and the Forget button beside it.
     """
-    if payload.get("forget"):
-        for key in ("import_source", "import_url", "import_key"):
-            set_state(key, "")
-        return {"forgotten": True}
+    # Save on the import form applies the remember box on its own, without
+    # running an import. Unticking the box does nothing until this is pressed:
+    # a checkbox that destroys a stored credential the instant it is clicked
+    # gives you no chance to change your mind, and no way to see what it did.
+    if "set_remember" in payload:
+        keep = bool(payload["set_remember"])
+        set_state("import_remember", "1" if keep else "0")
+        if not keep and get_state("import_key"):
+            set_state("import_key", "")
+            print("[import] forgot the saved API key at your request")
+        return {"ok": True, "remembered": keep}
 
     source = str(payload.get("source", "")).strip().lower()
     if source not in ("prowlarr", "jackett"):
@@ -2186,14 +2193,9 @@ async def import_indexers(payload: dict = Body(...)):
     # in `state` that does not have to be there at all. Unlike a notification
     # URL, which fires at 23:00 with nobody watching, this can simply be
     # retyped. Default on, so an upgrade behaves exactly as it did.
+    set_state("import_remember", "1" if remember else "0")
     if remember:
         set_state("import_key", api_key)
-    elif get_state("import_key"):
-        # Unchecking has to CLEAR a previously saved key, not merely decline to
-        # write a new one. Leaving the old value behind is the opposite of what
-        # the box promises, and it would keep working, so nothing would say so.
-        set_state("import_key", "")
-        print("[import] forgot the saved API key at your request")
 
     known_ids = {t["id"] for t in load_config()["trackers"]}
     known_hosts = {t["host"] for t in load_config()["trackers"] if t.get("host")}
@@ -3380,17 +3382,19 @@ PAGE = """<!doctype html>
     text-transform:uppercase;white-space:nowrap;font-family:var(--mono)}
   .improt{display:flex;align-items:center;gap:16px;margin:2px 0 8px;font-size:12px;
     color:var(--dim2)}
-  .improt label{display:flex;align-items:center;gap:6px;cursor:pointer}
+  .improt label{display:flex;align-items:center;gap:6px;cursor:pointer;
+    flex:none;white-space:nowrap}
   .improt input{width:14px;height:14px;accent-color:var(--sig);cursor:pointer;
     padding:0;margin:0}
-  .improt em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
-    max-width:52%;line-height:1.35;text-align:right}
-  .imrem{display:block;margin:0 0 12px;color:var(--dim2);font-size:12.5px;
-    font-family:var(--body);cursor:pointer}
-  .imrem input{margin-right:7px;vertical-align:-1px}
-  .imrem em{display:block;margin:4px 0 0 21px;font-style:normal;
-    color:var(--dim);font-size:11.5px;line-height:1.5}
-  .improt em[hidden]{display:none}
+  /* Save owns the right edge of this row, and margin-left:auto is what puts
+     it there. Everything in the pane is width:100% under box-sizing:border-box,
+     so that edge is the same one the key field above ends on. */
+  .improt button{margin-left:auto;flex:none}
+  .impnote{color:var(--dim);font-size:11px;line-height:1.4;margin:0 0 10px;
+    font-family:var(--body)}
+  .impnote[hidden]{display:none}
+  /* Inherits every label and input rule from .improt, so it is the same
+     control at the same left edge. Only the Save button is extra. */
   .improt label.off{opacity:.4;cursor:not-allowed}
   .improt label.off input{cursor:not-allowed}
   @media(max-width:760px){
@@ -3959,11 +3963,27 @@ __SHEET__
    imapply.textContent=fresh?('Import '+fresh):'Import';
  });
 
- const imforget=document.getElementById('imforget');
- if(imforget)imforget.addEventListener('click',async()=>{
-   await fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},
-     body:JSON.stringify({forget:true})});
-   location.reload();});
+ // Applies the remember box on its own. Unticking it does nothing until this
+ // is pressed: a checkbox that destroys a stored credential the moment it is
+ // clicked leaves no chance to change your mind and says nothing about what
+ // it did.
+ const imsave=document.getElementById('imsave');
+ if(imsave)imsave.addEventListener('click',async()=>{
+   const on=document.getElementById('imrem').checked;
+   imsave.disabled=true; ime.className='e'; ime.textContent='saving\u2026';
+   try{
+     const r=await fetch('/api/import',{method:'POST',
+       headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({set_remember:on})});
+     if(!r.ok){const d=await r.json().catch(()=>({}));
+               ime.textContent=d.detail||('failed ('+r.status+')');
+               imsave.disabled=false;return;}
+     ime.className='e good';
+     ime.textContent=on?'the key from your next import will be stored'
+                       :'saved key removed';
+     imsave.disabled=false;
+   }catch(e){ime.textContent='failed: '+e.message;imsave.disabled=false;}
+ });
 
  imapply.addEventListener('click',async()=>{
    ime.textContent='';ime.className='e';imapply.disabled=true;
@@ -4458,6 +4478,10 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
     # the browser — the field shows that one is saved, and blank means reuse it.
     src, iurl = get_state("import_source", "") or "prowlarr", get_state("import_url", "") or ""
     saved_key = bool(get_state("import_key"))
+    # Stored, so the box still reads as you left it after a reload. Derived
+    # from "is a key saved" instead, a fresh install and one you had just
+    # cleared would render identically while meaning opposite things.
+    remember_on = get_state("import_remember", "1") != "0"
     opt = lambda v, t: f'<option value="{v}"{" selected" if src == v else ""}>{t}</option>'
     imp = (
         '<div class="stack">'
@@ -4470,28 +4494,32 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         # watch; per-indexer ticking would be twenty controls answering a
         # question already answered. Both on, because excluding usenet by
         # default is the behavior this is fixing.
-        # Opt out of storing the key. It sits with the field it governs rather
-        # than with the protocol boxes, which answer a different question.
-        '<label class="imrem"><input type="checkbox" id="imrem" checked> '
-        'remember this key<em>Unticked, it is used for this import and never '
-        'written. Nothing here runs unattended, so it does not need to be '
-        'saved; you retype it next time.</em></label>'
         '<div class="improt">'
-        '<label><input type="checkbox" id="impt" checked> torrent</label>'
-        '<label id="impul"><input type="checkbox" id="impu" checked> usenet</label>'
+        '<label><input type="checkbox" id="impt" checked> Torrent</label>'
+        '<label id="impul"><input type="checkbox" id="impu" checked> Usenet</label>'
+        # All three boxes share one left edge: they are one set of options, not
+        # three scattered decisions. Save carries `lk pri` like the Save in
+        # General and Sign-in, and margin-left:auto puts its right edge on the
+        # pane edge, which is exactly where the full-width key field above ends.
+        f'<label><input type="checkbox" id="imrem"'
+        f'{" checked" if remember_on else ""}> Remember this key</label>'
+        '<button class="lk pri" id="imsave">Save</button>'
+        '</div>'
+        # Below the row rather than in it. It used margin-left:auto to sit at
+        # the right end, which is now Save's edge, and two things claiming one
+        # edge means each moves whenever the other appears.
         # Only shown once it applies. Sitting there permanently, it read as a
         # fact about the panel rather than an explanation of a disabled box.
-        '<em id="impnote" hidden>Jackett indexes torrents only, so there is no '
-        'usenet to fetch. Switch the source to Prowlarr for that.</em>'
-        '</div>'
+        '<p class="impnote" id="impnote" hidden>Jackett indexes torrents only, '
+        'so there is no usenet to fetch. Switch the source to Prowlarr for '
+        'that.</p>'
         '<div class="imlist" id="imlist"></div>'
         + _row("", "Preview first. Nothing is written until you confirm.",
                '<button class="lk" id="impreview">Preview</button>'
                '<button class="lk pri" id="imapply" disabled>Import</button>')
-        + (_row("Saved connection",
-                "Kept in the database (plaintext). Forget to remove.",
-                '<button class="lk" id="imforget">Forget</button>')
-           if (saved_key or iurl) else "")
+        # The Saved connection row and its Forget button are gone: unticking
+        # `Remember this key` and pressing Save does the same thing, and two
+        # controls for one outcome is how one of them ends up stale.
         + '<p class="e" id="ime"></p>')
 
     # Destinations are listed, not hidden behind a count. The count alone could
