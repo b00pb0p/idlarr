@@ -16,6 +16,7 @@ import os
 import re
 import secrets
 import sqlite3
+import stat as statmod
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -579,6 +580,53 @@ def _own_only(path: Path) -> None:
         os.chmod(path, 0o600)
     except OSError:
         pass          # best effort: some filesystems (fuse/shfs) ignore modes
+
+
+def secure_existing_backups() -> None:
+    """Retrofit 0600 onto snapshots written before that was enforced.
+
+    `_own_only()` was added to `backup_db()` on 2026-08-04, where it applies to
+    the file being written and nothing else. So every install that UPGRADED
+    kept a directory of 0644 snapshots, each carrying `session_secret` and
+    `idlarr_token`, readable by any local user. Retention ages them out, but
+    that is up to `backup_keep` days of exposure that nothing anywhere reports.
+    Found on the reference deployment 2026-08-06: the database was 0600 and
+    eight of nine backups beside it were 0644.
+
+    At STARTUP, not inside backup_db(): that returns early when the day's
+    snapshot already exists, and early again when backups are switched off,
+    so a sweep placed there would skip the restart right after an upgrade,
+    which is the one case this exists for.
+
+    The mode is read back afterwards rather than assumed. `_own_only()` is
+    best-effort and swallows the failure, so on a filesystem that ignores modes
+    this would otherwise report a fix that did not happen.
+    """
+    try:
+        found = sorted(BACKUP_DIR.glob("idlarr-*.db"))
+    except OSError:
+        return
+
+    fixed, stubborn = 0, 0
+    for path in found:
+        try:
+            if not statmod.S_IMODE(path.stat().st_mode) & 0o077:
+                continue
+            _own_only(path)
+            if statmod.S_IMODE(path.stat().st_mode) & 0o077:
+                stubborn += 1
+            else:
+                fixed += 1
+        except OSError:
+            continue
+
+    if fixed:
+        print(f"[backup] restricted {fixed} older snapshot(s) to 0600")
+    if stubborn:
+        print(f"[startup] WARNING: {stubborn} backup(s) under {BACKUP_DIR} stay "
+              f"group/world-readable; the filesystem ignored chmod. They hold "
+              f"the session secret and the ping token. Move /data to a path "
+              f"that honors file modes.")
 
 
 def init_db() -> None:
@@ -1254,6 +1302,8 @@ async def lifespan(app: FastAPI):
             f"  If /data looks empty when it should not be, the mount is pointing\n"
             f"  somewhere other than you think."
         ) from exc
+
+    secure_existing_backups()
 
     # A first boot with no IDLARR_TOKEN mints one and stores it, the way the
     # *arrs generate an API key. The original design refused to start instead,
