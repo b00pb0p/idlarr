@@ -5,7 +5,7 @@
 [![tests](https://github.com/b00pb0p/idlarr/actions/workflows/tests.yml/badge.svg)](https://github.com/b00pb0p/idlarr/actions/workflows/tests.yml)
 
 Let me preface this by being clear about something; this is stupid. Idlarr was created
-to automate and fix a problem I had ONCE in 15+ years. It's more than likely unnecessary, 
+to automate and fix a problem I had ONCE in 15+ years. It's more than likely unnecessary,
 definitely overkill, but it's 2026 and we all have tokens to burn. Now that's out of the
 way....
 
