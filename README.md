@@ -327,13 +327,23 @@ start without it, and the service warns if it ends up empty anyway.
 
 ## Endpoints
 
+There is a **read-only API key** for dashboards, uptime checks and scripts.
+It reads and can never write, so a key sitting in a widget's config cannot
+reset a countdown. Find it in *Settings, API*, and read
+**[docs/api.md](docs/api.md)** for what it opens and what it refuses.
+
+Point anything external at **`/api/summary`**. It is the stable shape.
+`/api/status` returns every field of every tracker and follows the page, so it
+changes.
+
 <details>
 <summary>Full route list</summary>
 
 | Route | Purpose |
 |---|---|
 | `GET /` | Status page |
-| `GET /api/status` | Same data as JSON |
+| `GET /api/summary` | Counts, worst tracker, next deadline. **The stable shape for other services** |
+| `GET /api/status` | Same data as the page, as JSON. Shape follows the page |
 | `POST /ping` | Userscript ingest (bearer auth) |
 | `POST /api/mark/{id}` | Manual "I just logged in" |
 | `POST /api/unmark/{id}` | Remove the most recent auth event |
@@ -348,11 +358,14 @@ start without it, and the service warns if it ends up empty anyway.
 | `POST /api/settings` | Edit the `defaults:` block: timezone, check hour, thresholds |
 | `GET`/`POST /api/auth` | Read or change the UI login |
 | `POST /login` · `POST /logout` | Session in, session out |
+| `POST /api/apikey` | Regenerate the read-only key. UI login only, never the key itself |
 | `POST /api/test-notify` | Send a test notification. Bearer token or a session |
 | `GET /healthz` | Health check, **always open**, so an uptime monitor needs no credentials |
 
 Everything above `/api/test-notify` sits behind the UI login **when one is
-configured**; with none set they are open, which is the 1.0 behavior. `/ping`
+configured**; with none set they are open, which is the 1.0 behavior. The three
+read endpoints (`/api/summary`, `/api/status`, `/api/history/{id}`) also accept
+the read-only key, as `X-Api-Key` or `?apikey=`. No write endpoint does. `/ping`
 always uses the bearer token, never the login. The userscript posts to it
 cross-origin from tracker pages, where cookies do not apply.
 
@@ -409,6 +422,9 @@ this working" question without guessing.
 
 Diagnosis table, the stale-script case, and how to restore from a backup:
 **[docs/troubleshooting.md](docs/troubleshooting.md)**.
+
+The read-only API, what it can and cannot do, and recipes for Uptime Kuma and
+dashboard widgets: **[docs/api.md](docs/api.md)**.
 
 ## Screenshot
 

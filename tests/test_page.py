@@ -76,6 +76,7 @@ def test_settings_panel_is_present_with_every_section(page):
     "ntest", "nte", "cpjs", "tm", "tmn", "tmsave", "tmimp",  # test, copy, add
     "setTz", "setHour", "setPct", "setAlive", "setSave", "setErr",  # general
     "cfgUp", "cfgFile",                                    # config restore
+    "apik", "apicopy", "apinew", "apie",                   # read-only API key
 ])
 def test_every_element_the_script_reaches_for_exists(page, element):
     """The page's JS is one IIFE. A getElementById that returns null throws and

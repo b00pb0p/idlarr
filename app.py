@@ -842,6 +842,44 @@ def authed(request: Request) -> bool:
     return False
 
 
+def api_key() -> str:
+    """The read-only key, generated on first read like the *arrs mint theirs.
+
+    Deliberately NOT `IDLARR_TOKEN`. That one writes events to /ping, so
+    anything holding it can forge an auth event and silently reset a countdown,
+    which is the exact failure this service exists to prevent. It is also baked
+    into the generated userscript, making it the most-copied secret here.
+    """
+    k = get_state("api_key")
+    if not k:
+        k = secrets.token_hex(32)
+        set_state("api_key", k)
+    return k
+
+
+def require_api_key(request: Request) -> None:
+    """Read-only access for dashboards and monitors.
+
+    Accepts `X-Api-Key` (the arr convention) or `?apikey=` (Jackett's, and what
+    most dashboard widgets send). A valid key satisfies the route on its own,
+    so a widget needs no session; a browser session still works, so the page
+    itself keeps using these endpoints unchanged.
+
+    Permanently GET only. This dependency is never attached to a route that
+    writes, so a leaked dashboard key cannot mark a tracker seen.
+    """
+    sent = request.headers.get("x-api-key") or request.query_params.get("apikey") or ""
+    if sent and hmac.compare_digest(sent, api_key()):
+        return
+    if authed(request):
+        return
+    # Say which header, because the most common failure is sending the wrong
+    # secret: IDLARR_TOKEN looks interchangeable and is not.
+    raise HTTPException(401, "read access needs a session or the read-only API "
+                             "key, as X-Api-Key or ?apikey=. This is not "
+                             "IDLARR_TOKEN.")
+
+
 def require_ui(request: Request) -> None:
     """Route dependency. Passes straight through when auth is off."""
     if authed(request):
@@ -1437,7 +1475,7 @@ def clean(r: dict) -> dict:
     }
 
 
-@app.get("/api/status", dependencies=[Depends(require_ui)])
+@app.get("/api/status", dependencies=[Depends(require_api_key)])
 async def api_status():
     return [clean(r) for r in statuses()]
 
@@ -1997,7 +2035,7 @@ async def unmark(tracker_id: str):
     return {"removed": removed, "row": clean(row)}
 
 
-@app.get("/api/history/{tracker_id}", dependencies=[Depends(require_ui)])
+@app.get("/api/history/{tracker_id}", dependencies=[Depends(require_api_key)])
 async def history(tracker_id: str, limit: int = 5):
     """Recent auth events for one tracker, newest first.
 
@@ -2023,6 +2061,48 @@ async def history(tracker_id: str, limit: int = 5):
         out.append({"ts": r["ts"], "date": when.strftime("%Y-%m-%d"),
                     "time": when.strftime("%H:%M"), "source": r["source"] or ""})
     return out
+
+
+@app.get("/api/summary", dependencies=[Depends(require_api_key)])
+async def api_summary():
+    """The documented, stable shape for dashboards and monitors.
+
+    /api/status exists too and returns every field of every tracker, but its
+    shape has changed repeatedly while the page was being built. Anything
+    external should read THIS: it is a small, deliberate contract, and the
+    point of it is that renaming a field on the status page cannot silently
+    break somebody's widget.
+    """
+    rows = statuses()
+    counts = {}
+    for r in rows:
+        counts[r["state"]] = counts.get(r["state"], 0) + 1
+
+    # Worst first is already the sort order, so the head of the list is the
+    # tracker that needs attention soonest. `None` when there are no trackers.
+    worst = rows[0] if rows else None
+    # The soonest real deadline, ignoring anything that cannot expire.
+    live = [r for r in rows
+            if not r["immune"] and r["days_left"] is not None
+            and r["state"] != "snoozed"]
+    soonest = min(live, key=lambda r: r["days_left"]) if live else None
+
+    return {
+        "trackers": len(rows),
+        "counts": {s: counts.get(s, 0) for s in RANK},
+        "needs_attention": sum(counts.get(s, 0) for s in
+                               ("expired", "critical", "warn", "due", "session")),
+        "worst": None if worst is None else {
+            "id": worst["id"], "name": worst["name"], "state": worst["state"],
+            "days_left": worst["days_left"],
+        },
+        "soonest_deadline": None if soonest is None else {
+            "id": soonest["id"], "name": soonest["name"],
+            "days_left": soonest["days_left"],
+        },
+        "last_check": get_state("last_check", "") or None,
+        "version": IDLARR_VERSION,
+    }
 
 
 @app.get("/healthz")
@@ -2397,6 +2477,17 @@ async def auth_configure(request: Request, payload: dict = Body(...)):
     return resp
 
 
+@app.post("/api/apikey", dependencies=[Depends(require_ui)])
+async def regenerate_api_key():
+    """Mint a new read-only key. Behind require_ui, never the key itself: a
+    leaked key must not be able to rotate itself and lock you out of noticing.
+    The old value stops working the moment this returns."""
+    k = secrets.token_hex(32)
+    set_state("api_key", k)
+    print("[api] read-only API key regenerated")
+    return {"api_key": k}
+
+
 @app.post("/api/test-notify")
 async def test_notify(request: Request,
                       authorization: str | None = Header(default=None)):
@@ -2521,7 +2612,7 @@ PAGE = """<!doctype html>
     color:var(--dim);text-align:center;padding:0;font-weight:600;
     cursor:pointer;user-select:none;white-space:nowrap;min-width:0}
   thead th:hover{color:var(--fg)}
-  /* `elapsed` is centerd over its BAR, which starts 45px in, not over the
+  /* `elapsed` is centered over its BAR, which starts 45px in, not over the
      whole column — otherwise it sits noticeably left of what it names. */
   thead th.mid{padding-left:45px}
   thead th::after{content:'';display:inline-block;width:0;height:0;margin-left:6px;
@@ -2892,7 +2983,7 @@ PAGE = """<!doctype html>
   .improt label.off input{cursor:not-allowed}
   @media(max-width:760px){
     .sheet .win{flex-direction:column;height:92vh}
-    /* Six tabs don't fit at phone width, so the nav must scroll: and any
+    /* Six tabs don't fit at phone width, so the nav must scroll, and any
        close button sharing that row collides with whatever tab is at the right
        edge. Lift the × into its own slim bar above the nav (position:static
        makes it the first flex child), so the tabs scroll freely underneath
@@ -3541,6 +3632,36 @@ __SHEET__
    }catch(e){/* the panel still saved; the table just repaints on next load */}
  });
 
+ // ---- read-only API key ------------------------------------------------
+ const apik=document.getElementById('apik'), apie=document.getElementById('apie');
+ const apicopy=document.getElementById('apicopy'), apinew=document.getElementById('apinew');
+ if(apicopy)apicopy.addEventListener('click',()=>{
+   const done=()=>{const o=apicopy.textContent;
+     apicopy.textContent='Copied';setTimeout(()=>apicopy.textContent=o,1600);};
+   if(navigator.clipboard)navigator.clipboard.writeText(apik.value).then(done,()=>{});
+   else{apik.select();document.execCommand('copy');done();}});
+ if(apinew)apinew.addEventListener('click',async()=>{
+   // Two-step. Regenerating silently breaks every widget already using it, and
+   // there is no undo: the old value is gone the moment the server writes.
+   if(apinew.dataset.arm!=='1'){
+     apinew.dataset.arm='1'; apinew.classList.add('arm');
+     apinew.textContent='Confirm';
+     apie.className='e warn';
+     apie.textContent='This breaks anything already using the current key.';
+     setTimeout(()=>{if(apinew.dataset.arm==='1'){apinew.dataset.arm='';
+       apinew.classList.remove('arm');apinew.textContent='Regenerate';
+       apie.textContent='';apie.className='e';}},6000);
+     return;}
+   apinew.dataset.arm=''; apinew.classList.remove('arm');
+   apinew.textContent='Regenerate'; apie.className='e'; apie.textContent='';
+   try{const d=await post('/api/apikey');
+     apik.value=d.api_key; apie.className='e good'; apie.textContent='New key generated';
+     // Keep it as the value a close would restore to, or reopening Settings
+     // would show the previous key as though nothing had changed.
+     apik.defaultValue=d.api_key;
+     setTimeout(()=>{if(apie.textContent==='New key generated')apie.textContent='';},4000);}
+   catch(e){apie.className='e bad';apie.textContent=e.message;}});
+
  const cpjs=document.getElementById('cpjs');
  if(cpjs)cpjs.addEventListener('click',()=>{
    const u=cpjs.dataset.u, done=()=>{const o=cpjs.textContent;
@@ -3618,7 +3739,7 @@ def _tz_options(current: str) -> str:
     America/Sao Paulo. Grouped because a flat list of ~500 is a scroll, not a
     choice.
 
-    `current` is always present even if this build's tzdata does not know it , 
+    `current` is always present even if this build's tzdata does not know it, 
     otherwise opening Settings on a config written elsewhere would silently
     reselect the first zone in the list and change every countdown on Save.
     """
@@ -3878,15 +3999,36 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
           'A userscript already running in your browser reports when you were '
           'seen logged in; the service does the rest.</p>')
 
+    # The key is SHOWN, unlike auth_hash and unlike import_key. It has to be
+    # copied into a widget's config, so hiding it would just mean a Reveal
+    # button that everyone clicks. What it can do is bounded instead: reads
+    # only, and it cannot rotate itself.
+    api = (
+        _row("Read-only key",
+             "For dashboards and monitors. Send it as <code>X-Api-Key</code> or "
+             "<code>?apikey=</code>. It cannot change anything.",
+             f'<input id="apik" readonly value="{esc(api_key())}">')
+        + _row("", "Regenerate if it leaks. The old key stops working "
+                   "immediately and anything using it will need the new one.",
+               '<button class="lk" id="apicopy">Copy</button>'
+               '<button class="lk" id="apinew">Regenerate</button>')
+        + _row("Endpoint", "The stable one. <code>/api/status</code> exists but "
+                           "its shape follows the page, so it can change.",
+               '<span class="val">/api/summary</span>')
+        + '<p class="e" id="apie"></p>')
+
     sections = [
         ("general", "General", "Everything that applies to the whole install.", general),
         ("signin", "Sign-in", "Stored hashed in the database, not in a file.", signin),
         ("script", "Userscript", "Generated from your tracker list. Nothing to fill "
          "in, and it updates itself when you add a tracker.", script),
         ("import", "Import", "Reads your own Prowlarr or Jackett, never a tracker. "
-         "Limits are not imported, neither tool knows them: so everything "
-         "arrives at 30 days, unconfirmed.", imp),
+         "Limits are not imported, because neither tool knows them, so "
+         "everything arrives at 30 days, unconfirmed.", imp),
         ("notify", "Notifications", "Every alert goes through Apprise.", notify),
+        ("api", "API", "A read-only key so other services can read your "
+         "status. It can never write, so a leaked key cannot reset a "
+         "countdown.", api),
         ("about", "About", "", about),
     ]
     nav = "".join(
