@@ -358,6 +358,7 @@ changes.
 | `POST /api/settings` | Edit the `defaults:` block: timezone, check hour, thresholds |
 | `GET`/`POST /api/auth` | Read or change the UI login |
 | `POST /login` · `POST /logout` | Session in, session out |
+| `POST /api/check` | Run the daily check now: back up, evaluate, send anything due |
 | `POST /api/apikey` | Regenerate the read-only key. UI login only, never the key itself |
 | `POST /api/test-notify` | Send a test notification. Bearer token or a session |
 | `GET /healthz` | Health check, **always open**, so an uptime monitor needs no credentials |

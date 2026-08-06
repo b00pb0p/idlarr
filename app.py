@@ -1268,6 +1268,51 @@ def next_check() -> tuple[str, bool]:
     return f"next today {hour:02d}:00", False
 
 
+# Held for the duration of a check so the scheduler and a Run now cannot both
+# run one: a click landing on the check hour would otherwise send the day's
+# alerts twice. It guards genuine OVERLAP, not two clicks in a row — a check
+# finishes in milliseconds, so sequential clicks simply both run. The button
+# disabling itself and the page reloading on success is what covers that.
+check_lock = asyncio.Lock()
+
+
+async def run_daily_check(today: str, by_hand: bool = False) -> dict:
+    """One daily pass: back up, evaluate every tracker, send whatever is due.
+
+    Extracted from the `while True` in scheduler() for the same reason
+    maybe_alive_push() was — an inline block inside a loop cannot be tested,
+    and this one now has a second caller in POST /api/check.
+
+    `last_check` is set here, by BOTH callers on purpose. A manual run really
+    did evaluate the day, so letting the scheduled one fire again later would
+    mean two rounds of pushes for one day. The panel says so, since "I ran it
+    at noon so tonight is handled" is not something to have to infer.
+
+    The backup runs before the alert and its failure is caught, because the
+    alert is the point of the service and a full disk must not silence it.
+    """
+    print(f"[check] running for {today}" + (" (by hand)" if by_hand else ""))
+    try:
+        dest = backup_db(today)
+        if dest:
+            kb = dest.stat().st_size // 1024
+            print(f"[backup] {dest} ({dest.stat().st_size} bytes)")
+            note_activity("backup", True, f"{dest.name} ({kb} KB)")
+        else:
+            note_activity("backup", True, "disabled")
+    except Exception as exc:
+        print(f"[backup] FAILED: {exc}")
+        note_activity("backup", False, str(exc))
+    await notify(statuses())
+    set_state("last_check", today)
+    n = len(load_config()["trackers"])
+    # Same distinction as auth_source on a tracker row: a run someone asked for
+    # is different evidence from one that happened on its own, and a panel that
+    # conflates them hides which.
+    note_activity("check", True, f"{n} tracker(s)" + (", by hand" if by_hand else ""))
+    return {"trackers": n}
+
+
 async def scheduler() -> None:
     """Wake often, act once per local day. Survives restarts without drift."""
     while True:
@@ -1276,23 +1321,11 @@ async def scheduler() -> None:
             now_local = datetime.now(local_tz())
             today = now_local.date().isoformat()
             if now_local.hour >= cfg["check_hour"] and get_state("last_check") != today:
-                print(f"[check] running for {today}")
-                # Back up before notifying, and never let a backup failure stop
-                # the alert — the alert is the whole point of the service.
-                try:
-                    dest = backup_db(today)
-                    if dest:
-                        kb = dest.stat().st_size // 1024
-                        print(f"[backup] {dest} ({dest.stat().st_size} bytes)")
-                        note_activity("backup", True, f"{dest.name} ({kb} KB)")
-                    else:
-                        note_activity("backup", True, "disabled")
-                except Exception as exc:
-                    print(f"[backup] FAILED: {exc}")
-                    note_activity("backup", False, str(exc))
-                await notify(statuses())
-                set_state("last_check", today)
-                note_activity("check", True, f"{len(load_config()['trackers'])} tracker(s)")
+                if check_lock.locked():
+                    print("[check] a manual run is in progress, skipping this tick")
+                else:
+                    async with check_lock:
+                        await run_daily_check(today)
 
             # ---- still-alive heartbeat -------------------------------------
             # Its whole job is to make silence meaningful: if these stop
@@ -2565,6 +2598,27 @@ async def regenerate_api_key():
     return {"api_key": k}
 
 
+@app.post("/api/check", dependencies=[Depends(require_ui)])
+async def api_check():
+    """Run the daily check now, rather than waiting for check_hour.
+
+    Two cases this answers. A check hour moved later in a day whose check has
+    already run does not fire again that day, which is correct and looks like a
+    stalled scheduler. And a container down across a late check hour skips the
+    day entirely: the gate is `hour >= check_hour`, so at 00:10 with check_hour
+    23 it will not catch up until 23:00 tomorrow.
+
+    It really does run the check, alerts included. A button that evaluated but
+    did not send would repeat the mistake /api/test-notify was built to fix.
+    """
+    if check_lock.locked():
+        raise HTTPException(409, "a check is already running")
+    async with check_lock:
+        today = datetime.now(local_tz()).date().isoformat()
+        result = await run_daily_check(today, by_hand=True)
+    return {"ok": True, **result, "ran_at": read_activity("check") or {}}
+
+
 @app.post("/api/test-notify")
 async def test_notify(request: Request,
                       authorization: str | None = Header(default=None)):
@@ -3661,6 +3715,24 @@ __SHEET__
    else{nte.textContent=d.detail||('failed ('+r.status+')');}
  });
 
+ // ---- run the daily check now -----------------------------------------
+ // Reloads on success rather than patching the four activity rows and the
+ // next-run line by hand. paint() drifting from the cells the server renders
+ // is a bug this project has already shipped once; there is nothing to gain
+ // by growing a second copy of that markup here.
+ const ckrun=document.getElementById('ckrun'),cke=document.getElementById('cke');
+ if(ckrun)ckrun.addEventListener('click',async()=>{
+   cke.className='e';cke.textContent='running\u2026';ckrun.disabled=true;
+   try{
+     const r=await fetch('/api/check',{method:'POST'});
+     const d=await r.json().catch(()=>({}));
+     if(r.ok){cke.className='e good';cke.textContent='done, reloading\u2026';
+              location.reload();return;}
+     cke.textContent=d.detail||('failed ('+r.status+')');
+   }catch(e){cke.textContent='failed: '+e.message;}
+   ckrun.disabled=false;
+ });
+
  // ---- restore a config ------------------------------------------------
  const cfgUp=document.getElementById('cfgUp'),cfgFile=document.getElementById('cfgFile');
  if(cfgUp){
@@ -3930,27 +4002,6 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         # "Nightly backup" was wrong — it runs inside the daily check, not at
         # night — and "Last alert" implied one had been sent when the row
         # records only that the step ran.
-        + _act_row("Daily check", "check",
-                   "Runs at the check hour. The two below happen inside it, "
-                   "which is why they share its timestamp.",
-                   extra=next_check())
-        + _act_row("Database backup", "backup",
-                   "Taken at the start of the check, before any alert, so a "
-                   "failed backup can never stop one.")
-        + _act_row("Notification", "alert",
-                   "Only sends when something is due. <b>nothing due</b> means "
-                   "it ran and there was nothing to tell you.")
-        + _act_row("Heartbeat", "heartbeat",
-                   "Separate from the check: a low-priority push so that "
-                   "silence from Idlarr means the container is down.")
-        + _row("Your config",
-               "Download <code>trackers.yml</code> exactly as it is on disk, "
-               "comments and all. Restoring replaces it: the current file is "
-               "saved alongside as a <code>.bak</code> first.",
-               '<a class="lk" href="/api/config" download>Download</a>'
-               '<button class="lk" id="cfgUp">Restore\u2026</button>'
-               '<input type="file" id="cfgFile" accept=".yml,.yaml,text/yaml" '
-               'style="display:none">')
         + _row("Status page URL",
                "The address you reach this page on. The generated userscript "
                "reports here, and alerts link to it. Wrong, and tracker CSP "
@@ -3964,6 +4015,41 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         + '<p class="sub" style="margin:15px 0 0">Written to '
           '<code>trackers.yml</code>, which is hot-reloaded, only a timezone '
           'change needs a restart to affect an already-running check.</p>')
+
+    # Split out of General 2026-08-06: that pane had grown to hold a form, a
+    # read-only activity log and two file actions, which are three different
+    # questions. Everything the Save button posts stays together in General;
+    # what moved here is what the service DID and the files behind it.
+    system = (
+        _act_row("Daily check", "check",
+                 "Runs at the check hour. The two below happen inside it, "
+                 "which is why they share its timestamp.",
+                 extra=next_check())
+        + _act_row("Database backup", "backup",
+                   "Taken at the start of the check, before any alert, so a "
+                   "failed backup can never stop one.")
+        + _act_row("Notification", "alert",
+                   "Only sends when something is due. <b>nothing due</b> means "
+                   "it ran and there was nothing to tell you.")
+        + _act_row("Heartbeat", "heartbeat",
+                   "Separate from the check: a low-priority push so that "
+                   "silence from Idlarr means the container is down.")
+        + _row("Run the check now",
+               "Backs up, evaluates every countdown and sends anything due, "
+               "exactly as the scheduled run does. Use it after a restart that "
+               "spanned the check hour. It counts as today's run, so the "
+               "scheduled one will not fire again today. It does not send a "
+               "heartbeat.",
+               '<button class="lk" id="ckrun">Run now</button>')
+        + '<p class="e" id="cke"></p>'
+        + _row("Your config",
+               "Download <code>trackers.yml</code> exactly as it is on disk, "
+               "comments and all. Restoring replaces it: the current file is "
+               "saved alongside as a <code>.bak</code> first.",
+               '<a class="lk" href="/api/config" download>Download</a>'
+               '<button class="lk" id="cfgUp">Restore\u2026</button>'
+               '<input type="file" id="cfgFile" accept=".yml,.yaml,text/yaml" '
+               'style="display:none">'))
 
     # --- sign-in: the form that used to be its own modal. Same element ids, so
     #     the handlers did not have to change.
@@ -4106,6 +4192,8 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
 
     sections = [
         ("general", "General", "Everything that applies to the whole install.", general),
+        ("system", "System", "What the unattended jobs did, and the files "
+         "behind them.", system),
         ("signin", "Sign-in", "Stored hashed in the database, not in a file.", signin),
         ("script", "Userscript", "Generated from your tracker list. Nothing to fill "
          "in, and it updates itself when you add a tracker.", script),
