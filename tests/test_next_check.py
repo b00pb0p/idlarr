@@ -63,7 +63,7 @@ def test_moving_the_hour_after_the_day_already_ran(monkeypatch):
     correct, and the panel gave no way to tell it from a stalled scheduler."""
     at(monkeypatch, hour=14, check_hour=23, last_check="2026-08-06")
     text, overdue = app.next_check()
-    assert text == "next tomorrow 23:00"
+    assert text == "runs tomorrow at 23:00"
     assert not overdue
 
 
@@ -71,7 +71,7 @@ def test_the_morning_after_that(monkeypatch):
     """Next day, before 23:00. Still waiting, and it should say for how long
     rather than leaving yesterday's timestamp to be interpreted."""
     at(monkeypatch, hour=8, check_hour=23, last_check="2026-08-05")
-    assert app.next_check() == ("next today 23:00", False)
+    assert app.next_check() == ("runs today at 23:00", False)
 
 
 def test_the_hour_has_passed_and_the_day_has_not_run(monkeypatch):
@@ -88,7 +88,7 @@ def test_a_first_run_that_has_never_checked(monkeypatch):
     """`last_check` is empty. It must read as scheduled, not as overdue since
     the beginning of time, and the row beside it already says "never"."""
     at(monkeypatch, hour=8, check_hour=9, last_check=None)
-    assert app.next_check() == ("next today 09:00", False)
+    assert app.next_check() == ("runs today at 09:00", False)
 
 
 def test_midnight_check_hour(monkeypatch):
@@ -96,7 +96,7 @@ def test_midnight_check_hour(monkeypatch):
     only thing holding it back. Off-by-one here would claim a run had been
     missed every single day."""
     at(monkeypatch, hour=3, check_hour=0, last_check="2026-08-06")
-    assert app.next_check() == ("next tomorrow 00:00", False)
+    assert app.next_check() == ("runs tomorrow at 00:00", False)
     at(monkeypatch, hour=3, check_hour=0, last_check="2026-08-05")
     assert app.next_check() == ("due now", True)
 
@@ -136,7 +136,7 @@ def test_the_line_reaches_the_panel(monkeypatch):
     settings panel never asks for it."""
     at(monkeypatch, hour=8, check_hour=23, last_check="2026-08-05")
     html = app.settings_sheet("none", 7, 7, "/idlarr.user.js")
-    assert "next today 23:00" in html
+    assert "runs today at 23:00" in html
 
 
 def test_the_line_shows_before_anything_has_ever_run(monkeypatch):
@@ -146,7 +146,7 @@ def test_the_line_shows_before_anything_has_ever_run(monkeypatch):
     """
     at(monkeypatch, hour=8, check_hour=9, last_check=None)
     html = app.settings_sheet("none", 7, 7, "/idlarr.user.js")
-    assert "never" in html and "next today 09:00" in html
+    assert "never" in html and "runs today at 09:00" in html
 
 
 def test_overdue_is_styled_and_the_rule_exists(monkeypatch):

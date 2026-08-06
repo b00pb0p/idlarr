@@ -73,10 +73,10 @@ def test_the_panel_stops_promising_a_run_today(cfg, quiet):
     """The user-visible half of the line above: after Run now, the next-run
     line must flip to tomorrow, or it promises a run that will not happen."""
     today = datetime.now(app.local_tz()).date().isoformat()
-    assert app.next_check()[0] != f"next tomorrow {app.load_config()['check_hour']:02d}:00"
+    assert app.next_check()[0] != f"runs tomorrow at {app.load_config()['check_hour']:02d}:00"
     asyncio.run(app.run_daily_check(today, by_hand=True))
     text, overdue = app.next_check()
-    assert text.startswith("next tomorrow") and not overdue
+    assert text.startswith("runs tomorrow") and not overdue
 
 
 def test_a_hand_run_is_labelled_and_a_scheduled_one_is_not(cfg, quiet):

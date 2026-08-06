@@ -1262,10 +1262,10 @@ def next_check() -> tuple[str, bool]:
     hour = int(cfg["check_hour"])
     now = datetime.now(local_tz())
     if get_state("last_check") == now.date().isoformat():
-        return f"next tomorrow {hour:02d}:00", False
+        return f"runs tomorrow at {hour:02d}:00", False
     if now.hour >= hour:
         return "due now", True
-    return f"next today {hour:02d}:00", False
+    return f"runs today at {hour:02d}:00", False
 
 
 # Held for the duration of a check so the scheduler and a Run now cannot both
@@ -4192,8 +4192,6 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
 
     sections = [
         ("general", "General", "Everything that applies to the whole install.", general),
-        ("system", "System", "What the unattended jobs did, and the files "
-         "behind them.", system),
         ("signin", "Sign-in", "Stored hashed in the database, not in a file.", signin),
         ("script", "Userscript", "Generated from your tracker list. Nothing to fill "
          "in, and it updates itself when you add a tracker.", script),
@@ -4204,6 +4202,8 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         ("api", "API", "A read-only key so other services can read your "
          "status. It can never write, so a leaked key cannot reset a "
          "countdown.", api),
+        ("system", "System", "What the unattended jobs did, and the files "
+         "behind them.", system),
         ("about", "About", "", about),
     ]
     nav = "".join(
