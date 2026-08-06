@@ -23,7 +23,11 @@ round of guessing. Common outcomes:
 | `__idlarr` is not defined | the script isn't running here at all — see below |
 
 **If a tracker you just added does nothing**, the browser's copy of the script is
-probably older than your config. It updates on your manager's own schedule, not
+probably older than your config. **The status page now says so itself**: once any
+tracker reports in, the script tells the service which version it is running, and
+an amber banner appears when that is behind what is being served, with an
+**Update now** link. If you see no banner, the installed version is current and
+the problem is elsewhere. It updates on your manager's own schedule, not
 the moment you add a tracker. Force an update from your manager's dashboard — in Violentmonkey, the
 script's ⋮ menu, *Check for updates* — or reinstall from Settings → Userscript.
 Compare the `@version` in the installed script against the one the service is

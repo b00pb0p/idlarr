@@ -271,6 +271,38 @@ def test_add_tracker_offers_the_import_route(page):
         f"prompt does not open the Import section: {m.group(1).strip()}"
 
 
+def test_page_renders_once_a_browser_has_reported_a_version(client, cfg):
+    """The stale-script banner reads `js_url`, and it was first written ABOVE
+    the line that defines it. Every test still passed, because the guard is
+    `if stale and js_url` and `stale` is None until some browser has actually
+    pinged, so the NameError was short-circuited away. The page 500'd only on a
+    real install, the moment the first ping arrived.
+
+    So: render the page in BOTH states, not just the quiet one."""
+    assert client.get("/").status_code == 200          # nothing has reported
+
+    app.set_state("script_seen", "1.1.1")              # a browser reports in
+    app.set_state("userscript_rev", "4")               # and the server moved on
+    r = client.get("/")
+    assert r.status_code == 200, "page 500s once a version has been reported"
+    assert 'id="stale"' in r.text, "no warning that the installed script is behind"
+    assert "1.1.1" in r.text and "1.1.4" in r.text
+
+
+def test_no_stale_warning_before_anything_has_reported(client, cfg):
+    """Unknown is not the same as stale. A fresh install must not be told to
+    reinstall a script it has not got yet."""
+    app.set_state("userscript_rev", "4")
+    assert 'id="stale"' not in client.get("/").text
+
+
+def test_ping_records_the_reported_script_version(client, cfg):
+    """This is what makes the comparison possible at all."""
+    client.post("/ping", json={"tracker": "alpha", "kind": "auth", "v": "1.1.9"},
+                headers={"Authorization": f"Bearer {app.TOKEN}"})
+    assert app.get_state("script_seen") == "1.1.9"
+
+
 def test_timezone_is_a_picker_not_free_text(page):
     """Free text meant a typo was only caught on Save, and nobody remembers
     whether it is America/Sao_Paulo or America/Sao Paulo. The configured zone

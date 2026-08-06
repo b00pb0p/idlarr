@@ -1373,6 +1373,15 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
     kind = payload.get("kind", "auth")
     if kind not in ("auth", "visit"):
         raise HTTPException(400, "kind must be auth|visit")
+    # The script reports which version it is running. Adding or importing a
+    # tracker bumps the served version, and until the browser picks that up the
+    # new site has no @match, so it never pings and sits at `unknown` looking
+    # like broken detection. Recording this is what lets the page say so.
+    seen = str(payload.get("v", "")).strip()[:32]
+    if seen:
+        set_state("script_seen", seen)
+        set_state("script_seen_at", datetime.now(local_tz()).strftime("%Y-%m-%d %H:%M"))
+
     known = {t["id"] for t in load_config()["trackers"]}
     if tid not in known:
         raise HTTPException(404, f"unknown tracker '{tid}' — add it to trackers.yml")
@@ -2056,6 +2065,26 @@ def userscript_version(payload: str) -> str:
     return f"{USERSCRIPT_BASE_VERSION}.{get_state('userscript_rev', '1')}"
 
 
+def userscript_stale() -> tuple[str, str] | None:
+    """(installed, serving) when the browser's copy is behind, else None.
+
+    Both are `1.1.<rev>`, and the rev is a counter that only ever grows, so the
+    trailing integer is the whole comparison. Returns None when nothing has ever
+    reported: unknown is not the same as stale, and a first-run install should
+    not be told to reinstall something it has not got yet.
+    """
+    installed = get_state("script_seen", "") or ""
+    rev = get_state("userscript_rev", "0") or "0"
+    if not installed or rev == "0":
+        return None
+    try:
+        if int(installed.rsplit(".", 1)[-1]) >= int(rev):
+            return None
+    except ValueError:
+        return None            # unparseable: say nothing rather than cry wolf
+    return installed, f"{USERSCRIPT_BASE_VERSION}.{rev}"
+
+
 def userscript_version_peek() -> str:
     """What the last render produced, read-only.
 
@@ -2639,6 +2668,10 @@ PAGE = """<!doctype html>
   .banner{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:13px 0 0;
     padding:9px 13px;border:1px solid var(--critical);background:#251619;font-size:12px}
   .banner b{color:var(--critical);letter-spacing:.04em}
+  /* Amber, not red. An out-of-date script is a thing to fix today, not a
+     security hole, and using the same colour for both teaches you to ignore it. */
+  .banner.warn{border-color:var(--warn);background:#241d10}
+  .banner.warn b{color:var(--warn)}
   .banner .sp{margin-left:auto;display:flex;gap:7px}
   /* Used on BOTH <button> and <a>. A bare button{} rule elsewhere sets
      uppercase/9px/bold, which anchors never inherit — so every .lk must state
@@ -3212,6 +3245,18 @@ __SHEET__
    const bx=document.getElementById('banx');
    if(bx)bx.addEventListener('click',()=>{
      localStorage.setItem('idl_authban','none');ban.style.display='none';});
+ }
+
+ // Same trick for the stale-script warning, keyed on the SERVED version:
+ // dismissing 1.1.7 must not hide 1.1.8. A dismissal that outlives the thing
+ // it dismissed is how you stop being told about the next one.
+ const st=document.getElementById('stale');
+ if(st){
+   const sv=st.dataset.v||'';
+   if(localStorage.getItem('idl_staleban')===sv)st.style.display='none';
+   const sx=document.getElementById('stalex');
+   if(sx)sx.addEventListener('click',()=>{
+     localStorage.setItem('idl_staleban',sv);st.style.display='none';});
  }
 
  // ---- settings sheet ---------------------------------------------------
@@ -3873,6 +3918,32 @@ async def index(request: Request):
     n_trk = len(load_config()["trackers"])
     _su = status_url()
     js_url = (f"{_su.rstrip('/')}/idlarr.user.js?token={get_token()}" if _su else "")
+
+    # A stale userscript is a SILENT failure and the most expensive kind here:
+    # a tracker added after the browser's copy has no @match, so it never pings,
+    # sits at `unknown` forever and reads as broken detection rather than as an
+    # out-of-date script. Violentmonkey does pick it up on its own via
+    # @updateURL, but on its own schedule, so say both.
+    stale = userscript_stale()
+    if stale and js_url:
+        installed, serving = stale
+        # Stated as an adjacent fact, not a cause. A tracker that has never
+        # reported is what a stale script looks like, but it is also what a
+        # broken selector or a site you have not visited looks like, and this
+        # cannot tell them apart.
+        n_new = sum(1 for r in rows if r["days_since"] is None)
+        covers = (f" {n_new} tracker{'' if n_new == 1 else 's'} "
+                  f"{'has' if n_new == 1 else 'have'} never reported."
+                  if n_new else "")
+        banner += (
+            f'<div class="banner warn" id="stale" data-v="{esc(serving)}">'
+            '<b>Your userscript is out of date.</b> '
+            f'The browser has {esc(installed)}; {esc(serving)} is being served.{covers} '
+            'Violentmonkey updates it on its own within a day.'
+            '<span class="sp">'
+            f'<a class="lk pri" href="{esc(js_url)}">Update now</a>'
+            '<button class="lk" id="stalex">Dismiss</button></span></div>')
+
 
     script_ver = userscript_version_peek() if js_url else "not served — no status URL"
     last_check = get_state("last_check", "") or "not yet"

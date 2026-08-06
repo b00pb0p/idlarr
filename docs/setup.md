@@ -173,6 +173,8 @@ cannot disagree. There is nothing to edit.
 
 It also carries `@updateURL`, so **adding a tracker later reaches the browser on
 its own** — your manager picks it up on its next update check, no reinstall.
+Until it does, the status page shows a banner saying which version your
+browser has and which is being served, with a link to update immediately.
 
 The link needs a status page URL (Settings → General); without it the generated script would
 have nowhere to report and the route says so rather than serving one. If you'd

@@ -123,7 +123,11 @@
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${TOKEN}`,
       },
-      data: JSON.stringify({ tracker: site.id, kind }),
+      // The installed version rides along so the service can tell you when
+      // your copy is behind. Adding a tracker bumps the served version, and
+      // a stale script simply never reports the new site: it sits at
+      // `unknown` forever and reads as broken detection.
+      data: JSON.stringify({ tracker: site.id, kind, v: GM_info.script.version }),
       timeout: 10000,
       onload: res => {
         if (res.status >= 200 && res.status < 300) {
