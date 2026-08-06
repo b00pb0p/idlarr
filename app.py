@@ -2782,11 +2782,15 @@ PAGE = """<!doctype html>
      clipped. */
   .imlist{max-height:170px;overflow:auto;margin:2px 0 6px;scrollbar-gutter:stable}
   .imlist:empty{display:none}
-  .imlist .r{display:flex;gap:9px;align-items:baseline;padding:5px 6px 5px 0;
+  /* A grid, not a flex row. Flexed, each cell sized to its own text, so
+     TORRENT and USENET being different widths pushed the status column left
+     and right per row and nothing lined up. */
+  .imlist .r{display:grid;grid-template-columns:minmax(0,1fr) 62px 106px;gap:10px;
+    align-items:baseline;padding:5px 6px 5px 0;
     border-bottom:1px solid var(--line);font-size:12px}
-  .imlist .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .imlist .sk{color:var(--dim);font-size:10px;white-space:nowrap}
-  .imlist .new{color:var(--ok);font-size:10px;white-space:nowrap}
+  .imlist .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .imlist .sk{color:var(--dim);font-size:10px;white-space:nowrap;text-align:right}
+  .imlist .new{color:var(--ok);font-size:10px;white-space:nowrap;text-align:right}
   .imlist .pr{color:var(--dim);font-size:9.5px;letter-spacing:.09em;
     text-transform:uppercase;white-space:nowrap;font-family:var(--mono)}
   .improt{display:flex;align-items:center;gap:16px;margin:2px 0 8px;font-size:12px;
