@@ -106,7 +106,7 @@ one yourself: `openssl rand -hex 32`.
 | Variable | Required | Default | What it does |
 |---|---|---|---|
 | `IDLARR_TOKEN` | no | *(generated)* | Shared secret for `/ping`. Generated on first boot if unset and baked into the generated userscript. An explicit value always wins. |
-| `IDLARR_NOTIFY_URLS` | no | *(empty)* | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs: ntfy, Pushover, Discord, Telegram, Signal and ~100 more. Optional so a first run can boot, but **set it**: with it empty nothing can reach you. |
+| `IDLARR_NOTIFY_URLS` | no | *(empty)* | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs: [ntfy](https://ntfy.sh), [Pushover](https://pushover.net/), [Pushbullet](https://www.pushbullet.com/), [Discord](https://discord.com/), [Telegram](https://telegram.org/), [Signal](https://signal.org/) and ~100 more. Optional so a first run can boot, but **set it**: with it empty nothing can reach you. |
 | `STATUS_URL` | seeds once | *(empty)* | Public URL of the status page. Copied into `trackers.yml` on first run, then set in **Settings → General**. |
 | `TZ` | seeds once | `UTC` | Copied into `trackers.yml` on first run, then set in **Settings → General**. Drives **all day counting**, so a wrong zone shifts every countdown. |
 | `PUID` | build only | `1001` | **Build argument, not a runtime variable.** The published image always runs as 1001; `chown` your `data/` and `config/` to match. To use a different UID you must build from source: `docker compose build --build-arg PUID=1000`. |

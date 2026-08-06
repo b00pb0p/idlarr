@@ -65,7 +65,7 @@ events recorded since then are gone; the countdowns will read older than
 reality until the userscript reports again.
 
 Practising this on a second container first (separate port, separate `data/`
-and `config/`) costs nothing and is how the behaviour above was found. Never
+and `config/`) costs nothing and is how the behavior above was found. Never
 point a test instance at your live `config/`: the status page **writes** to
 `trackers.yml`.
 

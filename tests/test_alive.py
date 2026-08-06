@@ -300,7 +300,7 @@ def test_status_url_can_be_cleared(client, cfg):
     assert r.status_code == 200 and r.json()["status_url"] == ""
 
 
-def test_trailing_slash_is_normalised(client, cfg):
+def test_trailing_slash_is_normalized(client, cfg):
     r = client.post("/api/settings", json={"status_url": "https://x.example/"})
     assert r.json()["status_url"] == "https://x.example"
 

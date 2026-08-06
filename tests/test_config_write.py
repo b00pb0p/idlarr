@@ -193,7 +193,7 @@ def test_immunity_can_be_cleared(cfg):
     assert e["immune_reason"] == "vacation mode"   # kept, so re-enabling is cheap
 
 
-def test_immune_does_not_disturb_neighbours(cfg):
+def test_immune_does_not_disturb_neighbors(cfg):
     before = {t["id"]: dict(t) for t in yaml.safe_load(cfg.read_text())["trackers"]}
     app.save_tracker_fields("delta", immune=True, immune_reason="Elite")
     after = {t["id"]: dict(t) for t in yaml.safe_load(cfg.read_text())["trackers"]}

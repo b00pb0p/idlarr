@@ -185,7 +185,7 @@ A snooze that runs out simply resumes counting.
 Clear the date to resume immediately. A snooze longer than a year is refused:
 past that you want `immune`, which says so on the row instead of hiding a
 countdown behind a date nobody will revisit. A date the service cannot parse is
-ignored rather than honoured, so a typo keeps alerting instead of silently
+ignored rather than honored, so a typo keeps alerting instead of silently
 muting.
 
 # Immune trackers

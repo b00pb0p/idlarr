@@ -239,7 +239,7 @@ def test_table_column_count_agrees_everywhere(page):
 def test_import_offers_both_protocols_checked(page):
     """Usenet accounts lapse for inactivity too, and the import used to drop
     them. Both boxes must default to CHECKED: shipping usenet unticked would
-    reproduce the old behaviour for anyone who does not notice the control."""
+    reproduce the old behavior for anyone who does not notice the control."""
     css = _base_stylesheet(re.search(r"<style>(.*?)</style>", page, re.S).group(1))
     assert ".improt{" in css, "checkboxes have no styling"
     for eid in ('id="impt"', 'id="impu"'):
@@ -787,7 +787,7 @@ def test_no_css_selector_is_defined_twice_in_the_base_stylesheet():
     selectors = re.findall(r"(?:^|})\s*([^{}@]+?)\s*\{", _base_stylesheet(css))
     seen = {}
     for sel in selectors:
-        sel = " ".join(sel.split())          # normalise whitespace
+        sel = " ".join(sel.split())          # normalize whitespace
         seen[sel] = seen.get(sel, 0) + 1
     dupes = {s: n for s, n in seen.items() if n > 1}
     assert not dupes, f"selectors defined more than once in the base stylesheet: {dupes}"

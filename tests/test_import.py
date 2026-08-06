@@ -96,7 +96,7 @@ def ids(path):
 BODY = {"source": "prowlarr", "url": "http://prowlarr.example:9696", "api_key": "k"}
 
 
-# ------------------------------------------------------------- normalising
+# ------------------------------------------------------------- normalizing
 
 def test_prowlarr_keeps_private_indexers_of_both_protocols(prowlarr):
     """Usenet accounts lapse for inactivity exactly like tracker accounts, and
@@ -188,7 +188,7 @@ def test_imported_limits_are_never_treated_as_fact(client, cfg, prowlarr):
 
 
 def test_protocols_filter_narrows_the_import(client, cfg, prowlarr):
-    """The panel offers a checkbox per protocol. Preview and apply must honour
+    """The panel offers a checkbox per protocol. Preview and apply must honor
     it identically, or you confirm one list and get another."""
     r = client.post("/api/import", json={**BODY, "protocols": ["torrent"]})
     got = {c["id"] for c in r.json()["candidates"]}
@@ -329,7 +329,7 @@ def apihost(monkeypatch):
     monkeypatch.setattr(app, "_fetch_json", lambda url, headers: API_HOST)
 
 
-def test_api_host_is_recognised_as_already_configured(client, cfg, apihost):
+def test_api_host_is_recognized_as_already_configured(client, cfg, apihost):
     """A configured `broadcasthe.net` and Prowlarr's `api.broadcasthe.net`
     are one tracker, not two."""
     app.add_tracker({"id": "btn", "name": "BroadcasTheNet",
@@ -373,7 +373,7 @@ SUBDOMAIN = [{"name": "Alpha Tracker", "protocol": "torrent", "privacy": "privat
 
 
 def test_a_non_api_subdomain_is_still_the_same_tracker(client, cfg, monkeypatch):
-    """`api.` is normalised away before comparison, so it does not exercise the
+    """`api.` is normalized away before comparison, so it does not exercise the
     subdomain rule on its own. This does: the config holds alpha.example and
     Prowlarr offers www2.alpha.example. Exact-host matching imports a duplicate.
     """

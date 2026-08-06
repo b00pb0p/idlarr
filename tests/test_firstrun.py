@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for first-run behaviour: token generation and config auto-creation.
+"""Tests for first-run behavior: token generation and config auto-creation.
 
 Both reverse decisions the project originally made deliberately, so the tests
 pin the SAFETY PROPERTIES that made those decisions right — not just the new
@@ -99,7 +99,7 @@ def test_the_generated_token_reaches_the_userscript(fresh, monkeypatch):
 # ------------------------------------------------------------------ config
 
 def test_default_config_is_valid_and_empty(fresh):
-    """A bare `trackers:` key parses as None; load_config normalises it to an
+    """A bare `trackers:` key parses as None; load_config normalizes it to an
     empty list. Assert the contract the app actually relies on, not the raw
     parse — they legitimately differ."""
     doc = yaml.safe_load(app.default_config())

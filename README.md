@@ -30,8 +30,9 @@ one, it doesn't.
   [Tampermonkey](https://www.tampermonkey.net/) or
   [Greasemonkey](https://www.greasespot.net/)
 - Somewhere to host it. It has its own optional sign-in; behind Tailscale or a VPN is still the belt-and-braces answer
-- Somewhere to send notifications: [ntfy](https://ntfy.sh), Pushover, Discord,
-  Telegram, or anything else [Apprise](https://github.com/caronc/apprise) supports
+- Somewhere to send notifications: [ntfy](https://ntfy.sh), [Pushover](https://pushover.net/),
+  [Pushbullet](https://www.pushbullet.com/), [Discord](https://discord.com/), [Telegram](https://telegram.org/),
+  or anything else [Apprise](https://github.com/caronc/apprise) supports
 
 FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
 
@@ -248,7 +249,7 @@ Relative to each tracker's inactivity limit:
 | no auth event ever recorded | unknown | none | silent |
 
 The right-hand column is the Apprise severity, which each service renders in its
-own way: a colour in Discord, a priority level in Pushover, a tag in ntfy.
+own way: a color in Discord, a priority level in Pushover, a tag in ntfy.
 
 `unknown` is the state every tracker starts in, and it stays there until the
 userscript reports an authenticated visit. It is silent on purpose: there is no
@@ -297,16 +298,16 @@ IDLARR_NOTIFY_URLS=pover://USER_KEY@APP_TOKEN,discord://WEBHOOK_ID/WEBHOOK_TOKEN
 
 | Service | URL format |
 |---|---|
-| ntfy.sh | `ntfy://ntfy.sh/your-topic` |
+| [ntfy.sh](https://ntfy.sh) | `ntfy://ntfy.sh/your-topic` |
 | self-hosted ntfy | `ntfys://ntfy.example.com/your-topic?token=tk_xxx` |
-| Pushover | `pover://USER_KEY@APP_TOKEN` |
-| Pushbullet | `pbul://ACCESS_TOKEN` |
-| Discord | `discord://WEBHOOK_ID/WEBHOOK_TOKEN` |
-| Telegram | `tgram://BOT_TOKEN/CHAT_ID` |
-| Signal | `signal://HOST:PORT/FROM/TO` (needs signal-cli-rest-api) |
-| Slack | `slack://TOKEN_A/TOKEN_B/TOKEN_C/#channel` |
-| Matrix | `matrix://USER:PASS@HOST/#room` |
-| Gotify | `gotify://HOST/TOKEN` |
+| [Pushover](https://pushover.net/) | `pover://USER_KEY@APP_TOKEN` |
+| [Pushbullet](https://www.pushbullet.com/) | `pbul://ACCESS_TOKEN` |
+| [Discord](https://discord.com/) | `discord://WEBHOOK_ID/WEBHOOK_TOKEN` |
+| [Telegram](https://telegram.org/) | `tgram://BOT_TOKEN/CHAT_ID` |
+| [Signal](https://signal.org/) | `signal://HOST:PORT/FROM/TO` (needs signal-cli-rest-api) |
+| [Slack](https://slack.com/) | `slack://TOKEN_A/TOKEN_B/TOKEN_C/#channel` |
+| [Matrix](https://matrix.org/) | `matrix://USER:PASS@HOST/#room` |
+| [Gotify](https://gotify.net/) | `gotify://HOST/TOKEN` |
 | Email | `mailto://user:pass@gmail.com` |
 
 The [Apprise wiki](https://github.com/caronc/apprise/wiki) has the rest.
@@ -351,7 +352,7 @@ start without it, and the service warns if it ends up empty anyway.
 | `GET /healthz` | Health check, **always open**, so an uptime monitor needs no credentials |
 
 Everything above `/api/test-notify` sits behind the UI login **when one is
-configured**; with none set they are open, which is the 1.0 behaviour. `/ping`
+configured**; with none set they are open, which is the 1.0 behavior. `/ping`
 always uses the bearer token, never the login. The userscript posts to it
 cross-origin from tracker pages, where cookies do not apply.
 
@@ -458,7 +459,7 @@ is the part of the page a table of rows does not show.
 ## Contributing
 
 Issues and pull requests welcome. `pytest` runs on every push; please keep it
-green and add a test for behaviour changes. Most of the suite exists because
+green and add a test for behavior changes. Most of the suite exists because
 something silently did the wrong thing once.
 
 ```bash

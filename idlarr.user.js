@@ -65,7 +65,7 @@
     'button[formaction*="logout" i]', 'button[formaction*="lout.php" i]',
   ].join(',');
 
-  // Anchored and whole-string: matches a control LABELLED "log out", never a
+  // Anchored and whole-string: matches a control LABELED "log out", never a
   // paragraph that merely mentions logging out.
   const LOGOUT_TEXT = /^(log|sign)\s*-?\s*out$/i;
 

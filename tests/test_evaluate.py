@@ -166,7 +166,7 @@ def test_no_session_when_visit_is_stale():
     assert out["state"] == "warn"      # 30 - 20 = 10 days left
 
 
-# ------------------------------------------------- inactivity_days is honoured
+# ------------------------------------------------- inactivity_days is honored
 
 def test_longer_limit_delays_escalation():
     """The renamed key must actually drive the maths."""
@@ -287,7 +287,7 @@ def test_yesterday_evening_counts_as_one_day():
     """
     seen_at("auth", NOW - timedelta(hours=18))
     out = app.evaluate(tracker(), NOW)
-    assert (NOW - (NOW - timedelta(hours=18))).days == 0      # the old behaviour
+    assert (NOW - (NOW - timedelta(hours=18))).days == 0      # the old behavior
     assert out["days_since"] == 1                              # the new one
     assert out["days_left"] == 29
 
@@ -474,12 +474,12 @@ def test_no_payload_when_nothing_actionable():
     assert app.build_notification([row(priority=None)]) is None
 
 
-def test_payload_is_json_serialisable_with_non_ascii():
+def test_payload_is_json_serializable_with_non_ascii():
     """The bug this replaced: an em dash in a header crashed every push with
     UnicodeEncodeError, which looked identical to a quiet day."""
     import json
     p = app.build_notification([row(name="Alpha", reason="1d left — log in today.")])
-    json.dumps(p)                       # would raise if not serialisable
+    json.dumps(p)                       # would raise if not serializable
     assert "—" in p["title"]
     assert p["title"].encode("utf-8")    # body is UTF-8, not ASCII headers
 
@@ -540,7 +540,7 @@ def test_every_state_has_a_sort_rank_and_label():
     """A state missing from either dict is a KeyError at render time."""
     states = {"expired", "session", "critical", "warn", "due", "unknown", "ok",
               "snoozed", "immune"}
-    assert states <= set(app.LABELS), f"unlabelled: {states - set(app.LABELS)}"
+    assert states <= set(app.LABELS), f"unlabeled: {states - set(app.LABELS)}"
     assert states == set(app.RANK), f"unranked: {states ^ set(app.RANK)}"
 
     # The page has its OWN LABEL and RANK maps in JavaScript. They are a
@@ -557,7 +557,7 @@ def test_every_state_has_a_sort_rank_and_label():
 
 def test_state_names_are_valid_css_identifiers():
     """The page sets --c:var(--<state>), so a state with a space or an
-    underscore mismatch would render every row the default colour."""
+    underscore mismatch would render every row the default color."""
     for s in app.RANK:
         assert s.replace("-", "").isalnum(), s
 

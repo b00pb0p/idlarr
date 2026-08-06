@@ -39,7 +39,7 @@ STATUS_URL = _ENV_STATUS_URL      # startup default, before the config loads
 
 
 def status_url() -> str:
-    """Public URL of the status page — appended to alerts, and the endpoint the
+    """Public URL of the status page: appended to alerts, and the endpoint the
     generated userscript reports to.
 
     Config is authoritative; STATUS_URL seeds it once, same as TZ and
@@ -115,11 +115,11 @@ def default_config() -> str:
     try:
         ZoneInfo(tz)
     except Exception:
-        print(f"[startup] TZ={tz!r} is not a known timezone — using UTC in the "
+        print(f"[startup] TZ={tz!r} is not a known timezone: using UTC in the "
               f"generated config. Fix `timezone:` in trackers.yml, or day "
               f"counting will be off for you.")
         tz = "UTC"
-    return f"""# Idlarr config. Hot-reloaded — no container restart needed.
+    return f"""# Idlarr config. Hot-reloaded: no container restart needed.
 #
 # Add trackers from the status page (+ Add tracker), import them from Prowlarr
 # or Jackett, or write them here by hand. See docs/trackers.md.
@@ -397,7 +397,7 @@ def _entry_block(entry: dict, indent: str) -> list[str]:
 
 
 def _others(doc: dict, skip: str) -> dict:
-    """Every tracker except one, keyed by id — for blast-radius checks."""
+    """Every tracker except one, keyed by id: for blast-radius checks."""
     return {t.get("id"): t for t in (doc.get("trackers") or []) if t.get("id") != skip}
 
 
@@ -687,7 +687,7 @@ def set_state(k: str, v: str) -> None:
 
 # ---------------------------------------------------------------- auth
 #
-# Modelled on the *arr apps rather than on an environment variable: a username
+# Modeled on the *arr apps rather than on an environment variable: a username
 # and password configured IN THE APP, hashed at rest, changeable without
 # touching compose or recreating the container. It rides on the `state` table,
 # so it is covered by the nightly backup for free.
@@ -718,7 +718,7 @@ _login_fails: dict[str, list] = {}
 
 
 def hash_password(pw: str) -> str:
-    """Django-format PBKDF2. stdlib only — no new dependency for this."""
+    """Django-format PBKDF2. stdlib only: no new dependency for this."""
     salt = secrets.token_bytes(16)
     dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, PBKDF2_ROUNDS)
     return (f"pbkdf2_sha256${PBKDF2_ROUNDS}$"
@@ -935,7 +935,7 @@ def evaluate(tracker: dict, now: datetime | None = None) -> dict:
 
     if auth is None:
         out["state"] = "unknown"
-        out["reason"] = "No login ever recorded. Log in once to initialise, or mark it seen."
+        out["reason"] = "No login ever recorded. Log in once to initialize, or mark it seen."
         return out
 
     days_since = elapsed_days(now, auth)
@@ -946,7 +946,7 @@ def evaluate(tracker: dict, now: datetime | None = None) -> dict:
 
     if stale_session:
         out.update(state="session", priority="high",
-                   reason="Visited recently while logged out — session cookie is dead.")
+                   reason="Visited recently while logged out: session cookie is dead.")
     elif days_left <= 0:
         out.update(state="expired", priority="urgent",
                    reason=f"Inactivity limit passed {abs(days_left)}d ago. May already be disabled.")
@@ -1233,7 +1233,7 @@ async def lifespan(app: FastAPI):
             set_state("idlarr_token", TOKEN)
         else:
             set_state("idlarr_token", secrets.token_hex(32))
-            print("[startup] No IDLARR_TOKEN set — generated one and saved it "
+            print("[startup] No IDLARR_TOKEN set: generated one and saved it "
                   "to the database. Install the userscript from the status page "
                   "and it will carry the right token automatically.")
 
@@ -1241,7 +1241,7 @@ async def lifespan(app: FastAPI):
     # An open /ping is invisible; a container that will not boot is not.
     if not get_token():
         raise RuntimeError(
-            "IDLARR_TOKEN is not set and could not be generated — refusing to "
+            "IDLARR_TOKEN is not set and could not be generated: refusing to "
             "start. An empty token would disable authentication entirely and "
             "/ping would accept anything. Set IDLARR_TOKEN in .env, or check "
             f"that {DB_PATH} is writable."
@@ -1278,7 +1278,7 @@ async def lifespan(app: FastAPI):
         # resetting because of.
         for key in ("auth_method", "auth_user", "auth_hash", "session_secret"):
             set_state(key, "")
-        print("[startup] IDLARR_RESET_AUTH is set — UI authentication has been "
+        print("[startup] IDLARR_RESET_AUTH is set, UI authentication has been "
               "cleared and every existing session invalidated. Remove the "
               "variable, restart, then set a new login from the status page.")
 
@@ -1304,7 +1304,7 @@ async def lifespan(app: FastAPI):
                 f"  mounted at /config must be writable by it:\n"
                 f"      mkdir -p config && chown -R {os.getuid()} config"
             ) from exc
-        print(f"[startup] No config found — created an empty one at "
+        print(f"[startup] No config found: created an empty one at "
               f"{CONFIG_PATH}. If you expected trackers here, /config is "
               f"mounted somewhere other than you think.")
     try:
@@ -1388,7 +1388,7 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
         # keeps its @match until the next update check. Name both, because
         # "add it to trackers.yml" is wrong advice for the removal case.
         raise HTTPException(
-            404, f"unknown tracker '{tid}' — removed from your config, or a "
+            404, f"unknown tracker '{tid}': removed from your config, or a "
                  f"typo. Nothing was recorded.")
 
     # Dedupe HERE, not in the browser. The userscript used to hold a 12h
@@ -1409,7 +1409,7 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
 async def mark(tracker_id: str):
     """Bootstrap helper: assert you just logged in. Don't rely on this daily.
 
-    Open when no login is configured, which is the 1.0 behaviour. Worth
+    Open when no login is configured, which is the 1.0 behavior. Worth
     knowing what that means before leaving it that way: a stranger POSTing here
     resets a countdown, after which the dashboard reads `ok` while the account
     ages out. That is the whole failure this service prevents, so on a shared
@@ -1474,7 +1474,7 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
             # you want `immune`, which says so on the row instead of hiding a
             # countdown behind a date nobody will revisit.
             if until > date.today() + timedelta(days=365):
-                raise HTTPException(400, "snooze cannot exceed a year — use immune instead")
+                raise HTTPException(400, "snooze cannot exceed a year: use immune instead")
             snooze = until.isoformat()
 
     if immune is not None:
@@ -1712,10 +1712,10 @@ async def create_tracker(payload: dict = Body(...)):
         # A name of nothing but punctuation slugifies to "". Saying "'' is not
         # a valid id" tells the user nothing about what to do next.
         raise HTTPException(
-            400, f"could not derive an id from '{name}' — enter one explicitly")
+            400, f"could not derive an id from '{name}': enter one explicitly")
     if not ID_OK.match(tid):
         raise HTTPException(
-            400, "id must be lowercase letters, digits, - or _ (max 40) — "
+            400, "id must be lowercase letters, digits, - or _ (max 40), "
                  f"'{tid}' is not usable as one")
     if tid in {t["id"] for t in load_config()["trackers"]}:
         raise HTTPException(409, f"'{tid}' already exists")
@@ -1816,7 +1816,7 @@ def _fetch_json(url: str, headers: dict) -> list:
         with urllib.request.urlopen(req, timeout=IMPORT_TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        hint = " — check the API key" if exc.code in (401, 403) else ""
+        hint = ": check the API key" if exc.code in (401, 403) else ""
         raise ValueError(f"{url.split('?')[0]} returned {exc.code}{hint}") from exc
     except urllib.error.URLError as exc:
         raise ValueError(f"could not reach {url.split('?')[0]}: {exc.reason}") from exc
@@ -1973,7 +1973,7 @@ async def import_indexers(payload: dict = Body(...)):
 
 @app.delete("/api/tracker/{tracker_id}", dependencies=[Depends(require_ui)])
 async def delete_tracker(tracker_id: str):
-    """Remove a tracker. Its auth history stays in the database — see
+    """Remove a tracker. Its auth history stays in the database: see
     remove_tracker() for why."""
     if tracker_id not in {t["id"] for t in load_config()["trackers"]}:
         raise HTTPException(404, "unknown tracker")
@@ -1986,7 +1986,7 @@ async def delete_tracker(tracker_id: str):
 
 @app.post("/api/unmark/{tracker_id}", dependencies=[Depends(require_ui)])
 async def unmark(tracker_id: str):
-    """Undo the most recent auth event — a misclicked 'seen', or an auth the
+    """Undo the most recent auth event: a misclicked 'seen', or an auth the
     heuristic recorded wrongly (e.g. a cached logged-in page while the site
     was actually down). Same posture as /api/mark."""
     known = {t["id"] for t in load_config()["trackers"]}
@@ -2191,7 +2191,7 @@ def render_userscript(base_url: str) -> str:
                          count=1, flags=re.S if label == "sites array" else 0)
         if n != 1:
             raise RuntimeError(
-                f"userscript template no longer contains the {label} — "
+                f"userscript template no longer contains the {label}, "
                 f"idlarr.user.js and render_userscript() have drifted apart")
 
     # Cosmetic, and deliberately NOT drift-checked: these only make the served
@@ -2205,7 +2205,7 @@ def render_userscript(base_url: str) -> str:
     # stays byte-identical.
     banner = (
         "\n// ---------------------------------------------------------------\n"
-        f"// GENERATED by Idlarr from trackers.yml — {n_trackers} tracker(s).\n"
+        f"// GENERATED by Idlarr from trackers.yml, {n_trackers} tracker(s).\n"
         "// Do not edit: the next auto-update overwrites this file. Add or\n"
         "// change trackers on the status page instead, and the browser picks\n"
         "// it up on Violentmonkey's next update check.\n"
@@ -2319,7 +2319,7 @@ async def login(request: Request, payload: dict = Body(...)):
     if left:
         # 429, not 401: the answer here is "not yet", and a client that cannot
         # tell those apart will happily keep guessing.
-        raise HTTPException(429, f"too many attempts — try again in {left}s")
+        raise HTTPException(429, f"too many attempts, try again in {left}s")
     if auth_method() == "none":
         raise HTTPException(400, "no login is configured")
 
@@ -2414,7 +2414,7 @@ async def test_notify(request: Request,
             and not authed(request):
         raise HTTPException(401, "bad token")
     if not NOTIFY_URLS:
-        raise HTTPException(400, "IDLARR_NOTIFY_URLS is empty — alerts have "
+        raise HTTPException(400, "IDLARR_NOTIFY_URLS is empty, alerts have "
                                  "nowhere to go. Set it in .env and restart.")
 
     when = datetime.now(local_tz()).strftime("%d %b %Y %H:%M %Z")
@@ -2498,7 +2498,7 @@ PAGE = """<!doctype html>
   .legend div{min-width:0;padding:13px 14px;background:var(--head)}
   .legend .tot{--c:var(--fg);background:var(--drawer)}
   /* A healthy install is nine zeros and one number. At full strength a red 0
-     under EXPIRED reads as an alarm; dimmed, colour only appears where
+     under EXPIRED reads as an alarm; dimmed, color only appears where
      something actually is in that state. */
   .legend .zero{opacity:.34}
   .legend b{display:block;font-family:var(--mono);font-size:22px;font-weight:700;
@@ -2521,7 +2521,7 @@ PAGE = """<!doctype html>
     color:var(--dim);text-align:center;padding:0;font-weight:600;
     cursor:pointer;user-select:none;white-space:nowrap;min-width:0}
   thead th:hover{color:var(--fg)}
-  /* `elapsed` is centred over its BAR, which starts 45px in, not over the
+  /* `elapsed` is centerd over its BAR, which starts 45px in, not over the
      whole column — otherwise it sits noticeably left of what it names. */
   thead th.mid{padding-left:45px}
   thead th::after{content:'';display:inline-block;width:0;height:0;margin-left:6px;
@@ -2716,14 +2716,14 @@ PAGE = """<!doctype html>
       .foot{font-size:9.5px}
   }
   /* Rounded like every other container, and readable: 12px was smaller than
-     the body text it interrupts. The colour is stated rather than inherited,
+     the body text it interrupts. The color is stated rather than inherited,
      so the message cannot pick one up from whatever encloses it. */
   .banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0 0;
     padding:13px 16px;border:1px solid var(--critical);background:#251619;
     border-radius:12px;font-size:13.5px;line-height:1.5;color:var(--fg)}
   .banner b{color:var(--critical);letter-spacing:.04em}
   /* Amber, not red. An out-of-date script is a thing to fix today, not a
-     security hole, and using the same colour for both teaches you to ignore it. */
+     security hole, and using the same color for both teaches you to ignore it. */
   .banner.warn{border-color:var(--warn);background:#241d10}
   .banner.warn b{color:var(--warn)}
   .banner .sp{margin-left:auto;display:flex;gap:7px}
@@ -2892,7 +2892,7 @@ PAGE = """<!doctype html>
   .improt label.off input{cursor:not-allowed}
   @media(max-width:760px){
     .sheet .win{flex-direction:column;height:92vh}
-    /* Six tabs don't fit at phone width, so the nav must scroll — and any
+    /* Six tabs don't fit at phone width, so the nav must scroll: and any
        close button sharing that row collides with whatever tab is at the right
        edge. Lift the × into its own slim bar above the nav (position:static
        makes it the first flex child), so the tabs scroll freely underneath
@@ -3056,7 +3056,7 @@ __SHEET__
  function drawer(tr){
    const d=JSON.parse(tr.dataset.row), imm=!!d.immune;
    const el=document.createElement('tr'); el.className='drawer';
-   // Labelled rows: label + a control sized to its content, sharing a left
+   // Labeled rows: label + a control sized to its content, sharing a left
    // edge. Previously every control filled the column width, so a three-digit
    // day count sat in a 200px box beside a date picker.
    const pctOpts=(sel)=>{let o='';
@@ -3115,7 +3115,7 @@ __SHEET__
        if(!Number.isFinite(v)||v<1||v>3650){msg('limit must be 1-3650 days','bad');lim.value=orig;return;}
        if(String(v)===orig)return;
        post('/api/limit/'+d.id,{inactivity_days:v}).then(r=>{orig=String(r.inactivity_days);
-         refresh(r);msg(r.verified?'saved':'saved \\u2014 still unconfirmed','warn');})
+         refresh(r);msg(r.verified?'saved':'saved, still unconfirmed','warn');})
         .catch(e=>{msg(e.message,'bad');lim.value=orig;});};
      lim.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();lim.blur();}
        if(e.key==='Escape'){lim.value=orig;lim.blur();}});
@@ -3132,7 +3132,7 @@ __SHEET__
      const next=!this.classList.contains('on');
      post('/api/limit/'+d.id,{immune:next}).then(r=>{refresh(r);
        el.remove();tr.classList.remove('open');drawer(tr);
-       msg(next?'immune \\u2014 will never alert':'immunity cleared','good');})
+       msg(next?'immune, it will never alert':'immunity cleared','good');})
       .catch(e=>msg(e.message,'bad'));});
 
    const rsn=el.querySelector('.rsn');
@@ -3148,7 +3148,7 @@ __SHEET__
      const save=()=>{if(snz.value===last)return;
        post('/api/limit/'+d.id,{snooze_until:snz.value}).then(r=>{last=r.snooze_until||'';
          refresh(r);paint(tr,r);
-         msg(r.snooze_until?('snoozed until '+r.snooze_until+' \u2014 no alerts until then')
+         msg(r.snooze_until?('snoozed until '+r.snooze_until+', no alerts until then')
                            :'snooze cleared','good');
        }).catch(e=>{msg(e.message,'bad');snz.value=last;});};
      snz.addEventListener('change',()=>{save();
@@ -3182,7 +3182,7 @@ __SHEET__
    const seenBtn=el.querySelector('.seen');let armed=false,t=null;
    seenBtn.addEventListener('click',()=>{
      if(!armed){armed=true;seenBtn.classList.add('arm');seenBtn.textContent='confirm?';
-       msg('records a manual auth \\u2014 only if you really just logged in','warn');
+       msg('records a manual auth, only if you really just logged in','warn');
        t=setTimeout(()=>{armed=false;seenBtn.classList.remove('arm');
          seenBtn.textContent='seen';msg('');},4000);return;}
      clearTimeout(t);armed=false;seenBtn.classList.remove('arm');seenBtn.textContent='seen';
@@ -3203,7 +3203,7 @@ __SHEET__
    del.addEventListener('click',()=>{
      if(del.dataset.armed!=='1'){
        del.dataset.armed='1'; del.textContent='confirm remove';
-       msg('removes it from trackers.yml \\u2014 auth history is kept','warn');
+       msg('removes it from trackers.yml, auth history is kept','warn');
        setTimeout(()=>{if(del.dataset.armed==='1'){
          del.dataset.armed=''; del.textContent='remove'; msg('');}},5000);
        return;}
@@ -3264,7 +3264,7 @@ __SHEET__
  // it stacked on the original, and the right half of the strip was blank. Do
  // not animate a transform on anything wrapping these paths.
  //
- // RR intervals are jittered and then normalised to sum to exactly W, so the
+ // RR intervals are jittered and then normalized to sum to exactly W, so the
  // first beat of the next tile lands one ordinary interval after the last beat
  // of this one; the seam is just another beat gap. Amplitude, P and T vary per
  // beat -- a metronome reads as a graphic, not a monitor.
@@ -3373,7 +3373,7 @@ __SHEET__
    amc.style.display=amm.value==='none'?'none':'';});
 
  // ---- sign out ---------------------------------------------------------
- // Two entry points, one behaviour: the header icon and the button in
+ // Two entry points, one behavior: the header icon and the button in
  // Settings -> Sign-in.
  ['amout','hout'].forEach(id=>{const b=document.getElementById(id);
    if(b)b.addEventListener('click',()=>fetch('/logout',{method:'POST'})
@@ -3473,11 +3473,11 @@ __SHEET__
    // added and no reason given anywhere.
    const added=(d.added||[]).length, failed=d.failed||[];
    if(failed.length){
-     ime.textContent=added+' added, '+failed.length+' failed \u2014 '
+     ime.textContent=added+' added, '+failed.length+' failed: '
        +failed.map(f=>hesc(f.id)+': '+hesc(f.error)).join('; ');
      imapply.disabled=false;return;}
    if(!added){
-     ime.textContent='nothing added \u2014 every tracker found is already configured';
+     ime.textContent='nothing added: every tracker found is already configured';
      imapply.disabled=false;return;}
    location.reload();
  });
@@ -3488,7 +3488,7 @@ __SHEET__
    const r=await fetch('/api/test-notify',{method:'POST'});
    const d=await r.json().catch(()=>({}));
    ntest.disabled=false;
-   if(r.ok){nte.className='e good';nte.textContent='sent \u2014 check your device';}
+   if(r.ok){nte.className='e good';nte.textContent='sent, check your device';}
    else{nte.textContent=d.detail||('failed ('+r.status+')');}
  });
 
@@ -3618,7 +3618,7 @@ def _tz_options(current: str) -> str:
     America/Sao Paulo. Grouped because a flat list of ~500 is a scroll, not a
     choice.
 
-    `current` is always present even if this build's tzdata does not know it —
+    `current` is always present even if this build's tzdata does not know it , 
     otherwise opening Settings on a config written elsewhere would silently
     reselect the first zone in the list and change every countdown on Save.
     """
@@ -3647,7 +3647,7 @@ def _tz_options(current: str) -> str:
 def _act_row(label: str, job: str, sub: str = "") -> str:
     """One line of the recent-activity block: when it last ran and how it went.
 
-    "never" is meaningful rather than missing — a backup that has never run on
+    "never" is meaningful rather than missing: a backup that has never run on
     an install that is days old is exactly the kind of quiet failure the
     dashboard could not previously show.
 
@@ -3737,7 +3737,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
                    "silence from Idlarr means the container is down.")
         + _row("Your config",
                "Download <code>trackers.yml</code> exactly as it is on disk, "
-               "comments and all. Restoring replaces it — the current file is "
+               "comments and all. Restoring replaces it: the current file is "
                "saved alongside as a <code>.bak</code> first.",
                '<a class="lk" href="/api/config" download>Download</a>'
                '<button class="lk" id="cfgUp">Restore\u2026</button>'
@@ -3754,7 +3754,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
                f'<input id="setKeep" class="w-num" value="{backup_keep()}">'
                f'<em class="act-d" style="width:auto;margin:0">days</em>')
         + '<p class="sub" style="margin:15px 0 0">Written to '
-          '<code>trackers.yml</code>, which is hot-reloaded — only a timezone '
+          '<code>trackers.yml</code>, which is hot-reloaded, only a timezone '
           'change needs a restart to affect an already-running check.</p>')
 
     # --- sign-in: the form that used to be its own modal. Same element ids, so
@@ -3805,7 +3805,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
                 f'<a class="lk pri" href="{esc(js_url)}">Install</a>'
                 f'<button class="lk" id="cpjs" data-u="{esc(js_url)}">Copy URL</button>')
            if js_url else
-           _row("Install", "Set the <b>status page URL</b> above — without it the "
+           _row("Install", "Set the <b>status page URL</b> above, without it the "
                            "generated script would have nowhere to report.",
                 '<span class="val off">unavailable</span>')))
 
@@ -3825,7 +3825,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         # Two boxes, not one per site. The decision is which KIND of account to
         # watch; per-indexer ticking would be twenty controls answering a
         # question already answered. Both on, because excluding usenet by
-        # default is the behaviour this is fixing.
+        # default is the behavior this is fixing.
         '<div class="improt">'
         '<label><input type="checkbox" id="impt" checked> torrent</label>'
         '<label id="impul"><input type="checkbox" id="impu" checked> usenet</label>'
@@ -3884,7 +3884,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         ("script", "Userscript", "Generated from your tracker list. Nothing to fill "
          "in, and it updates itself when you add a tracker.", script),
         ("import", "Import", "Reads your own Prowlarr or Jackett, never a tracker. "
-         "Limits are not imported — neither tool knows them — so everything "
+         "Limits are not imported, neither tool knows them: so everything "
          "arrives at 30 days, unconfirmed.", imp),
         ("notify", "Notifications", "Every alert goes through Apprise.", notify),
         ("about", "About", "", about),
@@ -3917,7 +3917,7 @@ async def index(request: Request):
         counts[r["state"]] = counts.get(r["state"], 0) + 1
 
     # The total leads the strip: it is the one number that is not a state, so
-    # it gets the neutral colour and its own divider.
+    # it gets the neutral color and its own divider.
     legend = (f'<div class="tot"><b>{len(rows)}</b><span>trackers</span></div>'
               + "".join(
                   f'<div class="{"zero" if not counts.get(s) else ""}" '
@@ -3929,7 +3929,7 @@ async def index(request: Request):
     body = []
     for r, p in zip(rows, payloads):
         s = r["state"]
-        big = "—" if (r["immune"] or r["days_left"] is None) else str(abs(r["days_left"]))
+        big = ", " if (r["immune"] or r["days_left"] is None) else str(abs(r["days_left"]))
         # The unit is not decoration: "4" under a red dot is ambiguous until it
         # says whether those are days remaining or days already overdue.
         unit = LABELS[s]
@@ -4036,7 +4036,7 @@ async def index(request: Request):
             '<button class="lk" id="stalex">Dismiss</button></span></div>')
 
 
-    script_ver = userscript_version_peek() if js_url else "not served — no status URL"
+    script_ver = userscript_version_peek() if js_url else "not served: no status URL"
     last_check = get_state("last_check", "") or "not yet"
 
     # Forms only. Under HTTP Basic the browser re-sends the Authorization
