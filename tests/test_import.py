@@ -12,6 +12,7 @@ Run:  .venv/bin/python -m pytest test_import.py -q
 """
 
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -495,3 +496,117 @@ def test_import_does_not_fetch_before_validating_scheme(client, monkeypatch):
     client.post("/api/import", json={"source": "prowlarr",
                                      "url": "file:///etc/passwd", "api_key": "k"})
     assert called == [], "fetched a file:// URL before rejecting it"
+
+
+# ------------------------------------------- not remembering the API key
+
+def _fake_fetch(monkeypatch):
+    """A source that answers, so the remember branch is actually reached.
+
+    Patched at _fetch_json like the fixtures above, rather than at
+    prowlarr_indexers: the first version stubbed the parser and returned raw
+    API shapes, which the caller then indexed for keys the parser is what adds.
+    """
+    monkeypatch.setattr(app, "_fetch_json", lambda url, headers: PROWLARR)
+
+
+def test_the_key_is_saved_by_default(client, cfg, monkeypatch):
+    """Unchanged behavior, pinned. An upgrade must not quietly stop
+    remembering a connection that worked yesterday."""
+    _fake_fetch(monkeypatch)
+    r = client.post("/api/import", json={"source": "prowlarr",
+                                         "url": "http://prowlarr.local",
+                                         "api_key": "SECRETKEY"})
+    assert r.status_code == 200
+    assert app.get_state("import_key") == "SECRETKEY"
+
+
+def test_unticking_remember_never_writes_the_key(client, cfg, monkeypatch):
+    """The import runs when a human clicks Preview, with the form open, so this
+    credential is the one thing in `state` that need not be there at all."""
+    _fake_fetch(monkeypatch)
+    r = client.post("/api/import", json={"source": "prowlarr",
+                                         "url": "http://prowlarr.local",
+                                         "api_key": "SECRETKEY",
+                                         "remember": False})
+    assert r.status_code == 200
+    assert not app.get_state("import_key")
+    # The source and URL are not secrets and stay, so the form is still filled
+    # in next time and only the key has to be retyped.
+    assert app.get_state("import_url") == "http://prowlarr.local"
+
+
+def test_unticking_it_clears_a_key_already_saved(client, cfg, monkeypatch):
+    """Declining to write a NEW key while leaving the old one behind is the
+    opposite of what the box promises, and it would keep working, so nothing
+    would ever say so."""
+    _fake_fetch(monkeypatch)
+    client.post("/api/import", json={"source": "prowlarr",
+                                     "url": "http://prowlarr.local",
+                                     "api_key": "OLDKEY"})
+    assert app.get_state("import_key") == "OLDKEY"
+
+    client.post("/api/import", json={"source": "prowlarr",
+                                     "url": "http://prowlarr.local",
+                                     "api_key": "OLDKEY", "remember": False})
+    assert not app.get_state("import_key"), "the previously saved key survived"
+
+
+def test_an_absent_flag_still_remembers(client, cfg, monkeypatch):
+    """A scripted caller written before this existed sends no `remember`. It
+    must keep the behavior it was written against rather than silently losing
+    its saved key on the next run."""
+    _fake_fetch(monkeypatch)
+    client.post("/api/import", json={"source": "prowlarr",
+                                     "url": "http://prowlarr.local",
+                                     "api_key": "SCRIPTKEY"})
+    assert app.get_state("import_key") == "SCRIPTKEY"
+
+
+def test_a_failed_fetch_saves_nothing_either_way(client, cfg, monkeypatch):
+    """The existing rule, still holding with the new branch in place: a key
+    that failed must not be replayed by blank-means-reuse."""
+    def boom(url, headers):
+        raise ValueError("connection refused")
+    monkeypatch.setattr(app, "_fetch_json", boom)
+    for remember in (True, False):
+        client.post("/api/import", json={"source": "prowlarr",
+                                         "url": "http://prowlarr.local",
+                                         "api_key": "BADKEY",
+                                         "remember": remember})
+        assert not app.get_state("import_key")
+
+
+def test_the_checkbox_reaches_the_panel_and_the_payload(cfg):
+    """Pins the call site. The flag working server-side proves nothing if the
+    form never sends it, and the box would silently do nothing."""
+    html = app.settings_sheet("none", 7, 7, "/idlarr.user.js")
+    assert 'id="imrem"' in html, "no remember checkbox on the import form"
+    assert 'checked' in re.search(r'<input type="checkbox" id="imrem"[^>]*>',
+                                  html).group(0), "it must default to on"
+    assert "remember:document.getElementById('imrem').checked" in app.PAGE, \
+        "the payload never carries the flag"
+
+
+def test_a_read_timeout_reports_instead_of_a_500(client, cfg, monkeypatch):
+    """IMPORT_TIMEOUT exists to stop a hung Prowlarr hanging the request, so
+    this fires by design rather than rarely. urlopen raises TimeoutError
+    directly instead of wrapping it in URLError, and TimeoutError is an OSError
+    sibling, so nothing in _fetch_json caught it: it escaped that function and
+    then escaped the caller's `except ValueError` as well. The result was a 500
+    traceback in place of the message written for this exact case.
+
+    Found 2026-08-06 while adding the remember flag.
+    """
+    import urllib.request
+
+    def hang(req, timeout=None):
+        raise TimeoutError("timed out")
+    monkeypatch.setattr(urllib.request, "urlopen", hang)
+
+    r = client.post("/api/import", json={"source": "prowlarr",
+                                         "url": "http://prowlarr.local",
+                                         "api_key": "K"})
+    assert r.status_code == 502, f"got {r.status_code}, not a reported failure"
+    assert "did not answer" in r.json()["detail"]
+    assert not app.get_state("import_key"), "a timed-out key was remembered"

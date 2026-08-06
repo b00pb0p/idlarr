@@ -2066,6 +2066,16 @@ def _fetch_json(url: str, headers: dict) -> list:
         raise ValueError(f"{url.split('?')[0]} returned {exc.code}{hint}") from exc
     except urllib.error.URLError as exc:
         raise ValueError(f"could not reach {url.split('?')[0]}: {exc.reason}") from exc
+    except TimeoutError as exc:
+        # A READ timeout, which urlopen raises directly rather than wrapping in
+        # URLError, and TimeoutError is an OSError sibling so nothing above
+        # catches it. It escaped this function and then escaped the caller's
+        # `except ValueError` too, so a Prowlarr that accepts the connection and
+        # then never answers produced a 500 traceback instead of the message
+        # written for exactly this case. IMPORT_TIMEOUT exists to make this
+        # happen, so it is not a rare path.
+        raise ValueError(f"{url.split('?')[0]} did not answer within "
+                         f"{IMPORT_TIMEOUT}s") from exc
     except (ValueError, TypeError) as exc:
         raise ValueError(f"{url.split('?')[0]} did not return JSON: {exc}") from exc
 
@@ -2135,6 +2145,9 @@ async def import_indexers(payload: dict = Body(...)):
     if not re.match(r"^https?://", base, re.I):
         raise HTTPException(400, "url must start with http:// or https://")
 
+    # Absent means True, so a scripted caller written before this existed keeps
+    # the behavior it was written against rather than silently losing its key.
+    remember = bool(payload.get("remember", True))
     api_key = str(payload.get("api_key", "")).strip()
     if not api_key:
         # Blank means "reuse what is saved", but only for the same instance —
@@ -2163,10 +2176,24 @@ async def import_indexers(payload: dict = Body(...)):
         print(f"[import] {source} FAILED: {exc}")
         raise HTTPException(502, str(exc))
 
-    # Only remember a connection that actually answered.
+    # Only remember a connection that actually answered. Saving a key that
+    # failed would make the blank-means-reuse path replay a bad credential.
     set_state("import_source", source)
     set_state("import_url", base)
-    set_state("import_key", api_key)
+    # The KEY is opt-out, unlike the source and the URL, which are not secrets.
+    # Nothing here runs unattended: an import happens when a human clicks
+    # Preview, with the form already open, so this credential is the one thing
+    # in `state` that does not have to be there at all. Unlike a notification
+    # URL, which fires at 23:00 with nobody watching, this can simply be
+    # retyped. Default on, so an upgrade behaves exactly as it did.
+    if remember:
+        set_state("import_key", api_key)
+    elif get_state("import_key"):
+        # Unchecking has to CLEAR a previously saved key, not merely decline to
+        # write a new one. Leaving the old value behind is the opposite of what
+        # the box promises, and it would keep working, so nothing would say so.
+        set_state("import_key", "")
+        print("[import] forgot the saved API key at your request")
 
     known_ids = {t["id"] for t in load_config()["trackers"]}
     known_hosts = {t["host"] for t in load_config()["trackers"] if t.get("host")}
@@ -3358,6 +3385,11 @@ PAGE = """<!doctype html>
     padding:0;margin:0}
   .improt em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
     max-width:52%;line-height:1.35;text-align:right}
+  .imrem{display:block;margin:0 0 12px;color:var(--dim2);font-size:12.5px;
+    font-family:var(--body);cursor:pointer}
+  .imrem input{margin-right:7px;vertical-align:-1px}
+  .imrem em{display:block;margin:4px 0 0 21px;font-style:normal;
+    color:var(--dim);font-size:11.5px;line-height:1.5}
   .improt em[hidden]{display:none}
   .improt label.off{opacity:.4;cursor:not-allowed}
   .improt label.off input{cursor:not-allowed}
@@ -3900,6 +3932,7 @@ __SHEET__
  const imbody=()=>({source:document.getElementById('ims').value,
    url:document.getElementById('imu').value,
    api_key:document.getElementById('imk').value,
+   remember:document.getElementById('imrem').checked,
    protocols:[['impt','torrent'],['impu','usenet']]
      .map(p=>[document.getElementById(p[0]),p[1]])
      .filter(p=>p[0].checked&&!p[0].disabled).map(p=>p[1])});
@@ -4437,6 +4470,12 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
         # watch; per-indexer ticking would be twenty controls answering a
         # question already answered. Both on, because excluding usenet by
         # default is the behavior this is fixing.
+        # Opt out of storing the key. It sits with the field it governs rather
+        # than with the protocol boxes, which answer a different question.
+        '<label class="imrem"><input type="checkbox" id="imrem" checked> '
+        'remember this key<em>Unticked, it is used for this import and never '
+        'written. Nothing here runs unattended, so it does not need to be '
+        'saved; you retype it next time.</em></label>'
         '<div class="improt">'
         '<label><input type="checkbox" id="impt" checked> torrent</label>'
         '<label id="impul"><input type="checkbox" id="impu" checked> usenet</label>'

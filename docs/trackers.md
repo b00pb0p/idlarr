@@ -28,7 +28,9 @@ once you have checked.
 
 Settings gear → **Import**. Point it at your own Prowlarr or Jackett with an API key and
 it lists the private indexers it found, marking which are new and which protocol
-each uses. Nothing is written until you click Import. An API key aimed at the
+each uses. Nothing is written until you click Import. The key is saved so you
+can leave the field blank next time; untick **remember this key** and it is
+used for that import and never written. An API key aimed at the
 wrong instance should cost you a list on screen, not a rewritten config.
 
 **Torrent and usenet, both ticked by default.** Prowlarr holds both, and a
