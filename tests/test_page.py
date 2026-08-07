@@ -773,9 +773,20 @@ def test_immune_reason_specifically_is_escaped(page):
 
 
 def _base_stylesheet(css: str) -> str:
-    """`css` with every @media block removed, by balanced-brace scan. Rules
-    inside a media query are overrides: they neither count as a duplicate
-    definition nor as the base definition of a class."""
+    """`css` with comments and every @media block removed.
+
+    Rules inside a media query are overrides: they neither count as a duplicate
+    definition nor as the base definition of a class.
+
+    COMMENTS ARE STRIPPED FIRST, and that is not tidiness. Without it a comment
+    above a rule is captured as part of the next selector, so
+    `/* ... */ .improt` normalizes to a string nothing else matches and the
+    duplicate check silently skips that rule. Nearly every rule in this
+    stylesheet has a comment above it, so the guard was covering a small
+    fraction of the CSS and reporting a clean run. Found 2026-08-07 by adding a
+    real duplicate `.improt{}` and watching the suite stay green.
+    """
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     base, i = [], 0
     while i < len(css):
         if css.startswith("@media", i):

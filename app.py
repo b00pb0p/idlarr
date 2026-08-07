@@ -2140,10 +2140,16 @@ async def import_indexers(payload: dict = Body(...)):
     if "set_remember" in payload:
         keep = bool(payload["set_remember"])
         set_state("import_remember", "1" if keep else "0")
+        # `removed` is reported rather than inferred. "Saved key removed" when
+        # there was never one to remove is the same shape as the notification
+        # test that succeeded without sending: a confirmation describing
+        # something that did not happen.
+        removed = False
         if not keep and get_state("import_key"):
             set_state("import_key", "")
+            removed = True
             print("[import] forgot the saved API key at your request")
-        return {"ok": True, "remembered": keep}
+        return {"ok": True, "remembered": keep, "removed": removed}
 
     source = str(payload.get("source", "")).strip().lower()
     if source not in ("prowlarr", "jackett"):
@@ -2894,6 +2900,10 @@ PAGE = """<!doctype html>
     --immune:#8f9bd6;--session:#4fd3ff;--unknown:#4b5f5a;--accent:#2fe6a6;
     --snoozed:#b58be0;
     --sig:#2fe6a6;--sigdim:#1c6d54;
+    /* One column template drives the header labels and every row, at every
+       width. Two layout models (table on desktop, grid on mobile) is what let
+       the two drift apart. */
+    --cols:14px 232px 92px 104px 1fr;
     /* Three faces, three jobs: names carry weight, numbers stay tabular, and
        everything else has to read at 9px. Mixing them was the point. */
     --disp:'Bricolage Grotesque',system-ui,sans-serif;
@@ -2910,10 +2920,6 @@ PAGE = """<!doctype html>
     background-image:radial-gradient(120% 80% at 50% -10%,rgba(47,230,166,.06),transparent 60%);
     background-attachment:fixed}
   .wrap{max-width:1160px;margin:0 auto;padding:28px 26px 90px}
-  /* One column template drives the header labels and every row, at every
-     width. Two layout models (table on desktop, grid on mobile) is what let
-     the two drift apart. */
-  :root{--cols:14px 232px 92px 104px 1fr}
 
   /* Every band on the page is separated the same way: 22px, a hairline,
      22px. Header / counts / table / footer. */
@@ -3304,12 +3310,12 @@ PAGE = """<!doctype html>
   /* ONE fixed control column. Every control shares a left and right edge;
      letting each size itself staggered them down the panel. */
   .sheet .row .ctl2{width:200px;flex:none;display:flex;justify-content:flex-end;
-    gap:6px;align-items:center}
+    gap:6px;align-items:center;
+    /* Recent activity stacks a timestamp over its outcome in this same
+       column, so the row has to wrap. */
+    flex-wrap:wrap}
   .sheet .row .ctl2>input,.sheet .row .ctl2>select{width:100%}
   .sheet .row .ctl2>.val{white-space:normal;text-align:right}
-  /* Recent activity: timestamp above, outcome beneath, both right-aligned in
-     the same fixed column as every other control. */
-  .sheet .row .ctl2{flex-wrap:wrap}
   .sheet .act-d{width:100%;text-align:right;font-style:normal;color:var(--dim);
     font-size:10.5px;margin-top:2px}
   .sheet .act-d.due{color:var(--due)}
@@ -3380,16 +3386,21 @@ PAGE = """<!doctype html>
   .imlist .new{color:var(--ok);font-size:10px;white-space:nowrap;text-align:right}
   .imlist .pr{color:var(--dim);font-size:9.5px;letter-spacing:.09em;
     text-transform:uppercase;white-space:nowrap;font-family:var(--mono)}
-  .improt{display:flex;align-items:center;gap:16px;margin:2px 0 8px;font-size:12px;
-    color:var(--dim2)}
+  .improt{display:flex;align-items:center;gap:16px;row-gap:10px;flex-wrap:wrap;
+    margin:2px 0 8px;font-size:12px;color:var(--dim2)}
   .improt label{display:flex;align-items:center;gap:6px;cursor:pointer;
     flex:none;white-space:nowrap}
   .improt input{width:14px;height:14px;accent-color:var(--sig);cursor:pointer;
     padding:0;margin:0}
-  /* Save owns the right edge of this row, and margin-left:auto is what puts
-     it there. Everything in the pane is width:100% under box-sizing:border-box,
-     so that edge is the same one the key field above ends on. */
-  .improt button{margin-left:auto;flex:none}
+  /* Save owns the right edge of this row and matches the Save in General and
+     Sign-in. Those sit inside `.ctl2` and fill it via `ctl2>button{flex:1}`,
+     so "the same button" means the same WIDTH as that column, not just the
+     same class: flex:none alone left this one shrunk to its text while every
+     other Save on the panel was 200px. The value is the ctl2 width; the two
+     are stated separately, so keep them together if either moves.
+     Wrapping matters at phone width, where 200px plus three checkboxes does
+     not fit on one line. */
+  .improt button{margin-left:auto;flex:none;width:200px}
   .impnote{color:var(--dim);font-size:11px;line-height:1.4;margin:0 0 10px;
     font-family:var(--body)}
   .impnote[hidden]{display:none}
@@ -3411,6 +3422,8 @@ PAGE = """<!doctype html>
     .sheet nav button.on{border-left:0;border-bottom-color:var(--accent)}
     .sheet .row{flex-wrap:wrap}
     .sheet .row .ctl2{width:100%;justify-content:flex-start}
+    /* Same as every other control here at this width. */
+    .improt button{width:100%;margin-left:0}
     .banner .sp{margin-left:0;width:100%}
     .addbtn{height:34px;padding:0 12px;font-size:9px}
     .gear{width:34px;height:34px;font-size:15px}
@@ -3978,9 +3991,11 @@ __SHEET__
      if(!r.ok){const d=await r.json().catch(()=>({}));
                ime.textContent=d.detail||('failed ('+r.status+')');
                imsave.disabled=false;return;}
+     const d=await r.json().catch(()=>({}));
      ime.className='e good';
-     ime.textContent=on?'the key from your next import will be stored'
-                       :'saved key removed';
+     ime.textContent=on ? 'the key from your next import will be stored'
+                : d.removed ? 'saved key removed'
+                            : 'nothing to remove; no key was stored';
      imsave.disabled=false;
    }catch(e){ime.textContent='failed: '+e.message;imsave.disabled=false;}
  });

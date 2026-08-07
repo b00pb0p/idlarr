@@ -432,7 +432,7 @@ def test_saving_with_remember_off_clears_the_key(client, cfg, prowlarr):
     assert app.get_state("import_key")
 
     r = client.post("/api/import", json={"set_remember": False})
-    assert r.json() == {"ok": True, "remembered": False}
+    assert r.json() == {"ok": True, "remembered": False, "removed": True}
     assert not app.get_state("import_key")
     assert app.get_state("import_url"), "the URL was cleared too"
 
@@ -675,16 +675,36 @@ def test_all_three_checkboxes_share_one_row(cfg):
 
 
 def test_save_matches_the_save_in_general_and_sign_in(cfg):
-    """Those are `lk pri`. A plain `lk` made this the one Save on the panel
-    that looked like a secondary action."""
+    """Same class AND same width. Those Saves sit inside `.ctl2` and fill it
+    through `ctl2>button{flex:1}`, so matching the class alone is not enough:
+    with `flex:none` this one shrank to its text while every other Save on the
+    panel was the full width of that column. Reported twice, 2026-08-06.
+    """
     html = app.settings_sheet("none", 7, 7, "/x.js")
-    assert '<button class="lk pri" id="imsave">' in html
-    # And nothing may resize it. `.lk` sizes every button in this panel; a rule
-    # scoped narrower is a second source for one decision, and it already made
-    # Save visibly smaller than Preview once.
-    rule = re.search(r"\.improt button\{([^}]*)\}", app.PAGE)
-    assert rule and "padding" not in rule.group(1), \
+    assert '<button class="lk pri" id="imsave">' in html, \
+        "Save is not the primary button the other panes use"
+
+    css = app.PAGE
+    col = re.search(r"\.sheet \.row \.ctl2\{width:(\d+)px", css)
+    assert col, "cannot find the control column width"
+    rule = re.search(r"\.improt button\{([^}]*)\}", css)
+    assert rule, "no rule for Save on that row"
+    assert f"width:{col.group(1)}px" in rule.group(1), \
+        (f"Save is not the same width as the control column "
+         f"({col.group(1)}px), so it will not match the other Save buttons")
+    # Still nothing bespoke about its height. `.lk` sizes every button here,
+    # and a narrower rule already made Save visibly smaller than Preview once.
+    assert "padding" not in rule.group(1), \
         "Save is being sized separately from the other buttons again"
+
+
+def test_the_checkbox_row_wraps_before_it_overflows(cfg):
+    """Three checkboxes plus a 200px button do not fit on one line at phone
+    width. Without wrapping they overflow the pane instead of stacking."""
+    css = app.PAGE
+    rule = re.search(r"\.improt\{([^}]*)\}", css)
+    assert rule and "flex-wrap:wrap" in rule.group(1), \
+        "the row will overflow rather than wrap"
 
 
 def test_save_sits_on_the_pane_edge(cfg):
@@ -707,3 +727,36 @@ def test_the_jackett_note_left_the_row(cfg):
     assert 'class="impnote" id="impnote" hidden' in html, "the note is gone entirely"
     assert ".impnote[hidden]{display:none}" in app.PAGE, \
         "it will show permanently, as a fact about the panel rather than a reason"
+
+
+def test_save_says_whether_a_key_was_actually_removed(client, cfg, prowlarr):
+    """"Saved key removed" when there was never one to remove is the same
+    shape as the notification test that reported success without sending: a
+    confirmation describing something that did not happen. The server knows
+    which it was, so it reports it rather than leaving the page to guess.
+    """
+    # Nothing stored yet.
+    r = client.post("/api/import", json={"set_remember": False})
+    assert r.json() == {"ok": True, "remembered": False, "removed": False}
+
+    # Now store one, then remove it.
+    client.post("/api/import", json=BODY)
+    assert app.get_state("import_key")
+    r = client.post("/api/import", json={"set_remember": False})
+    assert r.json()["removed"] is True
+    assert not app.get_state("import_key")
+
+    # And again, with nothing left.
+    assert client.post("/api/import", json={"set_remember": False}).json()["removed"] is False
+
+
+def test_the_page_reports_all_three_outcomes(cfg):
+    """Ticked, unticked-and-removed, unticked-and-nothing-there. A single
+    message for the last two would state a removal that did not occur."""
+    script = app.PAGE
+    for phrase in ("the key from your next import will be stored",
+                   "saved key removed",
+                   "nothing to remove; no key was stored"):
+        assert phrase in script, f"the page never says {phrase!r}"
+    assert "d.removed" in script, \
+        "the page ignores what the server reported and guesses"
