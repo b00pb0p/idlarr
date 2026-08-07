@@ -77,10 +77,12 @@ cp .env.example .env
 There is no config to copy. An empty `trackers.yml` is created on first boot,
 and you add trackers from the page.
 
-**2. Settings.** Only one thing is worth setting before you start:
-`IDLARR_NOTIFY_URLS`, an [Apprise](https://github.com/caronc/apprise) URL,
+**2. Settings.** Only one thing is worth doing before you start: give it
+somewhere to send alerts. Add a destination in *Settings, Notifications*, or set
+`IDLARR_NOTIFY_URLS` in `.env` if you would rather no credential reached the
+database. Either is an [Apprise](https://github.com/caronc/apprise) URL,
 `ntfy://ntfy.sh/your-topic`, `pover://USER@TOKEN`, `discord://ID/TOKEN`, and
-~100 more. Without it the service runs and warns, but nothing can reach you.
+~100 more. With neither, the service runs and warns, but nothing can reach you.
 
 Set `STATUS_URL` to the address you'll reach the page on. The userscript is
 generated from it. It seeds the config on first run; afterwards you change it
@@ -299,18 +301,28 @@ actionable. One 3am push is how accounts get lost.
 ## Notifications
 
 Everything goes through [Apprise](https://github.com/caronc/apprise), which
-speaks around a hundred services, **including ntfy**. One setting, one code
-path, nothing bespoke to maintain.
+speaks around a hundred services, **including ntfy**. One code path, nothing
+bespoke to maintain.
+
+Destinations come from two places and **both are used**. They add to one list,
+so neither replaces the other and there is no precedence to learn.
+
+**In the page.** *Settings, Notifications*: paste an Apprise URL, give it a name
+if you like, and it is checked before it is saved. Each row tests on its own, so
+a failure names the destination that failed rather than reporting that
+notifications are broken. Rows can be muted without being removed, which matters
+because a saved URL is never shown again and there is nothing left to retype
+from.
+
+**In `.env`.** Comma-separated, for anyone who would rather no credential
+touched the database:
 
 ```bash
 IDLARR_NOTIFY_URLS=ntfys://ntfy.example.com/my-topic?token=tk_xxx
-```
-
-Comma-separate for several destinations:
-
-```bash
 IDLARR_NOTIFY_URLS=pover://USER_KEY@APP_TOKEN,discord://WEBHOOK_ID/WEBHOOK_TOKEN
 ```
+
+These appear in the panel marked *from .env*, and are not editable there.
 
 | Service | URL format |
 |---|---|
@@ -336,10 +348,14 @@ The status page URL, if set, is appended to the message body rather than used as
 provider-specific click action. Every service renders a URL, only some support
 a tap target.
 
-**With `IDLARR_NOTIFY_URLS` empty, nothing can reach you.** Compose refuses to
-start without it, and the service warns if it ends up empty anyway.
+**With no destination configured, nothing can reach you.** The service still
+starts, because a status page with no alerting is more useful than a container
+that will not boot, but it says so in the startup log and the panel says it too.
 
-**These URLs contain credentials.** Keep them in `.env`, which is gitignored.
+**These URLs contain credentials.** One added in the page is stored in the
+database, so it is in every nightly backup. `.env` is not in `/data`, so
+anything listed there is not. That is the whole reason both routes exist; pick
+per destination.
 
 ## Endpoints
 
@@ -374,6 +390,10 @@ changes.
 | `POST /api/settings` | Edit the `defaults:` block: timezone, check hour, thresholds |
 | `GET`/`POST /api/auth` | Read or change the UI login |
 | `POST /login` · `POST /logout` | Session in, session out |
+| `POST /api/notify` | Add a notification destination. The URL is validated with Apprise first |
+| `POST /api/notify/{id}` | Rename, mute or replace one. A blank URL keeps the stored one |
+| `DELETE /api/notify/{id}` | Remove one |
+| `POST /api/notify/{id}/test` | Send through that destination alone |
 | `POST /api/check` | Run the daily check now: back up, evaluate, send anything due |
 | `POST /api/apikey` | Regenerate the read-only key. UI login only, never the key itself |
 | `POST /api/test-notify` | Send a test notification. Bearer token or a session |
