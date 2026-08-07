@@ -945,3 +945,36 @@ def test_the_settings_window_clips_its_corners():
     win = re.search(r"\.sheet \.win\{([^}]*)\}", _base_stylesheet(app.PAGE))
     assert win and "overflow:hidden" in win.group(1), \
         "children will paint over the rounded corners"
+
+
+def test_every_settings_control_is_one_width():
+    """A button's width used to depend on how many happened to share its row:
+    Save filled the 200px column alone, Preview and Import took half each, and
+    Add was as wide as the word. Reported 2026-08-07.
+
+    `--btn` is the single source. This checks the rule covers ANCHORS too:
+    Download is an `<a class="lk">`, so a rule scoped to `button` left it
+    sized by its text beside a fixed-width Restore.
+    """
+    css = _base_stylesheet(re.search(r"<style>(.*?)</style>", app.PAGE, re.S).group(1))
+    rule = re.search(r"\.sheet \.lk\{([^}]*)\}", css)
+    assert rule, "no shared width rule for settings controls"
+    assert "width:var(--btn)" in rule.group(1)
+    assert re.search(r"--btn:\s*\d+px", css), "--btn is never defined"
+
+    # Nothing may re-size one of them behind that rule's back.
+    for sel in (r"\.nd \.lk", r"\.ndform button", r"\.sheet \.row \.ctl2>button"):
+        m = re.search(sel + r"\{([^}]*)\}", css)
+        if m:
+            assert "width" not in m.group(1) and "flex:1" not in m.group(1), \
+                f"{sel} sizes its buttons separately from --btn"
+
+
+def test_the_restore_button_has_no_ellipsis():
+    """Asked for 2026-08-07. It opens a file picker, which the label already
+    implies; the other controls that open something do not carry one either."""
+    html = app.settings_sheet("none", 7, 7, "/x.js")
+    m = re.search(r'id="cfgUp"[^>]*>([^<]*)<', html)
+    assert m, "no Restore button"
+    assert "…" not in m.group(1) and "..." not in m.group(1), \
+        f"Restore still carries an ellipsis: {m.group(1)!r}"

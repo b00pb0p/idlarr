@@ -2904,6 +2904,13 @@ PAGE = """<!doctype html>
        width. Two layout models (table on desktop, grid on mobile) is what let
        the two drift apart. */
     --cols:14px 232px 92px 104px 1fr;
+    /* Every button in the settings panel is this wide. The value is what
+       Regenerate already was: one of a PAIR inside the 200px control column
+       with a 6px gap between them, so (200 - 6) / 2. Two of them still fill
+       that column exactly, and one no longer stretches across it. Before this,
+       a button's width depended on how many happened to share its row, so Save
+       was 200, Preview was 97 and Add was as wide as the word. */
+    --btn:97px;
     /* Three faces, three jobs: names carry weight, numbers stay tabular, and
        everything else has to read at 9px. Mixing them was the point. */
     --disp:'Bricolage Grotesque',system-ui,sans-serif;
@@ -3319,7 +3326,9 @@ PAGE = """<!doctype html>
   .sheet .act-d{width:100%;text-align:right;font-style:normal;color:var(--dim);
     font-size:10.5px;margin-top:2px}
   .sheet .act-d.due{color:var(--due)}
-  .sheet .row .ctl2>button{flex:1}
+  /* Buttons AND anchors: Download is an <a class="lk">, so a rule scoped to
+     `button` left it sized by its text beside a fixed-width Restore. */
+  .sheet .lk{width:var(--btn);flex:none}
   /* Destination rows span the pane rather than sitting in the 200px control
      column: a name, a masked URL and three buttons do not fit there, and the
      URL is the part you need room to read. */
@@ -3330,7 +3339,6 @@ PAGE = """<!doctype html>
     flex:none;min-width:88px}
   .nd-u{font-family:var(--mono);font-size:10.5px;color:var(--dim);
     flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .nd .lk{flex:none;padding:6px 10px}
   .nd.off .nd-n,.nd.off .nd-u{opacity:.45}
   .nd-src{font-family:var(--body);font-size:10.5px;letter-spacing:.1em;
     text-transform:uppercase;color:var(--dim);flex:none}
@@ -3343,7 +3351,6 @@ PAGE = """<!doctype html>
   .ndform input{min-width:0}
   .ndform .f2{flex:2}
   .ndform .f1{flex:1}
-  .ndform button{flex:none}
   /* The key field shares its cell with the reveal button, so it may not take
      the full width the way every other input in this column does. */
   .sheet .row .ctl2>.keyf{width:auto;flex:1;min-width:0}
@@ -3400,7 +3407,7 @@ PAGE = """<!doctype html>
      are stated separately, so keep them together if either moves.
      Wrapping matters at phone width, where 200px plus three checkboxes does
      not fit on one line. */
-  .improt button{margin-left:auto;flex:none;width:200px}
+  .improt button{margin-left:auto}
   .impnote{color:var(--dim);font-size:11px;line-height:1.4;margin:0 0 10px;
     font-family:var(--body)}
   .impnote[hidden]{display:none}
@@ -3422,8 +3429,7 @@ PAGE = """<!doctype html>
     .sheet nav button.on{border-left:0;border-bottom-color:var(--accent)}
     .sheet .row{flex-wrap:wrap}
     .sheet .row .ctl2{width:100%;justify-content:flex-start}
-    /* Same as every other control here at this width. */
-    .improt button{width:100%;margin-left:0}
+    .improt button{margin-left:0}
     .banner .sp{margin-left:0;width:100%}
     .addbtn{height:34px;padding:0 12px;font-size:9px}
     .gear{width:34px;height:34px;font-size:15px}
@@ -4432,7 +4438,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
                "comments and all. Restoring replaces it: the current file is "
                "saved alongside as a <code>.bak</code> first.",
                '<a class="lk" href="/api/config" download>Download</a>'
-               '<button class="lk" id="cfgUp">Restore\u2026</button>'
+               '<button class="lk" id="cfgUp">Restore</button>'
                '<input type="file" id="cfgFile" accept=".yml,.yaml,text/yaml" '
                'style="display:none">'))
 

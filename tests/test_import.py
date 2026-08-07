@@ -675,26 +675,20 @@ def test_all_three_checkboxes_share_one_row(cfg):
 
 
 def test_save_matches_the_save_in_general_and_sign_in(cfg):
-    """Same class AND same width. Those Saves sit inside `.ctl2` and fill it
-    through `ctl2>button{flex:1}`, so matching the class alone is not enough:
-    with `flex:none` this one shrank to its text while every other Save on the
-    panel was the full width of that column. Reported twice, 2026-08-06.
+    """Same class and same width. Matching the class alone was not enough
+    twice over: first this was a secondary button, then it was a primary one
+    sized by its text while the others filled the control column.
+
+    Every button in the panel is now one width, `--btn`, so there is nothing
+    left for this one to differ on. Reported twice, 2026-08-06 and 08-07.
     """
     html = app.settings_sheet("none", 7, 7, "/x.js")
     assert '<button class="lk pri" id="imsave">' in html, \
         "Save is not the primary button the other panes use"
-
-    css = app.PAGE
-    col = re.search(r"\.sheet \.row \.ctl2\{width:(\d+)px", css)
-    assert col, "cannot find the control column width"
-    rule = re.search(r"\.improt button\{([^}]*)\}", css)
-    assert rule, "no rule for Save on that row"
-    assert f"width:{col.group(1)}px" in rule.group(1), \
-        (f"Save is not the same width as the control column "
-         f"({col.group(1)}px), so it will not match the other Save buttons")
-    # Still nothing bespoke about its height. `.lk` sizes every button here,
-    # and a narrower rule already made Save visibly smaller than Preview once.
-    assert "padding" not in rule.group(1), \
+    assert ".sheet .lk{width:var(--btn)" in app.PAGE, \
+        "settings controls are not on one shared width"
+    rule = re.search(r"\.improt button\{([^}]*)\}", app.PAGE)
+    assert rule and "width" not in rule.group(1), \
         "Save is being sized separately from the other buttons again"
 
 
