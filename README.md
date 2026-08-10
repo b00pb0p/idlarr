@@ -444,7 +444,11 @@ cross-origin from tracker pages, where cookies do not apply.
   restarting them.
 - **A backup contains every secret the service holds**: your tracker list, the
   API token, the session secret, the read-only API key, a saved Prowlarr key,
-  and any notification destination added in Settings.  Destinations listed in
+  and any notification destination added in Settings. This is why `/config` and
+  `/data` are separate mounts: `trackers.yml` carries no credentials and the
+  database carries all of them, so they can be synced under different rules.
+  [Setup](docs/setup.md#why-two-directories) covers collapsing them into one
+  if you would rather.  Destinations listed in
   `IDLARR_NOTIFY_URLS` are **not** among them: `.env` is not in `/data`, which
   is the reason that route is still supported. The database and its backups are written `0600` so other local users
   cannot read them, and snapshots written before that was enforced are

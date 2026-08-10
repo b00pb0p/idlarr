@@ -10,6 +10,7 @@ distinguishable from "empty because your mount is wrong".
 Run:  .venv/bin/python -m pytest tests/test_firstrun.py -q
 """
 
+import inspect
 import os
 import re
 import sqlite3
@@ -264,3 +265,49 @@ def test_backups_are_not_world_readable(fresh, monkeypatch):
     assert dest is not None and dest.exists()
     mode = stat.S_IMODE(dest.stat().st_mode)
     assert mode & 0o077 == 0, f"backup is {oct(mode)}, readable beyond owner"
+
+
+def test_mount_messages_name_the_resolved_path_not_the_default(tmp_path, monkeypatch):
+    """Both mount errors hardcoded `/config` and `/data`. Those are the default
+    mount points, not facts: IDLARR_CONFIG, IDLARR_DB and IDLARR_BACKUP_DIR can
+    point anywhere, and a single-mount install puts everything under one
+    directory. Naming a path the operator has not got is the one thing a
+    message written to catch a mis-mounted volume must not do.
+
+    Asked for 2026-08-10 after confirming a single mount works today.
+    """
+    import re
+    src = inspect.getsource(app.lifespan) + inspect.getsource(app.load_config)
+    # The messages must interpolate, not hardcode.
+    for literal in ('"  /data must be writable', 'mounted at /config',
+                    'If /data looks empty', '/config is "'):
+        assert literal not in src, f"a mount message still hardcodes {literal!r}"
+    assert "{DB_PATH.parent}" in src, "the database message names no resolved path"
+    assert "{CONFIG_PATH.parent}" in src, "the config message names no resolved path"
+
+
+def test_the_first_run_message_points_at_where_the_file_actually_went(
+        tmp_path, monkeypatch, capsys):
+    """Behavioral half of the above. Driven through the real lifespan, since
+    the auto-create lives there and not in load_config(): an earlier version of
+    this test called load_config() and got a FileNotFoundError, which proved
+    only that it had the wrong entry point.
+
+    Everything is put under ONE directory here, which is the single-mount
+    layout the hardcoded "/config" was wrong for.
+    """
+    one = tmp_path / "everything"
+    one.mkdir()
+    monkeypatch.setattr(app, "CONFIG_PATH", one / "trackers.yml")
+    monkeypatch.setattr(app, "DB_PATH", one / "idlarr.db")
+    monkeypatch.setattr(app, "BACKUP_DIR", one / "backups")
+    app._cfg_cache["data"] = None
+
+    with TestClient(app.app):
+        pass
+
+    out = capsys.readouterr().out
+    assert (one / "trackers.yml").exists(), "no config was created"
+    assert str(one) in out, "the operator is never told which directory it used"
+    assert "/config" not in out, "it named the default mount instead of the real one"
+    app._cfg_cache["data"] = None

@@ -24,6 +24,37 @@ for a different one you must build from source (see `PUID` below).
 
 *(Cloned the repo instead? You already have both, so skip the `curl`s.)*
 
+### Why two directories
+
+`/config` holds one file, `trackers.yml`, and **no credentials at all**.
+`/data` holds the database and its nightly backups, which carry **every secret
+the service has**: the ping token, the session secret, the read-only API key,
+any saved Prowlarr key, and any notification destination you added from the
+page.
+
+Splitting them means you can commit, sync or share your tracker list without
+dragging credentials along, and treat `/data` as the sensitive one. It also
+keeps a hand-edited file away from the database, since `trackers.yml` is the
+one you are invited to edit by hand.
+
+The cost is a second directory to create and `chown`, and a root-owned mount is
+a crash loop rather than a warning, so it is a second chance to get that wrong.
+
+**One directory works too**, if you would rather. Nothing in the service
+requires the split; the three paths are just defaults:
+
+```yaml
+    volumes:
+      - ./idlarr:/config
+    environment:
+      IDLARR_CONFIG: /config/trackers.yml
+      IDLARR_DB: /config/idlarr.db
+      IDLARR_BACKUP_DIR: /config/backups
+```
+
+If you do that, remember the whole directory now holds secrets, so whatever
+you were going to do with `/config` alone applies to all of it.
+
 There is no userscript to download: the service generates it from your config
 and serves it from the status page.
 

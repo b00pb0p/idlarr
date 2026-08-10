@@ -1439,11 +1439,11 @@ async def lifespan(app: FastAPI):
         uid = os.getuid()
         raise RuntimeError(
             f"Cannot open the database at {DB_PATH}: {exc}\n"
-            f"  The container runs as UID {uid}, and the directory you mounted at\n"
-            f"  /data must be writable by it. From your compose directory:\n"
-            f"      mkdir -p data && chown -R {uid} data\n"
-            f"  If /data looks empty when it should not be, the mount is pointing\n"
-            f"  somewhere other than you think."
+            f"  The container runs as UID {uid}, and the directory mounted at\n"
+            f"  {DB_PATH.parent} must be writable by it. From your compose directory:\n"
+            f"      chown -R {uid} <the host path you mounted there>\n"
+            f"  If {DB_PATH.parent} looks empty when it should not be, the mount\n"
+            f"  is pointing somewhere other than you think."
         ) from exc
 
     # AFTER init_db(): this reads the destination list out of `state`, and on a
@@ -1546,13 +1546,18 @@ async def lifespan(app: FastAPI):
             raise RuntimeError(
                 f"No tracker config at {CONFIG_PATH}, and it could not be "
                 f"created: {exc}\n"
-                f"  The container runs as UID {os.getuid()}; the directory you\n"
-                f"  mounted at /config must be writable by it:\n"
-                f"      mkdir -p config && chown -R {os.getuid()} config"
+                f"  The container runs as UID {os.getuid()}; the directory\n"
+                f"  mounted at {CONFIG_PATH.parent} must be writable by it:\n"
+                f"      chown -R {os.getuid()} <the host path you mounted there>"
             ) from exc
+        # Both of these name the RESOLVED directory rather than "/config".
+        # That is the default mount, not a fact: IDLARR_CONFIG can point
+        # anywhere, and single-mount installs put it under /config/ or /data/
+        # with the database. Naming a path the operator has not got is the one
+        # thing a message written to catch a mis-mounted volume must not do.
         print(f"[startup] No config found: created an empty one at "
-              f"{CONFIG_PATH}. If you expected trackers here, /config is "
-              f"mounted somewhere other than you think.")
+              f"{CONFIG_PATH}. If you expected trackers here, "
+              f"{CONFIG_PATH.parent} is not the directory you think it is.")
     try:
         cfg = load_config()
     except Exception as exc:
