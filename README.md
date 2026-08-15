@@ -216,8 +216,9 @@ the two file actions, live in **System**.
 **Five themes**, picked in *Settings, General*: **Slate** (the default, cool and
 restrained), **Vitals** (the original dark clinical green), **Paper** (light),
 **Nocturne** (deep indigo) and **Contrast** (pure black, for OLED or low
-vision). The choice applies as you pick it and closing without saving puts it
-back. It is written to `trackers.yml`, so it travels with a config restore.
+vision). The dropdown lists names only, because the choice applies as you pick
+it: seeing it beats reading about it. Closing without saving puts it back. It
+is written to `trackers.yml`, so it travels with a config restore.
 
 The tracker total leads the count strip at the top, beside the per-state counts.
 The userscript version and the date of the last daily check live in **About**;

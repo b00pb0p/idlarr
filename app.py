@@ -2600,7 +2600,7 @@ DEFAULT_THEME = "slate"
 
 THEMES: dict[str, dict[str, str]] = {
     "slate": {
-        "label": "Slate", "hint": "cool and restrained, blue signal",
+        "label": "Slate",
         "bg": "#0e1116", "head": "#151a21", "drawer": "#1a2029",
         "line": "#232b36", "line2": "#334050",
         "fg": "#e6ebf2", "dim": "#8b97a8", "dim2": "#b9c4d1",
@@ -2616,7 +2616,7 @@ THEMES: dict[str, dict[str, str]] = {
         "bad": "#f87171",
     },
     "vitals": {
-        "label": "Vitals", "hint": "the original: dark clinical, mint signal",
+        "label": "Vitals",
         "bg": "#0a0e0d", "head": "#0f1614", "drawer": "#131d1a",
         "line": "#1d2a26", "line2": "#284039",
         "fg": "#eaf6f2", "dim": "#93aaa4", "dim2": "#c2d5d0",
@@ -2632,7 +2632,7 @@ THEMES: dict[str, dict[str, str]] = {
         "bad": "#ff6b5e",
     },
     "paper": {
-        "label": "Paper", "hint": "light, warm stock and ink",
+        "label": "Paper",
         "bg": "#f6f3ec", "head": "#fffdf8", "drawer": "#efebe1",
         "line": "#e3ddcf", "line2": "#cec6b2",
         "fg": "#1b1915", "dim": "#6d685c", "dim2": "#3c3830",
@@ -2648,7 +2648,7 @@ THEMES: dict[str, dict[str, str]] = {
         "bad": "#b32619",
     },
     "nocturne": {
-        "label": "Nocturne", "hint": "deep indigo, low glare",
+        "label": "Nocturne",
         "bg": "#0d0b16", "head": "#141122", "drawer": "#1a1730",
         "line": "#241f3d", "line2": "#382f5c",
         "fg": "#e9e5f7", "dim": "#948dba", "dim2": "#c3bcdf",
@@ -2664,7 +2664,7 @@ THEMES: dict[str, dict[str, str]] = {
         "bad": "#fda4af",
     },
     "contrast": {
-        "label": "Contrast", "hint": "pure black, saturated, maximum legibility",
+        "label": "Contrast",
         "bg": "#000000", "head": "#0b0b0b", "drawer": "#111111",
         "line": "#242424", "line2": "#3d3d3d",
         "fg": "#ffffff", "dim": "#a3a3a3", "dim2": "#dcdcdc",
@@ -2682,7 +2682,10 @@ THEMES: dict[str, dict[str, str]] = {
 }
 
 # Not a colour, so it is excluded from the palette a theme writes.
-_THEME_META = ("label", "hint")
+# A frozenset, not a tuple. `("label")` without a trailing comma is a STRING,
+# and `k not in "label"` then matches any substring of it, silently dropping
+# --l, --a and --b from every palette. One-element tuples are the trap.
+_THEME_META = frozenset({"label"})
 
 
 def theme() -> str:
@@ -4544,7 +4547,7 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
     cur_theme = theme()
     theme_opts = "".join(
         f'<option value="{k}"{" selected" if k == cur_theme else ""}>'
-        f'{THEMES[k]["label"]} &middot; {THEMES[k]["hint"]}</option>'
+        f'{THEMES[k]["label"]}</option>'
         for k in THEME_KEYS)
     general = (
         _row("Theme",

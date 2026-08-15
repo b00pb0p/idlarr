@@ -232,3 +232,37 @@ def test_the_read_only_key_cannot_change_the_theme(client, cfg):
     assert r.status_code == 401
     app.set_state("auth_method", "")
     app.set_state("auth_hash", "")
+
+
+def test_the_dropdown_shows_names_only(cfg):
+    """Asked for 2026-08-10. The descriptions made every option a sentence in a
+    narrow control, and the live preview already answers what each one looks
+    like better than any wording could.
+    """
+    html = app.settings_sheet("none", 7, 7, "/x.js")
+    sel = re.search(r'<select id="setTheme">(.*?)</select>', html, re.S).group(1)
+    for opt in re.findall(r'<option[^>]*>(.*?)</option>', sel):
+        assert opt in {t["label"] for t in app.THEMES.values()}, \
+            f"option carries more than a name: {opt!r}"
+
+
+def test_no_dead_description_is_left_in_the_table(cfg):
+    """Nothing renders it any more. A field kept `just in case` is data that
+    drifts from the thing it claims to describe with nothing to catch it."""
+    for key, palette in app.THEMES.items():
+        assert "hint" not in palette, f"{key} still carries an unused hint"
+
+
+def test_stripping_meta_cannot_eat_palette_keys(cfg):
+    """`_THEME_META` guards against emitting --label as a property. With one
+    entry left it is a frozenset on purpose: written `("label")` it would be a
+    STRING, and `k not in "label"` matches any substring, so --l, --a and --b
+    would vanish from every palette with nothing failing.
+    """
+    assert not isinstance(app._THEME_META, str), \
+        "_THEME_META is a string; substring matching will eat palette keys"
+    css = app.theme_css(app.DEFAULT_THEME)
+    for key in app.THEMES[app.DEFAULT_THEME]:
+        if key == "label":
+            continue
+        assert f"--{key}:" in css, f"{key} was stripped from the palette"
