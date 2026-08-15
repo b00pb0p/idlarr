@@ -464,10 +464,18 @@ def test_closing_settings_discards_unsaved_edits(page):
     saved config — and the next Save posted it. Reported from a live install
     after clearing the timezone field and closing without saving."""
     script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
-    close = re.search(r"const closeSheet=\(\)=>\{(.*?)\};", script)
+    # re.S: closeSheet is allowed to span lines. Without it this guard broke the
+    # moment the body grew a second statement, which says nothing about whether
+    # the reset still happens.
+    close = re.search(r"const closeSheet=\(\)=>\{(.*?)\};", script, re.S)
     assert close, "closeSheet not found in its expected form"
     assert "resetFields" in close.group(1), \
         "closing only hides the panel; unsaved edits survive into the next open"
+    # The theme previews live, so resetFields putting the SELECT back is not
+    # enough: the painted variables have to follow it, or an abandoned theme
+    # stays on screen looking saved. Exactly the bug above, one layer out.
+    assert "paintTheme" in close.group(1), \
+        "closing reverts the dropdown but leaves the previewed theme painted"
     assert "defaultValue" in script and "defaultSelected" in script
     # ...and a save must move the defaults forward, or closing after saving
     # would revert the very change that was just written. Assert the CALL, not

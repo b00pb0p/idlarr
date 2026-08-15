@@ -81,6 +81,7 @@ defaults:
   inactivity_days: 30
   alert_at_pct: 0.65
   timezone: America/Chicago
+  theme: slate
   check_hour: 9
 
 trackers:
@@ -102,7 +103,9 @@ trackers:
 `url` should point at a page that requires a login. The status page links to
 it, and it's where you'll land to reset the clock. `notes` beginning with the
 tracker software (`Gazelle`, `UNIT3D`, `TBDev`, `Custom`) fills in the software
-line under the tracker's name for free. `check_hour` is when the daily check runs, in `timezone`.
+line under the tracker's name for free. `check_hour` is when the daily check runs, in `timezone`. `theme` is one of
+`slate`, `vitals`, `paper`, `nocturne`, `contrast`; an unrecognised value falls
+back to `slate` rather than rendering an unreadable page.
 
 > **Those numbers are fail-safe placeholders, not research.** Nobody outside a
 > tracker reliably knows its current inactivity policy, and a limit guessed too

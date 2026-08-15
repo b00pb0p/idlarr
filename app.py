@@ -231,6 +231,11 @@ def load_config() -> dict:
                 "alive_push_days": int(defaults.get("alive_push_days", 0)),
                 "alert_at_pct": float(defaults.get("alert_at_pct", 0.65)),
                 "backup_keep": int(defaults.get("backup_keep", 14)),
+                # Surfaced here or theme() never sees it: load_config() returns
+                # an explicit dict, so a key written into `defaults:` that is
+                # not listed simply does not exist downstream. Saving the theme
+                # worked and changed nothing on screen.
+                "theme": str(defaults.get("theme", DEFAULT_THEME)),
                 "status_url": str(defaults.get("status_url", "") or ""),
             },
         )
@@ -421,7 +426,7 @@ def save_default_field(key: str, value) -> None:
     that tracker's limit mattered.
     """
     allowed = {"timezone", "check_hour", "alert_at_pct", "inactivity_days",
-               "alive_push_days", "backup_keep", "status_url"}
+               "alive_push_days", "backup_keep", "status_url", "theme"}
     if key not in allowed:
         raise KeyError(f"not a settable default: {key}")
 
@@ -1902,6 +1907,17 @@ async def update_settings(payload: dict = Body(...)):
             raise HTTPException(400, "alert_at_pct must be between 0.4 and 0.95")
         changed["alert_at_pct"] = pct
 
+    want_theme = payload.get("theme")
+    if want_theme is not None:
+        # Validated against the table, not merely allow-listed as a key. An
+        # unknown value writes a config that renders `:root` with nothing in
+        # it, which is not a crash: it is black text on a black page, and the
+        # only way back is editing trackers.yml by hand.
+        if str(want_theme) not in THEMES:
+            raise HTTPException(400, f"'{want_theme}' is not a theme. "
+                                     f"Choose one of: {', '.join(THEME_KEYS)}")
+        changed["theme"] = str(want_theme)
+
     alive = payload.get("alive_push_days")
     if alive is not None:
         try:
@@ -2568,6 +2584,136 @@ async def userscript(request: Request, token: str = ""):
 
 # ---------------------------------------------------------------- auth routes
 
+# --------------------------------------------------------------------- themes
+#
+# A theme is nothing but a set of CSS custom properties. Every colour the two
+# pages use resolves through one of these, which is what makes swapping them a
+# palette change rather than a stylesheet fork. If you add a colour, add it
+# HERE and reference it as a var, or it will stay the same in all five.
+#
+# The state colours are the constraint, not the chrome: nine of them have to
+# stay apart at a glance, because telling them apart IS the product. A
+# monochrome theme would look wonderful and break it, which is why there isn't
+# one.
+THEME_KEYS = ("slate", "vitals", "paper", "nocturne", "contrast")
+DEFAULT_THEME = "slate"
+
+THEMES: dict[str, dict[str, str]] = {
+    "slate": {
+        "label": "Slate", "hint": "cool and restrained, blue signal",
+        "bg": "#0e1116", "head": "#151a21", "drawer": "#1a2029",
+        "line": "#232b36", "line2": "#334050",
+        "fg": "#e6ebf2", "dim": "#8b97a8", "dim2": "#b9c4d1",
+        "ok": "#4ade80", "due": "#fbbf24", "warn": "#fb923c",
+        "critical": "#f87171", "expired": "#fb7185",
+        "immune": "#a5b4fc", "session": "#38bdf8", "unknown": "#4b5563",
+        "accent": "#60a5fa", "snoozed": "#c084fc",
+        "sig": "#60a5fa", "sigdim": "#1e3a5f",
+        "glow": "rgba(96,165,250,.06)", "glow2": "rgba(96,165,250,.12)",
+        "onbg": "rgba(96,165,250,.10)", "armbg": "rgba(251,113,133,.14)",
+        "bannerbg": "#241a1d", "bannerwarn": "#231d12", "onaccent": "#08101c",
+        "scrim": "rgba(0,0,0,.66)", "shadow": "rgba(0,0,0,.55)",
+        "bad": "#f87171",
+    },
+    "vitals": {
+        "label": "Vitals", "hint": "the original: dark clinical, mint signal",
+        "bg": "#0a0e0d", "head": "#0f1614", "drawer": "#131d1a",
+        "line": "#1d2a26", "line2": "#284039",
+        "fg": "#eaf6f2", "dim": "#93aaa4", "dim2": "#c2d5d0",
+        "ok": "#2fe6a6", "due": "#ffe066", "warn": "#ffab45",
+        "critical": "#ff6b5e", "expired": "#ff4d7d",
+        "immune": "#8f9bd6", "session": "#4fd3ff", "unknown": "#4b5f5a",
+        "accent": "#2fe6a6", "snoozed": "#b58be0",
+        "sig": "#2fe6a6", "sigdim": "#1c6d54",
+        "glow": "rgba(47,230,166,.06)", "glow2": "rgba(47,230,166,.11)",
+        "onbg": "rgba(47,230,166,.10)", "armbg": "rgba(255,77,125,.14)",
+        "bannerbg": "#251619", "bannerwarn": "#241d10", "onaccent": "#04120d",
+        "scrim": "rgba(0,0,0,.66)", "shadow": "rgba(0,0,0,.55)",
+        "bad": "#ff6b5e",
+    },
+    "paper": {
+        "label": "Paper", "hint": "light, warm stock and ink",
+        "bg": "#f6f3ec", "head": "#fffdf8", "drawer": "#efebe1",
+        "line": "#e3ddcf", "line2": "#cec6b2",
+        "fg": "#1b1915", "dim": "#6d685c", "dim2": "#3c3830",
+        "ok": "#0b7a52", "due": "#8a6800", "warn": "#b1550a",
+        "critical": "#b32619", "expired": "#980f39",
+        "immune": "#414ca0", "session": "#0a6289", "unknown": "#a8a294",
+        "accent": "#0b7a52", "snoozed": "#63368f",
+        "sig": "#0b7a52", "sigdim": "#a9d6c3",
+        "glow": "rgba(11,122,82,.05)", "glow2": "rgba(11,122,82,.10)",
+        "onbg": "rgba(11,122,82,.10)", "armbg": "rgba(152,15,57,.10)",
+        "bannerbg": "#f6e3e6", "bannerwarn": "#f7eddb", "onaccent": "#ffffff",
+        "scrim": "rgba(30,26,20,.42)", "shadow": "rgba(30,26,20,.18)",
+        "bad": "#b32619",
+    },
+    "nocturne": {
+        "label": "Nocturne", "hint": "deep indigo, low glare",
+        "bg": "#0d0b16", "head": "#141122", "drawer": "#1a1730",
+        "line": "#241f3d", "line2": "#382f5c",
+        "fg": "#e9e5f7", "dim": "#948dba", "dim2": "#c3bcdf",
+        "ok": "#5eead4", "due": "#fde68a", "warn": "#fdba74",
+        "critical": "#fda4af", "expired": "#f472b6",
+        "immune": "#818cf8", "session": "#7dd3fc", "unknown": "#4a4266",
+        "accent": "#a78bfa", "snoozed": "#e879f9",
+        "sig": "#a78bfa", "sigdim": "#4c3b7a",
+        "glow": "rgba(167,139,250,.07)", "glow2": "rgba(167,139,250,.13)",
+        "onbg": "rgba(167,139,250,.11)", "armbg": "rgba(244,114,182,.14)",
+        "bannerbg": "#26162a", "bannerwarn": "#261f14", "onaccent": "#0d0716",
+        "scrim": "rgba(0,0,0,.68)", "shadow": "rgba(0,0,0,.58)",
+        "bad": "#fda4af",
+    },
+    "contrast": {
+        "label": "Contrast", "hint": "pure black, saturated, maximum legibility",
+        "bg": "#000000", "head": "#0b0b0b", "drawer": "#111111",
+        "line": "#242424", "line2": "#3d3d3d",
+        "fg": "#ffffff", "dim": "#a3a3a3", "dim2": "#dcdcdc",
+        "ok": "#00e676", "due": "#ffea00", "warn": "#ff9100",
+        "critical": "#ff3d00", "expired": "#ff1744",
+        "immune": "#7c4dff", "session": "#00b0ff", "unknown": "#666666",
+        "accent": "#00e676", "snoozed": "#e040fb",
+        "sig": "#00e676", "sigdim": "#00522a",
+        "glow": "rgba(0,0,0,0)", "glow2": "rgba(0,230,118,.14)",
+        "onbg": "rgba(0,230,118,.12)", "armbg": "rgba(255,23,68,.16)",
+        "bannerbg": "#1c0d10", "bannerwarn": "#1c1608", "onaccent": "#000000",
+        "scrim": "rgba(0,0,0,.80)", "shadow": "rgba(0,0,0,.70)",
+        "bad": "#ff3d00",
+    },
+}
+
+# Not a colour, so it is excluded from the palette a theme writes.
+_THEME_META = ("label", "hint")
+
+
+def theme() -> str:
+    """The configured theme, falling back rather than rendering a broken page.
+
+    An unknown value means a hand-edited trackers.yml or a downgrade after a
+    theme was removed. Serving a `:root` full of nothing would paint black on
+    black, so the fallback is the point rather than politeness.
+    """
+    want = str(load_config().get("theme", DEFAULT_THEME) or DEFAULT_THEME)
+    return want if want in THEMES else DEFAULT_THEME
+
+
+def theme_data() -> str:
+    """Every palette as JSON, for the live preview in the panel.
+
+    The page needs all of them, not just the active one, because picking from
+    the dropdown repaints without a round trip. Meta keys are stripped so the
+    script cannot write `--label` onto the document.
+    """
+    return json.dumps({k: {n: v for n, v in p.items() if n not in _THEME_META}
+                       for k, p in THEMES.items()})
+
+
+def theme_css(key: str | None = None) -> str:
+    """The palette for one theme, as CSS custom property declarations."""
+    palette = THEMES.get(key or theme(), THEMES[DEFAULT_THEME])
+    return "".join(f"--{k}:{v};" for k, v in palette.items()
+                   if k not in _THEME_META)
+
+
 LOGIN_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Idlarr - Sign in</title>
@@ -2575,9 +2721,11 @@ LOGIN_PAGE = """<!doctype html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&family=Martian+Mono:wght@400;500&family=Familjen+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
- :root{--bg:#0a0e0d;--head:#0f1614;--line:#1d2a26;--line2:#284039;--fg:#eaf6f2;
-   --dim:#93aaa4;--accent:#2fe6a6;--bad:#ff6b5e;
-   --disp:'Bricolage Grotesque',system-ui,sans-serif;
+ :root{
+      /* Written at render time, same as the status page: the login screen is
+         the first thing a themed install shows. */
+      __THEME__
+      --disp:'Bricolage Grotesque',system-ui,sans-serif;
    --mono:'Martian Mono',ui-monospace,monospace;
    --body:'Familjen Grotesk',system-ui,sans-serif}
  *{box-sizing:border-box}
@@ -2590,7 +2738,7 @@ LOGIN_PAGE = """<!doctype html>
  body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);
    font-family:var(--body);font-size:14px;display:flex;
    -webkit-font-smoothing:antialiased;
-   background-image:radial-gradient(90% 60% at 50% 0%,rgba(47,230,166,.07),transparent 60%);
+   background-image:radial-gradient(90% 60% at 50% 0%,var(--glow2),transparent 60%);
    align-items:center;justify-content:center}
  form{background:var(--head);border:1px solid var(--line2);border-radius:14px;
    padding:28px;width:320px}
@@ -2607,7 +2755,7 @@ LOGIN_PAGE = """<!doctype html>
  input:focus{outline:none;border-color:var(--accent)}
  /* Same metrics as the status page's + Add tracker button. */
  button{width:100%;height:40px;background:var(--accent);border:0;border-radius:8px;
-   color:#04120d;font-family:var(--mono);font-weight:600;font-size:10px;
+   color:var(--onaccent);font-family:var(--mono);font-weight:600;font-size:10px;
    letter-spacing:.11em;text-transform:uppercase;cursor:pointer;transition:filter .15s}
  button:hover{filter:brightness(1.12)}
  .err{color:var(--bad);font-size:12px;min-height:16px;margin:10px 0 0;text-align:center}
@@ -2637,7 +2785,7 @@ document.getElementById('f').addEventListener('submit',async ev=>{
 async def login_page(request: Request):
     if auth_method() == "none" or authed(request):
         return RedirectResponse("/", status_code=303)
-    return HTMLResponse(LOGIN_PAGE)
+    return HTMLResponse(LOGIN_PAGE.replace("__THEME__", theme_css()))
 
 
 @app.post("/login")
@@ -2899,12 +3047,10 @@ PAGE = """<!doctype html>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Martian+Mono:wght@400;500;600;700&family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0a0e0d;--head:#0f1614;--drawer:#131d1a;--line:#1d2a26;--line2:#284039;
-    --fg:#eaf6f2;--dim:#93aaa4;--dim2:#c2d5d0;
-    --ok:#2fe6a6;--due:#ffe066;--warn:#ffab45;--critical:#ff6b5e;--expired:#ff4d7d;
-    --immune:#8f9bd6;--session:#4fd3ff;--unknown:#4b5f5a;--accent:#2fe6a6;
-    --snoozed:#b58be0;
-    --sig:#2fe6a6;--sigdim:#1c6d54;
+    /* The palette is written here at render time from THEMES[theme()], so the
+       FIRST paint is already the right theme. Applied by script instead, every
+       load would flash the default first. */
+    __THEME__
     /* One column template drives the header labels and every row, at every
        width. Two layout models (table on desktop, grid on mobile) is what let
        the two drift apart. */
@@ -2929,7 +3075,7 @@ PAGE = """<!doctype html>
   body{margin:0;background:var(--bg);color:var(--fg);
     font-family:var(--body);font-size:14px;-webkit-font-smoothing:antialiased;
     -moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;
-    background-image:radial-gradient(120% 80% at 50% -10%,rgba(47,230,166,.06),transparent 60%);
+    background-image:radial-gradient(120% 80% at 50% -10%,var(--glow),transparent 60%);
     background-attachment:fixed}
   .wrap{max-width:1160px;margin:0 auto;padding:28px 26px 90px}
 
@@ -3003,7 +3149,7 @@ PAGE = """<!doctype html>
   tbody tr.row.open{border-color:var(--line2);border-bottom-color:transparent;
     border-radius:12px 12px 0 0;margin-bottom:0}
   tbody tr.row.flash{animation:fl .9s ease}
-  @keyframes fl{0%,100%{background:var(--head)}18%{background:rgba(47,230,166,.11)}}
+  @keyframes fl{0%,100%{background:var(--head)}18%{background:var(--glow2)}}
   td{padding:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   td.s::after{content:'';display:block;width:8px;height:8px;border-radius:50%;
     background:var(--c);box-shadow:0 0 12px var(--c)}
@@ -3068,8 +3214,8 @@ PAGE = """<!doctype html>
     border:1px solid var(--line2);border-radius:7px;padding:8px 12px;cursor:pointer;transition:.15s}
   button:hover{color:var(--fg);border-color:var(--dim)}
   button:disabled{opacity:.35;cursor:not-allowed}
-  button.on{color:var(--accent);border-color:var(--accent);background:rgba(224,85,63,.09)}
-  button.arm{color:var(--expired);border-color:var(--expired);background:rgba(165,44,78,.14)}
+  button.on{color:var(--accent);border-color:var(--accent);background:var(--onbg)}
+  button.arm{color:var(--expired);border-color:var(--expired);background:var(--armbg)}
   button.danger:hover{color:var(--expired);border-color:var(--expired)}
   .msg{font-size:10px;color:var(--dim);min-height:14px;margin-top:9px;letter-spacing:.03em}
   .msg.bad{color:var(--critical)} .msg.good{color:var(--ok)} .msg.warn{color:var(--due)}
@@ -3185,12 +3331,12 @@ PAGE = """<!doctype html>
      the body text it interrupts. The color is stated rather than inherited,
      so the message cannot pick one up from whatever encloses it. */
   .banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0 0;
-    padding:13px 16px;border:1px solid var(--critical);background:#251619;
+    padding:13px 16px;border:1px solid var(--critical);background:var(--bannerbg);
     border-radius:12px;font-size:13.5px;line-height:1.5;color:var(--fg)}
   .banner b{color:var(--critical);letter-spacing:.04em}
   /* Amber, not red. An out-of-date script is a thing to fix today, not a
      security hole, and using the same color for both teaches you to ignore it. */
-  .banner.warn{border-color:var(--warn);background:#241d10}
+  .banner.warn{border-color:var(--warn);background:var(--bannerwarn)}
   .banner.warn b{color:var(--warn)}
   .banner .sp{margin-left:auto;display:flex;gap:7px}
   /* Used on BOTH <button> and <a>. A bare button{} rule elsewhere sets
@@ -3205,12 +3351,12 @@ PAGE = """<!doctype html>
     white-space:nowrap;transition:.15s}
   .lk:hover{border-color:var(--sigdim);color:var(--fg)}
   .lk:disabled{opacity:.35;cursor:not-allowed}
-  .lk.pri{background:var(--sig);border-color:var(--sig);color:#04120d;font-weight:600}
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;
+  .lk.pri{background:var(--sig);border-color:var(--sig);color:var(--onaccent);font-weight:600}
+  .modal{position:fixed;inset:0;background:var(--scrim);display:none;
     align-items:center;justify-content:center;z-index:30}
   .modal.on{display:flex}
   .modal .box{background:var(--head);border:1px solid var(--line2);border-radius:14px;
-    padding:24px 26px;width:430px;max-width:92vw;box-shadow:0 24px 60px rgba(0,0,0,.55)}
+    padding:24px 26px;width:430px;max-width:92vw;box-shadow:0 24px 60px var(--shadow)}
   .modal h3{margin:0 0 8px;font-family:var(--disp);font-weight:700;font-size:19px;
     letter-spacing:-.01em;text-transform:none}
   .modal .hint{color:var(--dim2);font-size:12.5px;margin:0 0 8px;line-height:1.5}
@@ -3220,7 +3366,7 @@ PAGE = """<!doctype html>
   .modal input,.modal select{width:100%;background:var(--bg);border:1px solid var(--line2);
     border-radius:8px;color:var(--fg);padding:9px 11px;font-family:var(--mono);
     font-weight:500;font-size:12.5px}
-  .modal input::placeholder{color:#5c716c}
+  .modal input::placeholder{color:var(--dim)}
   .modal input:focus,.modal select:focus{outline:none;border-color:var(--sig)}
   .modal .rowb{display:flex;gap:8px;margin-top:22px;padding-top:18px;
     border-top:1px solid var(--line)}
@@ -3241,7 +3387,7 @@ PAGE = """<!doctype html>
   /* Creating a tracker is a list action, so it rides the header next to the
      list — not two clicks deep under the cog. Filled, because it is the one
      thing a new install has to do. */
-  .addbtn{background:var(--sig);color:#04120d;border:0;border-radius:8px;
+  .addbtn{background:var(--sig);color:var(--onaccent);border:0;border-radius:8px;
     font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:.11em;
     text-transform:uppercase;cursor:pointer;white-space:nowrap;transition:filter .15s;
     /* height, not padding: the cog is a fixed 38px square, and matching two
@@ -3262,7 +3408,7 @@ PAGE = """<!doctype html>
   .signout svg{display:block;transition:transform .18s}
   .signout:hover svg{transform:translateX(2px)}
 
-  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.66);display:none;z-index:40;
+  .sheet{position:fixed;inset:0;background:var(--scrim);display:none;z-index:40;
     align-items:center;justify-content:center}
   .sheet.on{display:flex}
   /* Grid, not flex, so the close button can span the full width above BOTH
@@ -3885,7 +4031,24 @@ __SHEET__
    else if(el.tagName==='SELECT')
      Array.from(el.options).forEach(o=>{o.defaultSelected=o.selected;});
    else el.defaultValue=el.value;});
- const closeSheet=()=>{sheet.classList.remove('on');resetFields(sheet);};
+ // ---- theme ------------------------------------------------------------
+ // Server-rendered into :root, so the first paint is already right. This only
+ // handles CHANGES, by writing the same variables onto documentElement, where
+ // they outrank the stylesheet's :root.
+ const THEMES=__THEMEDATA__;
+ const paintTheme=key=>{
+   const t=THEMES[key]; if(!t)return;
+   for(const k in t)document.documentElement.style.setProperty('--'+k,t[k]);
+ };
+ const setTheme=document.getElementById('setTheme');
+ if(setTheme)setTheme.addEventListener('change',()=>paintTheme(setTheme.value));
+
+ // resetFields() puts every control back to its markup default, which for the
+ // theme select is the SAVED value. The preview has to follow it back, or an
+ // abandoned edit stays on screen looking saved. Same class of bug as the
+ // panel keeping abandoned text in the DOM.
+ const closeSheet=()=>{sheet.classList.remove('on');resetFields(sheet);
+   if(setTheme)paintTheme(setTheme.value);};
  document.getElementById('gear').addEventListener('click',()=>openSheet());
  document.getElementById('sx').addEventListener('click',closeSheet);
  sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet();});
@@ -4138,7 +4301,8 @@ __SHEET__
    setErr.className='e';setErr.textContent='saving\u2026';setSave.disabled=true;
    const r=await fetch('/api/settings',{method:'POST',
      headers:{'Content-Type':'application/json'},
-     body:JSON.stringify({timezone:document.getElementById('setTz').value,
+     body:JSON.stringify({theme:document.getElementById('setTheme').value,
+       timezone:document.getElementById('setTz').value,
        check_hour:document.getElementById('setHour').value,
        alert_at_pct:document.getElementById('setPct').value,
        alive_push_days:document.getElementById('setAlive').value,
@@ -4377,8 +4541,17 @@ def settings_sheet(method: str, n_trk: int, n_hosts: int, js_url: str,
     pct_opts = "".join(
         f'<option value="{v/100:.2f}"{" selected" if abs(pct_now - v/100) < 0.001 else ""}>'
         f'{v}%</option>' for v in range(40, 100, 5))
+    cur_theme = theme()
+    theme_opts = "".join(
+        f'<option value="{k}"{" selected" if k == cur_theme else ""}>'
+        f'{THEMES[k]["label"]} &middot; {THEMES[k]["hint"]}</option>'
+        for k in THEME_KEYS)
     general = (
-        _row("Timezone", "All day counting is calendar days in this zone.",
+        _row("Theme",
+             "Applies as you pick it, so you can see it before you commit. "
+             "Closing without saving puts it back.",
+             f'<select id="setTheme">{theme_opts}</select>')
+        + _row("Timezone", "All day counting is calendar days in this zone.",
              f'<select id="setTz">{_tz_options(cfg["timezone"])}</select>')
         + _row("Daily check hour",
                "When the check runs and alerts batch into one push.",
@@ -4831,6 +5004,8 @@ async def index(request: Request):
     sheet = settings_sheet(method, n_trk, n_hosts, js_url, script_ver, last_check)
 
     return (PAGE
+            .replace("__THEME__", theme_css())
+            .replace("__THEMEDATA__", theme_data())
             .replace("__ROWS__", "".join(body) or
                      '<tr><td colspan="5"><div class="empty">no trackers configured</div></td></tr>')
             .replace("__LEGEND__", legend)

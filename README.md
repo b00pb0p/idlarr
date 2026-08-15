@@ -201,7 +201,7 @@ sections. Closing the panel discards anything you have not saved.
 
 | | |
 |---|---|
-| **General** | timezone, check hour, alert threshold, still-alive push, status page URL, backup retention |
+| **General** | theme, timezone, check hour, alert threshold, still-alive push, status page URL, backup retention |
 | **Sign-in** | method, credentials, and sign out when the method is Forms |
 | **Userscript** | coverage, endpoint, **Install** and **Copy URL** |
 | **Import** | Prowlarr or Jackett, torrent and usenet |
@@ -212,6 +212,12 @@ sections. Closing the panel discards anything you have not saved.
 
 General holds exactly what the **Save** button writes. Anything read-only, and
 the two file actions, live in **System**.
+
+**Five themes**, picked in *Settings, General*: **Slate** (the default, cool and
+restrained), **Vitals** (the original dark clinical green), **Paper** (light),
+**Nocturne** (deep indigo) and **Contrast** (pure black, for OLED or low
+vision). The choice applies as you pick it and closing without saving puts it
+back. It is written to `trackers.yml`, so it travels with a config restore.
 
 The tracker total leads the count strip at the top, beside the per-state counts.
 The userscript version and the date of the last daily check live in **About**;
