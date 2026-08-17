@@ -502,6 +502,10 @@ docker run --rm -p 8090:8080 \
 anything merged since the last tag, so you would be photographing an older app
 than the one you are documenting.
 
+**Shoot it in the default theme** unless you are documenting a different one.
+The image above predates the theme selector and shows *Vitals*; a fresh install
+now renders *Slate*, so the two no longer match.
+
 No `python3` on the host, common on NAS distributions? Run the seeder inside
 the image, which has one. `--user 0` is needed so it can write the mount and
 chown it afterwards:

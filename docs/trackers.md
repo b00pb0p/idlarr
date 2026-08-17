@@ -54,9 +54,9 @@ usenet, and requiring it would drop exactly the sites you came here for.
 A connection that works is **remembered**, so a container recreate does not send
 you back for the key. Leave the key field blank to reuse it; it is only reused
 for the same source and URL, never sent to a different host. It is stored in the
-database in plaintext and included in the daily backup. There is a **Forget**
-button beside it if that is not what you want. The key is never sent back to the
-browser; the field only shows that one is saved.
+database in plaintext and included in the daily backup. Untick **Remember this
+key** and press **Save** if that is not what you want. The key is never sent
+back to the browser; the field only shows that one is saved.
 
 Public indexers and usenet are skipped: there is no account to lose. Trackers
 already in your config are skipped too, matched on **site** as well as id, so a
