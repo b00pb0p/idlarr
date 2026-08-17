@@ -71,7 +71,12 @@ def main(target: Path) -> None:
     data, config = target / "data", target / "config"
     data.mkdir(parents=True, exist_ok=True)
     config.mkdir(parents=True, exist_ok=True)
-    shutil.copy(HERE / "demo-trackers.yml", config / "trackers.yml")
+    # Dates are written relative to NOW, same as the events below. The seed
+    # claims to show every state on the ladder, and a hardcoded snooze date
+    # would make that true only until it passed.
+    snooze = (datetime.now(timezone.utc) + timedelta(days=21)).date().isoformat()
+    (config / "trackers.yml").write_text(
+        (HERE / "demo-trackers.yml").read_text().replace("__SNOOZE__", snooze))
 
     db = data / "idlarr.db"
     if db.exists():

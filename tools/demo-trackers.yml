@@ -53,7 +53,11 @@ trackers:
     url: https://retroroms.example/
     inactivity_days: 90
     verified: false
-    notes: "Custom"
+    # Substituted at seed time. A literal date here would rot: the demo would
+    # show `snoozed` for a while and then quietly stop, which is exactly how a
+    # stale demo database drifts off the state ladder.
+    snooze_until: "__SNOOZE__"
+    notes: "Custom. Vacation mode while I am away."
   - id: docuwatch
     name: Docuwatch
     url: https://docuwatch.example/

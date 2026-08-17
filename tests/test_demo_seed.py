@@ -11,6 +11,7 @@ Run:  .venv/bin/python -m pytest test_demo_seed.py -q
 
 import importlib.util
 import os
+import re
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -65,9 +66,25 @@ def test_every_state_on_the_ladder_is_represented(seeded, monkeypatch):
     monkeypatch.setattr(app, "CONFIG_PATH", seeded / "config" / "trackers.yml")
     app._cfg_cache["data"] = None
     states = {r["state"] for r in app.statuses()}
-    assert states == {"expired", "critical", "warn", "due", "session",
-                      "ok", "unknown", "immune"}
+    # Derived from RANK, not a written-out list. The hardcoded set omitted
+    # `snoozed` and passed anyway, so the fixture claimed every rung while
+    # missing one; adding a tenth state would have gone the same way.
+    assert states == set(app.RANK), \
+        f"the demo never shows: {sorted(set(app.RANK) - states)}"
     app._cfg_cache["data"] = None
+
+
+def test_the_snooze_date_is_computed_not_hardcoded(seeded):
+    """A literal date in demo-trackers.yml would rot: the demo would show
+    `snoozed` for a while and then quietly stop, which is exactly the drift
+    that made a reused demo database show four empty rungs."""
+    import datetime
+    raw = (seeded / "config" / "trackers.yml").read_text()
+    assert "__SNOOZE__" not in raw, "the placeholder was never substituted"
+    m = re.search(r'snooze_until:\s*"(\d{4}-\d{2}-\d{2})"', raw)
+    assert m, "no snoozed tracker in the demo config"
+    assert datetime.date.fromisoformat(m.group(1)) > datetime.date.today(), \
+        "the demo ships a snooze date that has already passed"
 
 
 def test_the_demo_config_names_no_real_tracker(seeded):
