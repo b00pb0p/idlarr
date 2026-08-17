@@ -498,6 +498,16 @@ docker run --rm -p 8090:8080 \
   ghcr.io/b00pb0p/idlarr:edge
 ```
 
+**No Python on the host?** Unraid and most NAS systems do not ship one. The
+image has it, and the seeder is pure standard library, so run it in there. The
+`--user 0` matters: Docker creates the mount root-owned, and the seeder chowns
+to 1001 afterwards, which is the case it exists for.
+
+```bash
+docker run --rm --user 0 -v "$PWD/tools:/tools:ro" -v /tmp/idlarr-demo:/out \
+  ghcr.io/b00pb0p/idlarr:edge python /tools/demo-seed.py /out
+```
+
 **`:edge`, not `:latest`.** `latest` follows releases, so it will not show
 anything merged since the last tag, so you would be photographing an older app
 than the one you are documenting.
