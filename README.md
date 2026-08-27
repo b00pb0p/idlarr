@@ -201,6 +201,10 @@ information rather than a fault. If the glyph is **red**, that tracker's own
 URL is the declined page, which is a loop worth fixing: point the URL at a
 page that can authenticate.
 
+The drawer also edits that tracker's **Link**, its limit, alert threshold,
+snooze, notes and state. The link must stay on the same site: `host` is a
+separate field driving userscript coverage and import dedupe.
+
 - **alert schedule**: the exact date each rung fires, or why it won't
 - **auth history**: recent auth events, and whether each was observed or asserted
 

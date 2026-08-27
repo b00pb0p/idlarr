@@ -257,3 +257,69 @@ def test_the_loop_variant_is_visually_distinct(client, cfg):
     """It is the one with something to do about it."""
     assert re.search(r"td\.nm \.veto\.loop\{[^}]*color:", app.PAGE), \
         "the loop variant looks identical to the ordinary one"
+
+
+# ------------------------------------------------------ editing the link
+
+def test_the_url_can_be_changed_from_the_drawer(client, cfg):
+    """The red glyph tells you to change this tracker's URL, so changing it
+    has to be possible from the same screen. Every other per-tracker field
+    already was; this one was the odd one out."""
+    r = client.post("/api/limit/alpha", json={"url": "https://alpha.example/browse.php"})
+    assert r.status_code == 200
+    assert r.json()["url"] == "https://alpha.example/browse.php"
+    app._cfg_cache["data"] = None
+    entry = next(t for t in app.load_config()["trackers"] if t["id"] == "alpha")
+    assert entry["url"] == "https://alpha.example/browse.php"
+
+
+def test_the_url_must_stay_on_the_same_site(client, cfg):
+    """`host` is a SEPARATE field driving the userscript's @match and the
+    import dedupe, and nothing here touches it. A url pointing elsewhere would
+    leave the row linking to a domain the script does not cover, which reads
+    as broken detection."""
+    r = client.post("/api/limit/alpha", json={"url": "https://elsewhere.example/x"})
+    assert r.status_code == 400
+    assert "alpha.example" in r.json()["detail"]
+    app._cfg_cache["data"] = None
+    entry = next(t for t in app.load_config()["trackers"] if t["id"] == "alpha")
+    assert "elsewhere" not in entry["url"]
+
+
+def test_a_subdomain_of_the_same_site_is_allowed(client, cfg):
+    """same_site() treats a subdomain relation as one tracker, which is what
+    lets an api. host dedupe against the browsable one."""
+    assert client.post("/api/limit/alpha",
+                       json={"url": "https://www.alpha.example/browse.php"}).status_code == 200
+
+
+def test_a_non_http_url_is_refused(client, cfg):
+    for bad in ("javascript:alert(1)", "file:///etc/passwd", "ftp://x/y"):
+        assert client.post("/api/limit/alpha", json={"url": bad}).status_code == 400
+
+
+def test_editing_the_url_does_not_change_the_host(client, cfg):
+    """Because the import dedupes on host, not url. Changing the link must not
+    make a re-import add the tracker a second time."""
+    app._cfg_cache["data"] = None
+    before = next(t for t in app.load_config()["trackers"] if t["id"] == "alpha")["host"]
+    client.post("/api/limit/alpha", json={"url": "https://alpha.example/browse.php"})
+    app._cfg_cache["data"] = None
+    after = next(t for t in app.load_config()["trackers"] if t["id"] == "alpha")["host"]
+    assert before == after, "the import would now treat this as a new tracker"
+
+
+def test_the_row_link_is_repainted(cfg):
+    """paint() rewrites the row in place and the tracker NAME is the link this
+    edits. Not repainting it left the row sending you back to the page you had
+    just moved away from, the same drift that once left the software line
+    stale."""
+    assert "tr.querySelector('td.nm a')" in app.PAGE, \
+        "paint() never touches the row link"
+    assert "lnk.setAttribute('href',d.url)" in app.PAGE
+
+
+def test_the_drawer_offers_the_field(cfg):
+    assert "class=\"url w-grow\"" in app.PAGE, "no link field in the drawer"
+    assert "post('/api/limit/'+d.id,{url:urlIn.value})" in app.PAGE, \
+        "the field never posts"

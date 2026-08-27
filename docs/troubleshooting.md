@@ -61,10 +61,10 @@ auth, the row eventually reads `logged out`, and the countdown never resets.
 Fix it by pointing that tracker's URL at a page that can authenticate, usually
 the browse or torrents page.
 
-The URL is not editable from the status page, so change it in `trackers.yml`:
-either on disk, or through *Settings, System, Your config* by downloading it,
-editing the `url:` line for that tracker, and restoring it. The file is
-hot-reloaded, so no restart is needed.
+Click the row and edit **Link** in the drawer. It must stay on the same site,
+because the tracker's `host` is a separate field that drives the userscript's
+coverage and the Prowlarr import's dedupe, and this does not touch it. Changing
+only the path is what this is for.
 
 If a tracker only ever shows you that page, send the output of `__idlarr()` from
 it. The field names and the form's action are what a better rule would key on.

@@ -318,3 +318,35 @@ def test_notes_alone_is_enough_to_write(cfg):
     a notes-only update."""
     app.save_tracker_fields("beta", notes="Changed")
     assert entry(cfg, "beta")["notes"] == "Changed"
+
+
+def test_the_url_is_written_and_the_guard_counts_it(cfg):
+    """`save_tracker_fields()` returns early when every field is None, and
+    `url` was missing from that check. The endpoint validated the new URL,
+    reported success and returned the row, while this returned before writing
+    a byte: a saved edit was indistinguishable from a discarded one.
+    """
+    app.save_tracker_fields("alpha", url="https://alpha.example/browse.php")
+    assert entry(cfg, "alpha")["url"] == "https://alpha.example/browse.php"
+    assert 'url: "https://alpha.example/browse.php"' in cfg.read_text()
+
+
+def test_writing_only_a_url_leaves_every_other_field_alone(cfg):
+    """Same blast-radius rule as every other surgical edit here."""
+    before = {t["id"]: dict(t) for t in yaml.safe_load(cfg.read_text())["trackers"]}
+    app.save_tracker_fields("alpha", url="https://alpha.example/browse.php")
+    after = {t["id"]: dict(t) for t in yaml.safe_load(cfg.read_text())["trackers"]}
+    assert set(before) == set(after)
+    for tid in before:
+        for k in before[tid]:
+            if tid == "alpha" and k == "url":
+                continue
+            assert before[tid][k] == after[tid][k], f"{tid}.{k} changed"
+
+
+def test_comments_survive_a_url_edit(cfg):
+    """trackers.yml's comments are load-bearing, so this is a line edit and
+    never a yaml dump."""
+    n = cfg.read_text().count("#")
+    app.save_tracker_fields("alpha", url="https://alpha.example/browse.php")
+    assert cfg.read_text().count("#") == n

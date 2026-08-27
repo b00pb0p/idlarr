@@ -289,7 +289,8 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
                         immune_reason: str | None = None,
                         notes: str | None = None,
                         snooze_until: str | None = None,
-                        alert_at_pct: float | None = None) -> None:
+                        alert_at_pct: float | None = None,
+                        url: str | None = None) -> None:
     """Rewrite one tracker's inactivity_days / verified in trackers.yml.
 
     A surgical line edit, NOT a yaml.safe_dump round-trip. The comments in
@@ -300,8 +301,11 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
     Writes atomically via os.replace, and refuses to install a file that
     doesn't parse or that changes the tracker count.
     """
+    # `url` belongs here too. Left out, the endpoint validated a new URL,
+    # reported success, returned the row, and this returned before writing a
+    # byte: the caller could not tell a saved edit from a discarded one.
     if all(v is None for v in (inactivity_days, verified, immune, immune_reason,
-                               notes, snooze_until, alert_at_pct)):
+                               notes, snooze_until, alert_at_pct, url)):
         return
 
     with _write_lock:
@@ -334,6 +338,8 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
             upsert("alert_at_pct", str(float(alert_at_pct)))
         if snooze_until is not None:
             upsert("snooze_until", json.dumps(str(snooze_until)))
+        if url is not None:
+            upsert("url", json.dumps(str(url)))
         if notes is not None:
             # Also re-derives the software column, since that is the first word
             # of notes unless an explicit `software:` key overrides it.
@@ -1801,13 +1807,32 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
         if not 0.4 <= pct <= 0.95:
             raise HTTPException(400, "alert_at_pct must be between 0.4 and 0.95")
 
+    url = payload.get("url")
+    if url is not None:
+        url = str(url).strip()[:300]
+        if url:
+            if not re.match(r"^https?://", url, re.I):
+                raise HTTPException(400, "url must start with http:// or https://")
+            # It must stay on the same SITE. The tracker's `host` is a separate
+            # field: it drives the userscript's @match and the import dedupe, and
+            # nothing here touches it. Letting the url point somewhere else would
+            # leave the row linking to a domain the script does not cover, which
+            # reads as broken detection. Changing site is a config edit, or a
+            # remove and re-add, on purpose.
+            entry = next(t for t in load_config()["trackers"] if t["id"] == tracker_id)
+            want = host_from_url(url)
+            if entry.get("host") and want and not same_site(want, entry["host"]):
+                raise HTTPException(
+                    400, f"that URL is on {want}, but this tracker is "
+                         f"{entry['host']}. Change the path, not the site.")
+
     if all(v is None for v in (days, verified, immune, immune_reason, notes,
-                               snooze, pct)):
+                               snooze, pct, url)):
         raise HTTPException(400, "nothing to update")
 
     try:
         save_tracker_fields(tracker_id, days, verified, immune, immune_reason,
-                            notes, snooze, pct)
+                            notes, snooze, pct, url)
     except (KeyError, ValueError) as exc:
         raise HTTPException(500, f"config write refused: {exc}")
 
@@ -3784,6 +3809,12 @@ __SHEET__
    // at the notes handler saying it was, so changing "UNIT3D..." to
    // "Gazelle..." left the old value on the row until a reload.
    const sw=tr.querySelector('.sw'); if(sw)sw.textContent=d.software||'';
+   // The tracker NAME is the link, and its href is what the drawer now edits.
+   // Not repainting it left the row sending you back to the page you had just
+   // moved away from, which is the same class of drift that left the software
+   // line stale: paint() only touches what it is told to.
+   const lnk=tr.querySelector('td.nm a');
+   if(lnk&&d.url)lnk.setAttribute('href',d.url);
    const nm=tr.querySelector('td.nm'), had=nm.querySelector('.note');
    const has=!!(d.notes||'').trim();
    if(has&&!had){
@@ -3822,6 +3853,13 @@ __SHEET__
     +'<input class="snz w-date" type="date" value="'+hesc(d.snooze_until||'')+'">'
     +'<button class="lk mini snzclr"'+(d.snooze_until?'':' style="display:none"')
     +'>Clear</button></div></div>'
+    // Editable because a row whose URL points at a page that cannot record an
+    // auth is a loop: every visit from here adds a visit and no auth, and the
+    // countdown never resets. The warning glyph tells you to change it, so the
+    // change has to be possible from the same screen.
+    +'<div class="r"><label>Link</label><div class="c">'
+    +'<input class="url w-grow" value="'+hesc(d.url||'')
+    +'" placeholder="https://tracker.example/browse.php"></div></div>'
     +'<div class="r"><label>Notes</label><div class="c">'
     +'<input class="nts w-grow" value="'+hesc(d.notes||'')
     +'" placeholder="first word sets the software column"></div></div>'
@@ -3914,6 +3952,18 @@ __SHEET__
          last=String(r.alert_at_pct);refresh(r);paint(tr,r);
          msg('alert threshold saved','good');
        }).catch(e=>{msg(e.message,'bad');pct.value=last;});});}
+
+   const urlIn=el.querySelector('.url');
+   if(urlIn){let last=urlIn.value;
+     const save=()=>{if(urlIn.value===last)return;
+       post('/api/limit/'+d.id,{url:urlIn.value}).then(r=>{last=r.url||'';
+         // paint() rewrites the row in place, and the tracker NAME is the link
+         // whose href this changes. Repaint or the row keeps sending you to the
+         // page you just moved away from.
+         refresh(r);paint(tr,r);msg('link saved','good');})
+        .catch(e=>{msg(e.message,'bad');urlIn.value=last;});};
+     urlIn.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();urlIn.blur();}});
+     urlIn.addEventListener('blur',save);}
 
    const nts=el.querySelector('.nts');
    if(nts){let last=nts.value;
