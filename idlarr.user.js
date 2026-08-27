@@ -86,21 +86,29 @@
     return !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
   }
 
-  function visiblePasswordField() {
-    for (const el of document.querySelectorAll('input[type="password"]')) {
-      if (isVisible(el)) return el;
-    }
-    return null;
+  function visiblePasswordFields() {
+    return [...document.querySelectorAll('input[type="password"]')].filter(isVisible);
   }
 
   function isAuthed() {
-    // The password veto applies to authSel too, not just the generic path.
-    // authSel replaces the positive signal, never this veto — otherwise a login
-    // page that happened to contain the selector would reset a countdown, which
-    // is the worst failure this project has. The remaining cost is a false
-    // NEGATIVE on a logged-in change-password page; that is the safe direction,
-    // and the next page load corrects it.
-    if (visiblePasswordField()) return false;
+    // A login form has exactly ONE password field. A change-password form has
+    // two or more, and only a signed-in user is ever shown one. That count is
+    // the whole discriminator: it keeps the veto's real purpose, which is that
+    // an auth must never be recorded on a login page, while dropping the false
+    // negative on a profile page.
+    //
+    // Reported 2026-08-17. mma-tracker.org/my.php carries `chpassword` and
+    // `passagain` in its profile form, beside an unmistakable Logout link. The
+    // old rule vetoed on any visible password field, so a page the user was
+    // plainly signed in to recorded a visit and no auth — which is exactly the
+    // dead-cookie signature, and flipped the row to `logged out`. That is a
+    // HIGH priority alert, so the safe direction was not free: it cried wolf
+    // about the one state that means something specific.
+    //
+    // The veto still applies to authSel as well as the generic path. authSel
+    // replaces the positive signal, never this guard, or a login page that
+    // happened to contain the selector would reset a countdown.
+    if (visiblePasswordFields().length === 1) return false;
     if (site.authSel) return !!document.querySelector(site.authSel);
     return !!findLogout();
   }
@@ -237,7 +245,9 @@
       authSelMatches: site.authSel ? document.querySelectorAll(site.authSel).length : null,
       logoutFound: !!found,
       logoutHTML: found ? found.outerHTML.slice(0, 180) : null,
-      visiblePasswordField: !!visiblePasswordField(),
+      // The COUNT, not a boolean: one field vetoes, two or more do not, so a
+      // bare true/false cannot explain the verdict it produced.
+      visiblePasswordFields: visiblePasswordFields().length,
       // Anything logout-shaped, whether or not the heuristic accepted it —
       // this is what to send when detection fails.
       candidates: [...document.querySelectorAll('a, button, form, input[type=submit]')]

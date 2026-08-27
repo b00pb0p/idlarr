@@ -2414,7 +2414,21 @@ def _userscript_payload(base: str) -> tuple[str, str, str, int]:
             json.dumps(t["host"]), json.dumps(t["id"]),
             f", authSel: {json.dumps(t['auth_sel'])}" if t.get("auth_sel") else "")
         for t in trackers)
-    return matches, sites, "\n".join([base, matches, sites]), len(trackers)
+    # The TEMPLATE is hashed too, not just the config it is filled from.
+    # Without it, editing the detection heuristic in idlarr.user.js changed
+    # nothing the digest could see: the rev never moved, @version never
+    # changed, no script manager ever updated, and the stale banner never
+    # fired. A detection fix would reach the server and no browser at all.
+    # Found 2026-08-17 while fixing the password veto, which is exactly such
+    # a change.
+    try:
+        template = USERSCRIPT_PATH.read_text(encoding="utf-8")
+    except OSError:
+        # render_userscript() raises loudly on this; the staleness check must
+        # not take the status page down over it.
+        template = ""
+    return (matches, sites,
+            "\n".join([base, matches, sites, template]), len(trackers))
 
 
 def userscript_version(payload: str) -> str:

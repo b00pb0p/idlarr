@@ -257,3 +257,95 @@ def test_every_dockerfile_copy_is_allowed_by_dockerignore():
             assert src in allowed, (
                 f"Dockerfile copies {src!r} but .dockerignore does not allow it — "
                 f"add '!{src}' or the build fails with 'not found'")
+
+
+# ------------------------------------------- the veto that cried wolf
+
+def _isauthed_source():
+    """The isAuthed body from the shipped template."""
+    src = (Path(__file__).parent.parent / "idlarr.user.js").read_text()
+    return re.search(r"function isAuthed\(\) \{(.*?)\n  \}", src, re.S).group(1)
+
+
+def test_one_password_field_vetoes_but_two_do_not():
+    """A login form has exactly one password field; a change-password form has
+    two or more, and only a signed-in user sees one.
+
+    Reported 2026-08-17: mma-tracker.org/my.php carries `chpassword` and
+    `passagain` beside an unmistakable Logout link. Vetoing on ANY visible
+    password field made that page record a visit and no auth, which is the
+    dead-cookie signature, so the row flipped to `logged out`. That is a HIGH
+    priority alert, so the conservative direction was not free.
+    """
+    body = _isauthed_source()
+    assert "visiblePasswordFields().length === 1" in body, \
+        "the veto is not keyed on the field count, so a profile page still vetoes"
+    assert "visiblePasswordField()" not in body, "the old any-field veto is back"
+
+
+def test_the_veto_still_covers_the_per_site_selector():
+    """authSel replaces the positive signal, never the guard. A login page that
+    happened to contain the selector would reset a countdown, which is the
+    worst failure this project has."""
+    body = _isauthed_source()
+    veto = body.index("visiblePasswordFields().length === 1")
+    sel = body.index("site.authSel")
+    assert veto < sel, "authSel is now checked before the veto, so it can bypass it"
+
+
+def test_the_debug_helper_reports_the_count_not_a_boolean():
+    """One field vetoes and two do not, so a bare true/false cannot explain the
+    verdict it produced, which is the whole job of that helper."""
+    src = (Path(__file__).parent.parent / "idlarr.user.js").read_text()
+    assert "visiblePasswordFields: visiblePasswordFields().length" in src
+
+
+def test_editing_the_template_marks_installed_scripts_stale(tmp_path, monkeypatch):
+    """The version counter only moves when the payload hash changes, and the
+    payload used to be the base URL, the @match block and SITES: the template
+    itself was not in it.
+
+    So editing the detection heuristic changed nothing the digest could see.
+    The rev never moved, @version never changed, no script manager ever
+    updated, and the stale banner never fired. A detection fix would reach the
+    server and not one browser. Found 2026-08-17 shipping exactly such a fix.
+    """
+    tpl = tmp_path / "idlarr.user.js"
+    tpl.write_text((Path(__file__).parent.parent / "idlarr.user.js").read_text())
+    monkeypatch.setattr(app, "USERSCRIPT_PATH", tpl)
+
+    before = app._userscript_payload("https://idlarr.example")[2]
+    tpl.write_text(tpl.read_text().replace(
+        "if (visiblePasswordFields().length === 1) return false;",
+        "if (visiblePasswordFields().length > 99) return false;", 1))
+    after = app._userscript_payload("https://idlarr.example")[2]
+
+    assert before != after, \
+        "a change to the detection heuristic does not move the payload hash"
+
+
+def test_the_version_counter_moves_when_the_template_changes(tmp_path, monkeypatch):
+    """Behavioral half: the @version a script manager compares must increase,
+    or it will not offer the update."""
+    tpl = tmp_path / "idlarr.user.js"
+    tpl.write_text((Path(__file__).parent.parent / "idlarr.user.js").read_text())
+    monkeypatch.setattr(app, "USERSCRIPT_PATH", tpl)
+    app.set_state("userscript_hash", "")
+    app.set_state("userscript_rev", "0")
+
+    v1 = app.userscript_version(app._userscript_payload("https://idlarr.example")[2])
+    v2 = app.userscript_version(app._userscript_payload("https://idlarr.example")[2])
+    assert v1 == v2, "refetching an unchanged script must not bump the version"
+
+    tpl.write_text(tpl.read_text().replace("const COOLDOWN", "const COOLDOWN2", 1))
+    v3 = app.userscript_version(app._userscript_payload("https://idlarr.example")[2])
+    assert v3 != v1, "editing the template did not produce a new version"
+    assert int(v3.rsplit(".", 1)[1]) > int(v1.rsplit(".", 1)[1]), \
+        "the version must INCREASE; managers compare them as ordered values"
+
+
+def test_an_unreadable_template_does_not_take_the_page_down(tmp_path, monkeypatch):
+    """The staleness check runs on every page render. render_userscript() is
+    the one that must fail loudly on a missing template; this must not."""
+    monkeypatch.setattr(app, "USERSCRIPT_PATH", tmp_path / "gone.js")
+    app._userscript_payload("https://idlarr.example")
