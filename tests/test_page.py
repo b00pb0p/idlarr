@@ -986,3 +986,27 @@ def test_the_restore_button_has_no_ellipsis():
     assert m, "no Restore button"
     assert "…" not in m.group(1) and "..." not in m.group(1), \
         f"Restore still carries an ellipsis: {m.group(1)!r}"
+
+
+def test_the_stale_banner_says_what_clears_it(client, cfg):
+    """Installing the update and watching the banner stay put reads as the
+    update having failed. It cannot clear on install: the version shown is
+    whatever a TRACKER page last reported through /ping, and the dashboard
+    never pings, so nothing done on this page can move it.
+
+    Reported 2026-08-17 by someone who had updated correctly and could not tell.
+    """
+    app.set_state("script_seen", "1.1.5")
+    app.set_state("userscript_rev", "9")
+    app.set_state("status_url", "https://idlarr.example")
+    page = client.get("/").text
+    assert "out of date" in page, "the banner did not render"
+    banner = re.search(r'<div class="banner warn" id="stale".*?</div>', page, re.S).group(0)
+    # Both halves. Checking for "tracker page" alone passed on wording that
+    # said the opposite, because "no tracker page needed" contains it.
+    assert "load a tracker page" in banner, \
+        "the banner never says a tracker visit is what clears it"
+    assert "not when you install it" in banner, \
+        "the banner still implies installing the update is enough"
+    app.set_state("script_seen", "")
+    app.set_state("userscript_rev", "0")

@@ -4996,7 +4996,14 @@ async def index(request: Request):
                if installed else f'{esc(why[0].upper() + why[1:])}.')
             + f'{covers} '
             'Your script manager picks this up on its own next update check, '
-            'if automatic updates are switched on.'
+            'if automatic updates are switched on. '
+            # Said out loud because updating and watching the banner stay put
+            # reads as the update having failed. The version here is whatever a
+            # TRACKER page last reported: this dashboard never pings, so nothing
+            # you do on this page can clear it. Reported 2026-08-17 by someone
+            # who had updated correctly and could not tell.
+            '<em>This clears once you load a tracker page and the new script '
+            'reports in, not when you install it.</em>'
             '<span class="sp">'
             f'<a class="lk pri" href="{esc(js_url)}">Update now</a>'
             '<button class="lk" id="stalex">Dismiss</button></span></div>')
