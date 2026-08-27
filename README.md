@@ -192,6 +192,13 @@ row to expand a drawer with three panels:
 
 - **controls**: limit, alert threshold, snooze, notes, `confirm`, `immune`
   (with a reason field), `seen`, `undo`, `remove`
+A row can also carry a small amber warning glyph. That means the userscript
+declined to record an auth on a page that *did* have a logout control, which a
+real login page never has. It happens on a page carrying exactly one password
+field, because one field cannot be told apart from a login form; the tooltip
+names the page. Any other page on that tracker records auth normally, so it is
+information rather than a fault.
+
 - **alert schedule**: the exact date each rung fires, or why it won't
 - **auth history**: recent auth events, and whether each was observed or asserted
 

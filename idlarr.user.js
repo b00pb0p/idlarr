@@ -113,7 +113,7 @@
     return !!findLogout();
   }
 
-  function send(kind) {
+  function send(kind, extra) {
     const key = `idl_${site.id}_${kind}`;
     const last = Number(GM_getValue(key, 0));
     if (Date.now() - last < COOLDOWN) {
@@ -135,7 +135,8 @@
       // your copy is behind. Adding a tracker bumps the served version, and
       // a stale script simply never reports the new site: it sits at
       // `unknown` forever and reads as broken detection.
-      data: JSON.stringify({ tracker: site.id, kind, v: GM_info.script.version }),
+      data: JSON.stringify({ tracker: site.id, kind, v: GM_info.script.version,
+                             ...(extra || {}) }),
       timeout: 10000,
       onload: res => {
         if (res.status >= 200 && res.status < 300) {
@@ -205,10 +206,24 @@
     obs.observe(document.documentElement, { childList: true, subtree: true });
     const timer = setTimeout(() => {
       stop();
-      if (!authSent) {
-        console.warn(`[idlarr] ${site.id}: no logout affordance after ` +
-                     `${WATCH_MS / 1000}s — set authSel for this site`);
+      if (authSent) return;
+      // Two very different endings, and they used to look identical in the
+      // console. No logout control at all means detection needs an authSel.
+      // A logout control that WAS found, beside a single password field, means
+      // the veto declined a page you are plainly signed in to — the residual
+      // gap left by counting fields, since one field cannot be told apart from
+      // a login form. Report that one: silence here is indistinguishable from
+      // a page you never opened, and finding these by hand means visiting the
+      // profile page of every tracker you have.
+      if (visiblePasswordFields().length === 1 && findLogout()) {
+        console.warn(`[idlarr] ${site.id}: auth declined on ${location.pathname}` +
+                     ` — a logout control is present but so is one password` +
+                     ` field, which is indistinguishable from a login form`);
+        send('veto', { path: location.pathname.slice(0, 120) });
+        return;
       }
+      console.warn(`[idlarr] ${site.id}: no logout affordance after ` +
+                   `${WATCH_MS / 1000}s — set authSel for this site`);
     }, WATCH_MS);
     function stop() { obs.disconnect(); clearTimeout(timer); }
   }

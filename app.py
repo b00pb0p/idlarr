@@ -1131,6 +1131,19 @@ def evaluate(tracker: dict, now: datetime | None = None) -> dict:
     return out
 
 
+def veto_for(tracker_id: str) -> dict | None:
+    """The last time the script declined an auth on a page that had a logout
+    control. None when it never has, which is the normal case."""
+    raw = get_state(f"veto_{tracker_id}", "") or ""
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else None
+    except (ValueError, TypeError):
+        return None
+
+
 def statuses(now: datetime | None = None) -> list[dict]:
     """Worst first. Uses the module-level RANK rather than a local copy: this
     had its own duplicate ordering dict, so adding a state updated the page and
@@ -1627,8 +1640,8 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
     require_token(authorization)
     tid = str(payload.get("tracker", "")).strip().lower()
     kind = payload.get("kind", "auth")
-    if kind not in ("auth", "visit"):
-        raise HTTPException(400, "kind must be auth|visit")
+    if kind not in ("auth", "visit", "veto"):
+        raise HTTPException(400, "kind must be auth|visit|veto")
     # The script reports which version it is running. Adding or importing a
     # tracker bumps the served version, and until the browser picks that up the
     # new site has no @match, so it never pings and sits at `unknown` looking
@@ -1639,6 +1652,26 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
         set_state("script_seen_at", datetime.now(local_tz()).strftime("%Y-%m-%d %H:%M"))
 
     known = {t["id"] for t in load_config()["trackers"]}
+    if kind == "veto":
+        # NOT an event. `events` stays append-only history of what the ACCOUNT
+        # did; this is the script saying it declined to judge a page, which is
+        # about the DETECTION.
+        #
+        # It exists because that refusal was silent. The password veto cannot
+        # tell a one-field change-password form from a login form, so it
+        # declines both, correctly. The only way to find which of your trackers
+        # has such a page was to open the profile page of every one of them.
+        if tid not in known:
+            return {"ok": True, "ignored": "unknown tracker"}
+        set_state(f"veto_{tid}", json.dumps({
+            "path": str(payload.get("path", ""))[:120],
+            "at": datetime.now(local_tz()).strftime("%Y-%m-%d %H:%M"),
+        }))
+        print(f"[ping] {tid}: auth declined on "
+              f"{str(payload.get('path', ''))[:120]} "
+              f"(logout present, one password field)")
+        return {"ok": True, "veto": True}
+
     if tid not in known:
         # Reached by a REMOVED tracker as well as a typo: the browser's script
         # keeps its @match until the next update check. Name both, because
@@ -3181,6 +3214,12 @@ PAGE = """<!doctype html>
     cursor:help}
   td.nm .note:hover{color:var(--dim2)}
   td.nm .note svg{display:block}
+  /* Distinct from the note marker on purpose: same size and position, but
+     coloured, because this one is something to act on rather than something
+     you wrote. */
+  td.nm .veto{display:inline-flex;vertical-align:middle;margin-left:5px;
+    color:var(--warn);cursor:help}
+  td.nm .veto svg{display:block}
   /* Stacked, not inline: the badge beside the software read as a second word
      of it, and a long software name pushed the badge out of the column. */
   td.nm .m2{display:flex;flex-direction:column;align-items:flex-start;gap:4px;
@@ -4913,6 +4952,21 @@ async def index(request: Request):
                 'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
                 'aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg></span>'
                 if (r.get("notes") or "").strip() else "")
+        # The residual gap, made visible. The script reports when it declined
+        # an auth on a page that HAD a logout control, which a real login page
+        # does not. Finding these by hand meant opening the profile page of
+        # every tracker; this puts it on the row instead.
+        vet = veto_for(r["id"])
+        veto = (f'<span class="veto" title="Auth detection was declined on '
+                f'{esc(vet["path"] or "a page")} at {esc(vet["at"])}. That page '
+                f'has a logout control and one password field, which cannot be '
+                f'told apart from a login form. Visiting any other page on this '
+                f'tracker records auth normally.">'
+                '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" '
+                'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
+                'aria-hidden="true"><path d="M12 8v5M12 16.5v.01"/>'
+                '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 '
+                '1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>') if vet else ""
         q = ("" if (r["verified"] or r["immune"]) else
              '<span class="q" title="limit is a placeholder, not researched">unconfirmed</span>')
         state_txt = (r["immune_reason"] if (r["immune"] and r["immune_reason"])
@@ -4927,7 +4981,7 @@ async def index(request: Request):
             f"data-row='{json.dumps(p).replace(chr(39), '&#39;')}' "
             f'style="--c:var(--{s})">'
             f'<td class="s"></td>'
-            f'<td class="nm">{name}{hand}{note}'
+            f'<td class="nm">{name}{hand}{note}{veto}'
             f'<span class="m2"><span class="sw">{esc(r["software"])}</span>{q}</span></td>'
             f'<td class="st">{esc(state_txt)}</td>'
             f'<td class="n">{big}<small>{unit}</small></td>'

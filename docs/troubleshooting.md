@@ -35,6 +35,26 @@ Compare the `@version` in the installed script against the one the service is
 serving; if they differ, that's the whole answer.
 
 
+# A row shows an amber warning glyph
+
+The script declined to record an auth on a page that had a logout control. Hover
+it: the tooltip names the page.
+
+A real login page has no logout control, so this is not one. It is a page with
+exactly **one** password field, which the heuristic cannot tell apart from a
+login form and therefore refuses. A change-password form with two fields, the
+usual shape, records auth normally.
+
+**Nothing is broken and nothing is lost.** Any other page on that tracker
+records auth as usual, so the countdown stays correct as long as you visit
+something besides that one page. The glyph exists because the refusal used to be
+silent: the row looked exactly like a tracker you had never opened, and finding
+which of your sites had such a page meant visiting the profile page of every one
+of them.
+
+If a tracker only ever shows you that page, send the output of `__idlarr()` from
+it. The field names and the form's action are what a better rule would key on.
+
 # The daily check has not run
 
 **Settings → System** tells you directly. The **Daily check** row carries the
