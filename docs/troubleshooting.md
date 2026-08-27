@@ -59,8 +59,12 @@ auth, the row eventually reads `logged out`, and the countdown never resets.
 "Visit another page" is no help when the dashboard is what sent you there.
 
 Fix it by pointing that tracker's URL at a page that can authenticate, usually
-the browse or torrents page. Click the row, edit the URL in the drawer, and the
-next visit records auth normally.
+the browse or torrents page.
+
+The URL is not editable from the status page, so change it in `trackers.yml`:
+either on disk, or through *Settings, System, Your config* by downloading it,
+editing the `url:` line for that tracker, and restoring it. The file is
+hot-reloaded, so no restart is needed.
 
 If a tracker only ever shows you that page, send the output of `__idlarr()` from
 it. The field names and the form's action are what a better rule would key on.
