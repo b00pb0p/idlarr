@@ -69,6 +69,24 @@ only the path is what this is for.
 If a tracker only ever shows you that page, send the output of `__idlarr()` from
 it. The field names and the form's action are what a better rule would key on.
 
+# A test copy shows an update banner that never clears
+
+Running a second instance from a copy of your real database, to try a build
+against real data, leaves the copy showing "your userscript is out of date"
+permanently. Visiting tracker pages does not help.
+
+The installed userscript has **one endpoint baked into it**, the instance it was
+generated from. Every ping therefore goes to the original, and the copy never
+hears from a browser at all. The version it thinks you have is a stale value
+that came across in the database you cloned, and nothing on the copy can update
+it.
+
+Press **Dismiss** on the copy. There is genuinely nothing to update there, and
+the dismissal is keyed to the served version so it will not come back.
+
+Do not install the userscript the copy offers: it points at the copy's endpoint,
+so your real install would stop receiving pings.
+
 # The daily check has not run
 
 **Settings → System** tells you directly. The **Daily check** row carries the

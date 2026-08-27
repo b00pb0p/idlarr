@@ -48,9 +48,13 @@ FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
    updates itself when you add a tracker.
 1. You visit a tracker in your normal browser.
 2. The userscript checks whether you're authenticated and POSTs `{tracker, kind}`
-   to the service. Two event kinds:
+   to the service. Two event kinds, plus a diagnostic that is deliberately
+   not an event:
    - `visit`: fires on every page load
    - `auth`: fires only when you're actually logged in
+   - `veto`: diagnostic, never an event. The script sends it when it declined
+     to judge a page that plainly had a logout control, so the row can say
+     so instead of the refusal being silent
 3. Daily, the service compares `last auth` against that tracker's inactivity limit
    and pushes an escalating alert if you're getting close.
 
@@ -396,7 +400,7 @@ changes.
 | `GET /` | Status page |
 | `GET /api/summary` | Counts, worst tracker, next deadline. **The stable shape for other services** |
 | `GET /api/status` | Same data as the page, as JSON. Shape follows the page |
-| `POST /ping` | Userscript ingest (bearer auth) |
+| `POST /ping` | Userscript ingest, `auth` / `visit` / `veto` (bearer auth) |
 | `POST /api/mark/{id}` | Manual "I just logged in" |
 | `POST /api/unmark/{id}` | Remove the most recent auth event |
 | `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune` / `snooze_until` / `alert_at_pct` / `notes`, writes trackers.yml |
