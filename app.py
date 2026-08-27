@@ -1131,6 +1131,18 @@ def evaluate(tracker: dict, now: datetime | None = None) -> dict:
     return out
 
 
+def url_path(url: str) -> str:
+    """The path of a configured tracker URL, for comparing with a reported veto
+    path. `https://x.example/my.php?a=1` -> `/my.php`."""
+    # Imported here, matching _fetch_json(): urllib is not a module-level
+    # import in this file.
+    import urllib.parse
+    try:
+        return urllib.parse.urlsplit(url).path or "/"
+    except ValueError:
+        return ""
+
+
 def veto_for(tracker_id: str) -> dict | None:
     """The last time the script declined an auth on a page that had a logout
     control. None when it never has, which is the normal case."""
@@ -2110,6 +2122,7 @@ def browsable(url: str, host: str) -> tuple[str, str]:
 
 def _fetch_json(url: str, headers: dict) -> list:
     import urllib.error
+    import urllib.parse
     import urllib.request
     req = urllib.request.Request(url, headers=headers)
     try:
@@ -3219,6 +3232,10 @@ PAGE = """<!doctype html>
      you wrote. */
   td.nm .veto{display:inline-flex;vertical-align:middle;margin-left:5px;
     color:var(--warn);cursor:help}
+  /* The loop: this tracker's own URL is the page being declined, so the link
+     on this row can never record a login. That is the one variant with
+     something to DO about it, so it is louder. */
+  td.nm .veto.loop{color:var(--critical)}
   td.nm .veto svg{display:block}
   /* Stacked, not inline: the badge beside the software read as a second word
      of it, and a long software name pushed the badge out of the column. */
@@ -4957,11 +4974,27 @@ async def index(request: Request):
         # does not. Finding these by hand meant opening the profile page of
         # every tracker; this puts it on the row instead.
         vet = veto_for(r["id"])
-        veto = (f'<span class="veto" title="Auth detection was declined on '
+        # The LOOP case, and the only one that needs acting on. If this
+        # tracker's own URL is the page being declined, the link on this row
+        # leads somewhere that can never record an auth: every visit from the
+        # dashboard adds a visit and no auth, which is the dead-cookie
+        # signature, so the row cries `logged out` forever and the countdown
+        # never resets. "Visit another page" is useless advice when the
+        # dashboard is what sent you there. Pointed out 2026-08-27.
+        loop = bool(vet and r["url"] and vet.get("path")
+                    and url_path(r["url"]) == vet["path"])
+        veto = (f'<span class="veto{" loop" if loop else ""}" '
+                f'title="Auth detection was declined on '
                 f'{esc(vet["path"] or "a page")} at {esc(vet["at"])}. That page '
                 f'has a logout control and one password field, which cannot be '
-                f'told apart from a login form. Visiting any other page on this '
-                f'tracker records auth normally.">'
+                f'told apart from a login form. '
+                + ("This tracker&#39;s own URL points at that page, so opening "
+                   "it from here can never record a login. Point the URL at a "
+                   "page that can, such as browse or torrents."
+                   if loop else
+                   "Visiting any other page on this tracker records auth "
+                   "normally.")
+                + '">'
                 '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" '
                 'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
                 'aria-hidden="true"><path d="M12 8v5M12 16.5v.01"/>'

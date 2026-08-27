@@ -192,3 +192,68 @@ def test_the_veto_has_its_own_cooldown_key():
     a visit or an auth of its own window, and cannot spam on a busy page."""
     src = _js()
     assert "const key = `idl_${site.id}_${kind}`" in src
+
+
+# ------------------------------------------------------------- the loop
+
+def _set_url(cfg, tid, url):
+    import yaml
+    d = yaml.safe_load(cfg.read_text())
+    for t in d["trackers"]:
+        if t["id"] == tid:
+            t["url"] = url
+    cfg.write_text(yaml.safe_dump(d))
+    app._cfg_cache["data"] = None
+
+
+def test_it_says_so_when_the_tracker_url_is_the_declined_page(client, cfg):
+    """The loop. If the configured URL IS the page being declined, the link on
+    that row leads somewhere that can never record an auth: every visit from
+    the dashboard adds a visit and no auth, which is the dead-cookie
+    signature, so the row cries `logged out` forever and the countdown never
+    resets. "Visit another page" is useless advice when the dashboard is what
+    sent you there. Pointed out 2026-08-27.
+    """
+    _set_url(cfg, "alpha", "https://alpha.example/my.php")
+    veto(client, path="/my.php")
+    row = re.search(r'<tr class="row" id="t-alpha".*?</tr>',
+                    client.get("/").text, re.S).group(0)
+    assert "own URL points at that page" in row, \
+        "the row does not say the dashboard link is the problem"
+    assert "veto loop" in row, "the loop variant is not marked"
+
+
+def test_a_different_page_gets_the_ordinary_advice(client, cfg):
+    """Declined on a page you happened to open is not a loop: the dashboard
+    link still works, so the advice is simply to use it."""
+    _set_url(cfg, "alpha", "https://alpha.example/browse.php")
+    veto(client, path="/my.php")
+    row = re.search(r'<tr class="row" id="t-alpha".*?</tr>',
+                    client.get("/").text, re.S).group(0)
+    assert "records auth normally" in row
+    assert "own URL points at that page" not in row
+    assert "veto loop" not in row
+
+
+def test_the_comparison_ignores_the_query_string(client, cfg):
+    """A configured URL often carries one; the reported path never does."""
+    _set_url(cfg, "alpha", "https://alpha.example/my.php?tab=security")
+    veto(client, path="/my.php")
+    row = re.search(r'<tr class="row" id="t-alpha".*?</tr>',
+                    client.get("/").text, re.S).group(0)
+    assert "own URL points at that page" in row
+
+
+def test_a_tracker_with_no_url_is_never_a_loop(client, cfg):
+    """There is no link to be wrong."""
+    _set_url(cfg, "alpha", "")
+    veto(client, path="/my.php")
+    row = re.search(r'<tr class="row" id="t-alpha".*?</tr>',
+                    client.get("/").text, re.S).group(0)
+    assert "veto loop" not in row
+
+
+def test_the_loop_variant_is_visually_distinct(client, cfg):
+    """It is the one with something to do about it."""
+    assert re.search(r"td\.nm \.veto\.loop\{[^}]*color:", app.PAGE), \
+        "the loop variant looks identical to the ordinary one"

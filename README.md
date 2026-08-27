@@ -197,7 +197,9 @@ declined to record an auth on a page that *did* have a logout control, which a
 real login page never has. It happens on a page carrying exactly one password
 field, because one field cannot be told apart from a login form; the tooltip
 names the page. Any other page on that tracker records auth normally, so it is
-information rather than a fault.
+information rather than a fault. If the glyph is **red**, that tracker's own
+URL is the declined page, which is a loop worth fixing: point the URL at a
+page that can authenticate.
 
 - **alert schedule**: the exact date each rung fires, or why it won't
 - **auth history**: recent auth events, and whether each was observed or asserted

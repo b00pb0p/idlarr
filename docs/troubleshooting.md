@@ -52,6 +52,16 @@ silent: the row looked exactly like a tracker you had never opened, and finding
 which of your sites had such a page meant visiting the profile page of every one
 of them.
 
+**If the glyph is red rather than amber**, the tracker's own URL is the page
+being declined. That is a loop: the link on that row leads somewhere that can
+never record a login, so every visit from the dashboard adds a visit and no
+auth, the row eventually reads `logged out`, and the countdown never resets.
+"Visit another page" is no help when the dashboard is what sent you there.
+
+Fix it by pointing that tracker's URL at a page that can authenticate, usually
+the browse or torrents page. Click the row, edit the URL in the drawer, and the
+next visit records auth normally.
+
 If a tracker only ever shows you that page, send the output of `__idlarr()` from
 it. The field names and the form's action are what a better rule would key on.
 
