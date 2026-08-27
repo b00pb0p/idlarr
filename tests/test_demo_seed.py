@@ -93,3 +93,35 @@ def test_the_demo_config_names_no_real_tracker(seeded):
     hosts = [t.get("url", "") for t in cfg["trackers"]]
     assert all(".example/" in u for u in hosts), hosts
     assert len(cfg["trackers"]) == 12
+
+
+def test_the_demo_stack_cannot_collide_with_a_real_one():
+    """It exists so you can look at demo data without touching data you care
+    about. Sharing a container name, a port or a mount with the real stack
+    would defeat that, and the repo's own compose already shares
+    `container_name: idlarr` with the live install, which has caused exactly
+    that collision once.
+    """
+    import yaml
+    root = Path(__file__).parent.parent
+    real = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["idlarr"]
+    demo = yaml.safe_load((root / "docker-compose.demo.yml").read_text())["services"]["idlarr-demo"]
+
+    assert real["container_name"] != demo["container_name"], \
+        "the demo would refuse to start, or take over the real container"
+    assert real["ports"][0].split(":")[0] != demo["ports"][0].split(":")[0]
+
+    # Named volumes, not bind mounts: there is no host path through which demo
+    # rows could land in a real database, and `down -v` actually removes them.
+    for v in demo["volumes"]:
+        assert not v.startswith("."), f"demo uses a bind mount: {v}"
+    assert "build" not in demo, "the demo must pull, not build from this tree"
+
+
+def test_the_demo_stack_sends_no_notifications():
+    """Starting a demo for a screenshot must not push to your phone."""
+    import yaml
+    demo = yaml.safe_load(
+        (Path(__file__).parent.parent / "docker-compose.demo.yml").read_text()
+    )["services"]["idlarr-demo"]
+    assert demo["environment"]["IDLARR_NOTIFY_URLS"] == ""

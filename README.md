@@ -521,6 +521,28 @@ docker run --rm --user 0 -v "$PWD/tools:/tools:ro" -v /tmp/idlarr-demo:/out \
   ghcr.io/b00pb0p/idlarr:edge python /tools/demo-seed.py /out
 ```
 
+### Running the demo beside your real install
+
+`docker-compose.demo.yml` starts one on port 8090 with its own container name
+and **named volumes**, so there is no path by which demo rows reach a database
+you care about:
+
+```bash
+docker run --rm --user 0 -v "$PWD/tools:/tools:ro" \
+  -v idlarr_demo_data:/out/data -v idlarr_demo_config:/out/config \
+  ghcr.io/b00pb0p/idlarr:edge python /tools/demo-seed.py /out
+docker compose -f docker-compose.demo.yml up -d     # http://localhost:8090
+```
+
+Switch between the two by changing the port in your browser. When you are done:
+
+```bash
+docker compose -f docker-compose.demo.yml down -v
+```
+
+The seeder prints a username and password. The demo boots with a sign-in
+already configured, so there is no red banner in a screenshot.
+
 **`:edge`, not `:latest`.** `latest` follows releases, so it will not show
 anything merged since the last tag, so you would be photographing an older app
 than the one you are documenting.

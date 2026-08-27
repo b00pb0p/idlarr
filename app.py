@@ -3298,7 +3298,11 @@ PAGE = """<!doctype html>
     white-space:normal;text-overflow:clip;
     border:1px solid var(--line2);border-top:1px solid var(--line);
     border-radius:0 0 12px 12px}
-  .d{display:grid;grid-template-columns:minmax(0,340px) 1fr 1fr;gap:0}
+  /* Controls gets the widest column because it is the only one holding text
+     you TYPE. The other two are fixed-shape output, a date beside a word, and
+     both had visible slack at 340px while Link and Notes truncated. */
+  .d{display:grid;grid-template-columns:minmax(0,460px) minmax(0,1fr) minmax(0,1fr);
+    gap:0}
   .d>div{padding:20px 22px;border-right:1px solid var(--line);min-width:0;
     overflow-wrap:anywhere}
   .d>div:last-child{border-right:0}
@@ -3322,7 +3326,7 @@ PAGE = """<!doctype html>
   .a2 .r{display:flex;align-items:center;gap:10px;padding:8px 0;
     border-bottom:1px solid var(--line)}
   .a2 .r:last-child{border-bottom:0}
-  .a2 label{width:88px;flex:none;color:var(--dim2);font-family:var(--body);
+  .a2 label{width:76px;flex:none;color:var(--dim2);font-family:var(--body);
     font-size:13px;font-weight:500}
   /* Controls pin to the right edge and share it; the hint floats left so a
      three-digit day count and a date picker still line up. */

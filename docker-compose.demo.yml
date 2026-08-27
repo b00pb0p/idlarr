@@ -1,0 +1,45 @@
+# A throwaway demo instance, for screenshots and for trying a change against
+# data that is not yours.
+#
+#   docker compose -f docker-compose.demo.yml up -d      # http://localhost:8090
+#   docker compose -f docker-compose.demo.yml down -v    # gone, volumes and all
+#
+# It is deliberately SEPARATE from your real stack: its own container name, its
+# own port, and named volumes rather than bind mounts, so there is no path to
+# mix demo rows into a database you care about. `down -v` removes them.
+#
+# Seed it first. There is no Python on most NAS hosts, so run the seeder in the
+# image, and `--user 0` because Docker creates a fresh volume root-owned while
+# the seeder chowns to 1001 afterwards:
+#
+#   docker run --rm --user 0 -v "$PWD/tools:/tools:ro" \
+#     -v idlarr_demo_data:/out/data -v idlarr_demo_config:/out/config \
+#     ghcr.io/b00pb0p/idlarr:edge python /tools/demo-seed.py /out
+#
+# The seeder prints a username and password: this boots with a sign-in already
+# configured, so the demo has no red banner in a screenshot.
+services:
+  idlarr-demo:
+    image: ghcr.io/b00pb0p/idlarr:${IDLARR_DEMO_TAG:-edge}
+    container_name: idlarr-demo
+    restart: "no"
+    ports:
+      - "${IDLARR_DEMO_PORT:-8090}:8080"
+    volumes:
+      - demo_data:/data
+      - demo_config:/config
+    environment:
+      # A fixed token, because nothing here is real and the userscript is never
+      # installed against it.
+      IDLARR_TOKEN: demo
+      STATUS_URL: "http://localhost:${IDLARR_DEMO_PORT:-8090}"
+      TZ: "${TZ:-UTC}"
+      # No destinations on purpose. A demo that pushes to your phone every time
+      # you start it is worse than one that warns in its own log.
+      IDLARR_NOTIFY_URLS: ""
+
+volumes:
+  demo_data:
+    name: idlarr_demo_data
+  demo_config:
+    name: idlarr_demo_config
