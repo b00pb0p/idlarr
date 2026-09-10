@@ -323,3 +323,109 @@ def test_the_drawer_offers_the_field(cfg):
     assert "class=\"url w-grow\"" in app.PAGE, "no link field in the drawer"
     assert "post('/api/limit/'+d.id,{url:urlIn.value})" in app.PAGE, \
         "the field never posts"
+
+
+# ------------------------------------------------- the marker has to go away
+
+def _marked(client, tid="alpha"):
+    row = re.search(r'<tr class="row" id="t-%s".*?</tr>' % tid,
+                    client.get("/").text, re.S).group(0)
+    return 'class="veto' in row
+
+
+def auth(client, tid="alpha"):
+    return client.post("/ping", headers=AUTH, json={"tracker": tid, "kind": "auth"})
+
+
+def test_a_userscript_auth_clears_the_marker(client, cfg):
+    """It was a permanent latch: written once, read forever, with no path
+    anywhere that removed it. The amber tooltip said "visiting any other page
+    on this tracker records auth normally", the user did exactly that, it
+    worked, and the marker still sat there claiming something to act on.
+    Reported on BTN 2026-09-10.
+
+    An auth observed by the script is PROOF detection works on this tracker,
+    which is the whole thing the marker exists to doubt.
+    """
+    veto(client, path="/pastebin.php")
+    assert _marked(client), "precondition: the marker should be up"
+    auth(client)
+    assert not _marked(client), "a successful auth left the marker up"
+    assert app.veto_for("alpha") is None, "the state key survived"
+
+
+def test_a_deduped_auth_still_clears_it(client, cfg):
+    """The clear sits BEFORE the dedupe return. A second auth inside the 12h
+    window returns early, and it is still an observation that detection
+    worked -- without this the marker stays up for the rest of the window
+    after it was already resolved."""
+    auth(client)                      # opens the dedupe window
+    veto(client, path="/pastebin.php")
+    r = auth(client)                  # deduped
+    assert r.json()["deduped"] is True, "this test is not exercising dedupe"
+    assert not _marked(client), "a deduped auth left the marker up"
+
+
+def test_a_manual_mark_does_NOT_clear_it(client, cfg):
+    """`/api/mark` is you asserting you logged in. That is not an observation
+    about DETECTION, and retracting the warning on the strength of it would
+    hide a real gap on no evidence at all. Same distinction `auth_source`
+    already draws on the row."""
+    veto(client, path="/pastebin.php")
+    client.post("/api/mark/alpha", follow_redirects=False)
+    assert app.last_event("alpha", "auth")[0] is not None, \
+        "precondition: the mark should have recorded an auth"
+    assert _marked(client), "a manual mark cleared a detection warning"
+
+
+def test_a_visit_does_not_clear_it(client, cfg):
+    """A visit is not evidence either: visit-without-auth is the exact shape
+    of the problem being reported."""
+    veto(client, path="/pastebin.php")
+    client.post("/ping", headers=AUTH, json={"tracker": "alpha", "kind": "visit"})
+    assert _marked(client), "a bare visit cleared the marker"
+
+
+def test_the_loop_survives_an_auth_from_elsewhere(client, cfg):
+    """The one case an auth does NOT resolve. If the row's own URL still
+    points at the declined page, authing from some other page fixes nothing:
+    the link on that row still leads where no login can be recorded."""
+    _set_url(cfg, "alpha", "https://alpha.example/my.php")
+    veto(client, path="/my.php")
+    auth(client)
+    assert _marked(client), "the loop cleared while the URL still points there"
+    row = re.search(r'<tr class="row" id="t-alpha".*?</tr>',
+                    client.get("/").text, re.S).group(0)
+    assert "veto loop" in row, "it cleared the loop styling but kept the marker"
+
+
+def test_fixing_the_url_lets_the_next_auth_clear_the_loop(client, cfg):
+    """And that is how a loop is meant to end: point the URL at a page that
+    can record, then visit it."""
+    _set_url(cfg, "alpha", "https://alpha.example/my.php")
+    veto(client, path="/my.php")
+    auth(client)
+    assert _marked(client), "precondition: the loop should still be up"
+    _set_url(cfg, "alpha", "https://alpha.example/browse.php")
+    auth(client)
+    assert not _marked(client), "the loop survived the URL being fixed"
+
+
+def test_clearing_one_tracker_leaves_the_others(client, cfg):
+    """`del_state` takes a key, and the key is per tracker."""
+    veto(client, tid="alpha", path="/a.php")
+    veto(client, tid="beta", path="/b.php")
+    auth(client, tid="alpha")
+    assert not _marked(client, "alpha")
+    assert _marked(client, "beta"), "clearing alpha took beta's marker with it"
+
+
+def test_the_loop_rule_has_one_definition(client, cfg):
+    """The row builder colours the marker with it and the clear decides with
+    it. Two copies is how RANK, the unit labels and the column count each
+    drifted, so there is exactly one."""
+    import inspect
+    src = inspect.getsource(app)
+    assert src.count("def veto_is_loop") == 1
+    assert src.count("url_path(") <= 2, \
+        "url_path is being compared in more than the one shared rule"

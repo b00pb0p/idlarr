@@ -822,6 +822,14 @@ def set_state(k: str, v: str) -> None:
         )
 
 
+def del_state(k: str) -> None:
+    """Remove a key. The only caller is the veto marker, which is a DIAGNOSTIC:
+    unlike everything else in `state` it describes a condition that can stop
+    being true, so it is the one thing here with any business disappearing."""
+    with db() as conn:
+        conn.execute("DELETE FROM state WHERE k=?", (k,))
+
+
 # ---------------------------------------------------------------- auth
 #
 # Modeled on the *arr apps rather than on an environment variable: a username
@@ -1160,6 +1168,48 @@ def veto_for(tracker_id: str) -> dict | None:
         return d if isinstance(d, dict) else None
     except (ValueError, TypeError):
         return None
+
+
+def veto_is_loop(url: str, vet: dict | None) -> bool:
+    """The tracker's own URL IS the page that was declined.
+
+    Stated ONCE. The row builder needs it to colour the marker and the clear
+    needs it to decide whether an auth resolves anything, and this project has
+    lost a day more than once to one rule written down twice (RANK three times,
+    the unit labels three times, the column count four).
+    """
+    return bool(vet and url and vet.get("path") and url_path(url) == vet["path"])
+
+
+def clear_veto(tracker_id: str) -> bool:
+    """Drop a tracker's declined-page marker. Returns whether one went.
+
+    A userscript auth is PROOF detection works on this tracker, so the marker
+    has nothing left to report. Without this it was a permanent latch: written
+    once and read forever, with no path anywhere that removed it. The amber
+    tooltip said "visiting any other page on this tracker records auth
+    normally", you did that, it worked, and the marker still sat there claiming
+    something to act on. Reported on BTN 2026-09-10.
+
+    Only a USERSCRIPT auth may call this, never `/api/mark`. A manual mark is
+    you asserting you logged in; it is not an observation about detection, and
+    clearing on it would retract a real warning on the strength of no evidence
+    at all. That is the same distinction `auth_source` already draws on the row.
+
+    The LOOP is the exception, and it must stay. If the tracker's own URL still
+    points at the declined page then authing from somewhere else fixes nothing:
+    the link on that row still leads where no login can ever be recorded. It
+    clears once the URL is changed and the next auth arrives.
+    """
+    vet = veto_for(tracker_id)
+    if not vet:
+        return False
+    entry = next((t for t in load_config()["trackers"]
+                  if t["id"] == tracker_id), None)
+    if veto_is_loop((entry or {}).get("url") or "", vet):
+        return False
+    del_state(f"veto_{tracker_id}")
+    return True
 
 
 def statuses(now: datetime | None = None) -> list[dict]:
@@ -1697,6 +1747,12 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
         raise HTTPException(
             404, f"unknown tracker '{tid}': removed from your config, or a "
                  f"typo. Nothing was recorded.")
+
+    if kind == "auth":
+        # Cleared BEFORE the dedupe return below, deliberately. A deduped auth
+        # is still an observation that detection worked; returning early on it
+        # would leave a resolved marker up for the rest of the 12h window.
+        clear_veto(tid)
 
     # Dedupe HERE, not in the browser. The userscript used to hold a 12h
     # cooldown in GM storage, which meant /api/unmark could delete an event the
@@ -5041,8 +5097,7 @@ async def index(request: Request):
         # signature, so the row cries `logged out` forever and the countdown
         # never resets. "Visit another page" is useless advice when the
         # dashboard is what sent you there. Pointed out 2026-08-27.
-        loop = bool(vet and r["url"] and vet.get("path")
-                    and url_path(r["url"]) == vet["path"])
+        loop = veto_is_loop(r["url"], vet)
         veto = (f'<span class="veto{" loop" if loop else ""}" '
                 f'title="Auth detection was declined on '
                 f'{esc(vet["path"] or "a page")} at {esc(vet["at"])}. That page '
