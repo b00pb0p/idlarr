@@ -2904,53 +2904,109 @@ LOGIN_PAGE = """<!doctype html>
  button:hover{filter:brightness(1.12)}
  .err{color:var(--bad);font-size:12px;min-height:16px;margin:10px 0 0;text-align:center}
 </style></head><body>
-<form id="f" autocomplete="on">
+<form id="f" method="post" action="/login" autocomplete="on">
   <h1>idl<b>a</b>rr</h1>
   <label for="u">username</label><input id="u" name="username" autocomplete="username" autofocus>
   <label for="p">password</label>
   <input id="p" name="password" type="password" autocomplete="current-password">
   <button type="submit">Sign in</button>
-  <p class="err" id="e"></p>
+  <p class="err" id="e">__ERR__</p>
 </form>
-<script>
-document.getElementById('f').addEventListener('submit',async ev=>{
-  ev.preventDefault();
-  const e=document.getElementById('e'); e.textContent='';
-  const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({username:document.getElementById('u').value,
-                         password:document.getElementById('p').value})});
-  const d=await r.json().catch(()=>({}));
-  if(r.ok){location.href='/';} else {e.textContent=d.detail||'sign in failed';}
-});
-</script></body></html>"""
+</body></html>"""
+
+
+def render_login(err: str = "", status: int = 200) -> HTMLResponse:
+    """The login page, with an error in it when there is one.
+
+    Both placeholders are filled HERE and nowhere else. Substituting in two
+    routes is how `__THEME__` would end up rendered on one path and printed
+    literally on the other, which is the exact failure `test_page.py` already
+    guards for on the status page."""
+    html = (LOGIN_PAGE.replace("__THEME__", theme_css())
+                      .replace("__ERR__", esc(err) if err else ""))
+    return HTMLResponse(html, status_code=status)
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if auth_method() == "none" or authed(request):
         return RedirectResponse("/", status_code=303)
-    return HTMLResponse(LOGIN_PAGE.replace("__THEME__", theme_css()))
+    return render_login()
+
+
+# Only the encoding a plain <form> actually sends. `multipart/form-data` is
+# deliberately NOT here: Starlette's request.form() needs `python-multipart`,
+# and taking a fifth runtime dependency to parse a two-field login is a poor
+# trade. Nothing sets an enctype, so nothing sends multipart.
+FORM_TYPE = "application/x-www-form-urlencoded"
 
 
 @app.post("/login")
-async def login(request: Request, payload: dict = Body(...)):
+async def login(request: Request):
+    """Takes a real form post AND the JSON it has always taken.
+
+    The form half is why this exists. The page used to cancel its own submit,
+    post JSON by fetch and then navigate by script, so no form was ever
+    submitted as far as the browser was concerned -- and a password manager
+    hooks a submission that NAVIGATES. Bitwarden therefore never offered to
+    save the credential, and there was nothing wrong with the fields to find:
+    they already carry name, autocomplete="username" and "current-password".
+    Reported 2026-09-10.
+
+    The JSON half is kept because scripted callers exist and every test in
+    `test_auth.py` posts JSON. Content-Type decides, and only the two real form
+    encodings count as a form, so an odd client with no Content-Type keeps the
+    JSON behavior it had rather than silently becoming an empty form post.
+
+    A browser gets HTML back on failure and a 303 on success. Returning JSON to
+    a native form post would put `{"ok":true}` on screen as the whole page.
+    """
+    ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    as_form = ctype == FORM_TYPE
+    if as_form:
+        import urllib.parse
+        raw = (await request.body()).decode("utf-8", "replace")
+        data = {k: v[0] for k, v in
+                urllib.parse.parse_qs(raw, keep_blank_values=True).items()}
+    else:
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(422, "expected a JSON body or a form post")
+        if not isinstance(data, dict):
+            raise HTTPException(422, "expected a JSON object")
+
+    def refuse(status: int, msg: str):
+        # The status is kept on the HTML too. A browser renders the body
+        # regardless, and a 200 here would tell anything watching that a
+        # refused sign-in succeeded.
+        if as_form:
+            return render_login(msg, status)
+        raise HTTPException(status, msg)
+
     ip = client_ip(request)
     left = lockout_left(ip)
     if left:
         # 429, not 401: the answer here is "not yet", and a client that cannot
         # tell those apart will happily keep guessing.
-        raise HTTPException(429, f"too many attempts, try again in {left}s")
+        return refuse(429, f"too many attempts, try again in {left}s")
     if auth_method() == "none":
-        raise HTTPException(400, "no login is configured")
+        return refuse(400, "no login is configured")
 
-    user = str(payload.get("username", ""))
-    pw = str(payload.get("password", ""))
+    user = str(data.get("username", ""))
+    pw = str(data.get("password", ""))
     if not check_login(user, pw):
         note_login_failure(ip)
-        raise HTTPException(401, "wrong username or password")
+        return refuse(401, "wrong username or password")
 
     _login_fails.pop(ip, None)
-    resp = Response(content=json.dumps({"ok": True}), media_type="application/json")
+    if as_form:
+        # 303 so the browser follows with a GET. Leaving the POST in history
+        # means a refresh of the dashboard re-submits the password.
+        resp = RedirectResponse("/", status_code=303)
+    else:
+        resp = Response(content=json.dumps({"ok": True}),
+                        media_type="application/json")
     set_session_cookie(resp, request, user)
     return resp
 

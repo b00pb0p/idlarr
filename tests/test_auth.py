@@ -14,6 +14,7 @@ Run:  .venv/bin/python -m pytest test_auth.py -q
 import base64
 import json
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -398,3 +399,104 @@ def test_ping_token_still_enforces_after_the_timing_fix(monkeypatch):
     assert code("Bearer right-token") == 200
     for bad in ("Bearer wrong-token", "right-token", "Bearer ", "", None, "bearer right-token"):
         assert code(bad) == 401, bad
+
+
+# ------------------------------------------- the form post a password manager sees
+
+def test_the_login_form_posts_natively(client):
+    """A password manager hooks a form submission that NAVIGATES.
+
+    The page used to cancel its own submit, post JSON by fetch and then
+    navigate by script, so no form was ever submitted as far as the browser
+    was concerned and Bitwarden never offered to save the credential. Nothing
+    was wrong with the fields: they already carry name, autocomplete="username"
+    and "current-password". Reported 2026-09-10.
+
+    Pinning the ATTRIBUTES, because a form that posts to nowhere gives a
+    manager nothing to attribute a saved credential to.
+    """
+    form = re.search(r"<form[^>]*>", app.LOGIN_PAGE).group(0)
+    assert 'method="post"' in form, "the form does not post"
+    assert 'action="/login"' in form, "the form has no target to save against"
+    assert "preventDefault" not in app.LOGIN_PAGE, \
+        "the submit is being cancelled again, which is the whole bug"
+    assert "<script" not in app.LOGIN_PAGE, \
+        "the login page took a script back; it must work without one"
+
+
+def test_a_form_login_redirects_and_sets_the_cookie(client):
+    configure(client)
+    r = client.post("/login", data={"username": "jared", "password": PW},
+                    follow_redirects=False)
+    assert r.status_code == 303, "a browser form post must redirect, not print JSON"
+    assert r.headers["location"] == "/"
+    assert app.SESSION_COOKIE in r.cookies, "signed in without a session cookie"
+
+
+def test_a_failed_form_login_returns_the_page_with_the_reason(client):
+    """HTML back, not JSON: returning {"ok":false} to a native form post puts
+    that on screen as the entire page."""
+    configure(client)
+    r = client.post("/login", data={"username": "jared", "password": "wrong"},
+                    follow_redirects=False)
+    assert r.status_code == 401, "a refused sign-in must not report success"
+    assert "wrong username or password" in r.text
+    assert "<form" in r.text, "the user cannot try again"
+
+
+def test_the_lockout_reaches_the_form_path_too(client):
+    """The refusal branches are shared. If the form path routed around them it
+    would be an unthrottled guessing oracle beside a throttled one."""
+    configure(client)
+    for _ in range(app.LOCKOUT_AFTER):
+        client.post("/login", data={"username": "jared", "password": "wrong"})
+    r = client.post("/login", data={"username": "jared", "password": PW},
+                    follow_redirects=False)
+    assert r.status_code == 429
+    assert "too many attempts" in r.text
+
+
+def test_the_json_api_is_unchanged(client):
+    """Scripted callers exist and every other test here posts JSON."""
+    configure(client)
+    r = client.post("/login", json={"username": "jared", "password": PW})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    assert r.headers["content-type"].startswith("application/json")
+
+
+def test_a_body_that_is_neither_is_refused_not_read_as_an_empty_form(client):
+    """Only the two real form encodings count as a form. Treating anything
+    unrecognized as a form would turn a malformed JSON post into an empty
+    username and password, which is a 401 rather than the 422 it is."""
+    configure(client)
+    r = client.post("/login", content=b"not json",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+
+    # The one that matters: an UNRECOGNIZED type must not fall into the form
+    # branch. Read as urlencoded, `username=x` alone parses happily into an
+    # empty password and answers 401, which reports "wrong credentials" for a
+    # request that never carried any.
+    r = client.post("/login", content=b"username=jared",
+                    headers={"Content-Type": "text/plain"})
+    assert r.status_code == 422, \
+        "an unrecognized content type was parsed as a form"
+
+
+def test_the_error_placeholder_never_reaches_the_browser(client):
+    """`__ERR__` is filled by render_login and nothing else. The status page
+    already had this exact failure with `__LEGEND__`."""
+    configure(client)
+    assert "__ERR__" not in client.get("/login").text
+    r = client.post("/login", data={"username": "jared", "password": "wrong"})
+    assert "__ERR__" not in r.text
+    assert "__THEME__" not in r.text
+
+
+def test_the_error_is_escaped(client):
+    """The message is server-authored today, but it is interpolated into HTML
+    and the next one to carry a username would not be."""
+    import inspect
+    src = inspect.getsource(app.render_login)
+    assert "esc(err)" in src, "the error goes into the page unescaped"
