@@ -3251,7 +3251,13 @@ PAGE = """<!doctype html>
   td.nm .note{display:inline-block;margin-left:7px;color:var(--dim);vertical-align:1px;
     cursor:help}
   td.nm .note:hover{color:var(--dim2)}
-  td.nm .note svg{display:block}
+  /* The span owns the `title`, but it is inline-block sized to exactly this
+     svg, so EVERY hover lands on the svg instead. An svg carrying no <title>
+     child of its own does not reliably surface an ancestor's HTML title, so
+     the tooltip was unreachable while being perfectly well formed. Letting
+     pointer events fall through puts the hover back on the element that has
+     the text. Reported on a BTN veto marker 2026-09-10. */
+  td.nm .note svg{display:block;pointer-events:none}
   /* Distinct from the note marker on purpose: same size and position, but
      coloured, because this one is something to act on rather than something
      you wrote. */
@@ -3261,7 +3267,7 @@ PAGE = """<!doctype html>
      on this row can never record a login. That is the one variant with
      something to DO about it, so it is louder. */
   td.nm .veto.loop{color:var(--critical)}
-  td.nm .veto svg{display:block}
+  td.nm .veto svg{display:block;pointer-events:none}
   /* Stacked, not inline: the badge beside the software read as a second word
      of it, and a long software name pushed the badge out of the column. */
   td.nm .m2{display:flex;flex-direction:column;align-items:flex-start;gap:4px;

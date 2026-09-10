@@ -11,6 +11,7 @@ Run:  .venv/bin/python -m pytest test_page.py -q
 """
 
 import os
+import json
 import re
 import shutil
 import tempfile
@@ -1010,3 +1011,40 @@ def test_the_stale_banner_says_what_clears_it(client, cfg):
         "the banner still implies installing the update is enough"
     app.set_state("script_seen", "")
     app.set_state("userscript_rev", "0")
+
+
+def test_every_icon_tooltip_can_actually_be_hovered(client, cfg):
+    """A `title` on a span whose only child is an <svg> is unreachable.
+
+    Both row markers are an inline span sized to exactly one 11px svg, so the
+    span's box IS the svg's box and every hover lands on the child. An svg
+    carrying no <title> of its own does not reliably surface an ancestor's
+    HTML title, so the tooltip never appears while being perfectly well formed
+    in the markup. Reported 2026-09-10 on a BTN veto marker: the text was
+    correct, `document.querySelector('.veto').title` returned all of it, and
+    hovering showed only the help cursor.
+
+    Note what the existing guards could not catch. `test_the_tooltip_is_escaped`
+    asserts the tooltip's CONTENT and its escaping and passes, because the
+    string is genuinely right. Nothing asserted it could be REACHED. This
+    sweeps for the shape instead of naming the two known markers, so the next
+    icon that gets a tooltip is covered on the day it is added.
+    """
+    app.set_state("veto_alpha", json.dumps({"path": "/x.php", "at": "2026-09-10"}))
+    page = client.get("/").text
+
+    titled_icons = re.findall(
+        r'<span class="([^"]+)"[^>]*\btitle="[^"]*"\s*>\s*<svg\b', page)
+    assert len(titled_icons) >= 2, (
+        "the sweep found no icon-only tooltips, so it proves nothing -- the "
+        "marker markup changed shape and this regex needs updating")
+
+    css = _base_stylesheet(re.search(r"<style>(.*?)</style>", page, re.S).group(1))
+    for classes in set(titled_icons):
+        cls = classes.split()[0]
+        rule = re.search(r"\.%s svg\{([^}]*)\}" % re.escape(cls), css)
+        assert rule, f".{cls} carries a title but no `.{cls} svg` rule exists"
+        assert "pointer-events:none" in rule.group(1), (
+            f".{cls} holds a title its own svg swallows: the hover never "
+            f"reaches the element with the text. Give `.{cls} svg` "
+            f"pointer-events:none.")
