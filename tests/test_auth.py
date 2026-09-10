@@ -423,6 +423,17 @@ def test_the_login_form_posts_natively(client):
     assert "<script" not in app.LOGIN_PAGE, \
         "the login page took a script back; it must work without one"
 
+    # Both fields state their type. The username one relied on the default,
+    # which the DOM reports as "text" so managers did read it correctly, but
+    # a credential form is the last place to leave a manager's heuristics
+    # inferring anything they could simply be told.
+    u = re.search(r'<input[^>]*name="username"[^>]*>', app.LOGIN_PAGE).group(0)
+    pw = re.search(r'<input[^>]*name="password"[^>]*>', app.LOGIN_PAGE).group(0)
+    assert 'type="text"' in u, "the username field does not state its type"
+    assert 'type="password"' in pw, "the password field does not state its type"
+    assert 'autocomplete="username"' in u
+    assert 'autocomplete="current-password"' in pw
+
 
 def test_a_form_login_redirects_and_sets_the_cookie(client):
     configure(client)

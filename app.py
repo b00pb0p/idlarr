@@ -2906,7 +2906,7 @@ LOGIN_PAGE = """<!doctype html>
 </style></head><body>
 <form id="f" method="post" action="/login" autocomplete="on">
   <h1>idl<b>a</b>rr</h1>
-  <label for="u">username</label><input id="u" name="username" autocomplete="username" autofocus>
+  <label for="u">username</label><input id="u" name="username" type="text" autocomplete="username" autofocus>
   <label for="p">password</label>
   <input id="p" name="password" type="password" autocomplete="current-password">
   <button type="submit">Sign in</button>
