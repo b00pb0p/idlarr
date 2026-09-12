@@ -194,23 +194,28 @@ a tracker with no data can never outrank one that's expiring.
 Click a **name** to open that tracker in a new tab. Click anywhere else on the
 row to expand a drawer with three panels:
 
-- **controls**: limit, alert threshold, snooze, notes, `confirm`, `immune`
-  (with a reason field), `seen`, `undo`, `remove`
+- **controls**: link, limit, alert threshold, snooze, notes, `confirm`,
+  `immune` (with a reason field), `seen`, `undo`, `remove`
+- **alert schedule**: the exact date each rung fires, or why it won't
+- **auth history**: recent auth events, and whether each was observed or asserted
+
+The **Link** must stay on the same site: `host` is a separate field driving
+userscript coverage and import dedupe.
+
 A row can also carry a small amber warning glyph. That means the userscript
 declined to record an auth on a page that *did* have a logout control, which a
 real login page never has. It happens on a page carrying exactly one password
-field, because one field cannot be told apart from a login form; the tooltip
-names the page. Any other page on that tracker records auth normally, so it is
-information rather than a fault. If the glyph is **red**, that tracker's own
-URL is the declined page, which is a loop worth fixing: point the URL at a
-page that can authenticate.
+field, because one field cannot be told apart from a login form; hover the
+glyph and the tooltip names the page. Any other page on that tracker records
+auth normally, so it is information rather than a fault, and it **clears on its
+own** the next time the script records a login there. Marking the tracker
+`seen` does not clear it, since that is you saying you logged in rather than the
+script seeing it work.
 
-The drawer also edits that tracker's **Link**, its limit, alert threshold,
-snooze, notes and state. The link must stay on the same site: `host` is a
-separate field driving userscript coverage and import dedupe.
-
-- **alert schedule**: the exact date each rung fires, or why it won't
-- **auth history**: recent auth events, and whether each was observed or asserted
+If the glyph is **red**, that tracker's own URL is the declined page, which is a
+loop worth fixing: every visit from the dashboard lands somewhere that can never
+record a login. Point the Link at a page that can authenticate, such as browse
+or torrents, and it clears on your next visit.
 
 **Add tracker**, the settings gear and, when sign-in uses Forms, a **sign-out**
 icon sit top right. Everything configurable lives behind the gear, in eight
@@ -413,7 +418,7 @@ changes.
 | `POST /api/config` | Replace `trackers.yml`. Validates first, backs up what was there |
 | `POST /api/settings` | Edit the `defaults:` block: timezone, check hour, thresholds |
 | `GET`/`POST /api/auth` | Read or change the UI login |
-| `POST /login` · `POST /logout` | Session in, session out |
+| `POST /login` · `POST /logout` | Session in (form post or JSON), session out |
 | `POST /api/notify` | Add a notification destination. The URL is validated with Apprise first |
 | `POST /api/notify/{id}` | Rename, mute or replace one. A blank URL keeps the stored one |
 | `DELETE /api/notify/{id}` | Remove one |

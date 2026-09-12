@@ -52,6 +52,16 @@ silent: the row looked exactly like a tracker you had never opened, and finding
 which of your sites had such a page meant visiting the profile page of every one
 of them.
 
+**It clears on its own** the next time the script records a login on that
+tracker, so visiting any normal page is enough. If you see it and it does not go
+away after that, the script is not recording auth anywhere on the site, which is
+a detection problem: run `__idlarr()` on that site, as described at the top of
+this page.
+
+Marking the tracker `seen` from the drawer does **not** clear it. That is you
+saying you logged in, not the script seeing detection work, and the glyph is
+about detection.
+
 **If the glyph is red rather than amber**, the tracker's own URL is the page
 being declined. That is a loop: the link on that row leads somewhere that can
 never record a login, so every visit from the dashboard adds a visit and no
@@ -59,7 +69,9 @@ auth, the row eventually reads `logged out`, and the countdown never resets.
 "Visit another page" is no help when the dashboard is what sent you there.
 
 Fix it by pointing that tracker's URL at a page that can authenticate, usually
-the browse or torrents page.
+the browse or torrents page. A red glyph does not clear on a login recorded
+elsewhere, because the link on the row would still be wrong; once the URL is
+fixed, your next visit clears it.
 
 Click the row and edit **Link** in the drawer. It must stay on the same site,
 because the tracker's `host` is a separate field that drives the userscript's
