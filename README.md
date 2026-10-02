@@ -230,7 +230,8 @@ drawer asks one thing: **were you signed in on that visit?**
 
 - **Yes** adopts an element the script found on the page that looks like it
   belongs to a signed-in member, such as a profile button, and counts that
-  visit as a login. It takes effect on your next page load of that tracker.
+  visit as a login. The script picks it up within a minute of your next visit
+  to that tracker.
   There is nothing to reinstall and no file to edit.
 - **No** changes nothing. Sign in, and it asks again only if it still can't tell.
 

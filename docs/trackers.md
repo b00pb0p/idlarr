@@ -166,7 +166,7 @@ username:
 ```
 
 The script learns it from the reply to its next ping, so a change applies on
-your next page load of that tracker with no userscript update. It is also baked
+your next visit to that tracker, within a minute, with no userscript update. It is also baked
 into the generated script's `SITES` entry as `authSel`, which is what a fresh
 install starts from.
 

@@ -69,7 +69,8 @@ function GM_getValue(k, d){ return Object.prototype.hasOwnProperty.call(store, k
 function GM_setValue(k, v){ store[k] = v; }
 function GM_xmlhttpRequest(o){
   var body = JSON.parse(o.data); sent.push(body);
-  pending.push(function(){ o.onload({ status: 200, responseText: JSON.stringify(REPLY(body)) }); });
+  pending.push(function(){ var r = REPLY(body);
+    o.onload({ status: r.__status || 200, responseText: JSON.stringify(r) }); });
 }
 function flush(){ while (pending.length) pending.shift()(); }
 function timeout(){ var t = timers; timers = []; t.forEach(function(f){ f(); }); flush(); }
@@ -196,3 +197,74 @@ def test_a_signup_page_is_not_reported_at_all():
                reply="{ok: true, authSel: ''}")
     ctx.eval("timeout()")
     assert get(ctx, "kinds()") == ["visit"]
+
+
+# ------------------------------------------------- coming straight back to look
+
+def _now(ctx_expr="Date.now()"):
+    return int(quickjs.Context().eval(ctx_expr))
+
+
+def test_coming_straight_back_picks_the_selector_up():
+    """The first real use, 2026-10-01: answer the question on the dashboard,
+    go straight back to the tracker to check. Every ping was inside its
+    five-minute cooldown, so nothing was sent, nothing was learned, and it
+    looked broken twice. The can't-tell report is paced at thirty seconds so
+    the reply that carries the selector arrives on that visit."""
+    now = _now()
+    ctx = boot(MILKIE, store={"idl_alpha_visit": now, "idl_alpha_blind": now - 31000,
+                              "idl_alpha_sel": ""},
+               reply="{ok: true, authSel: 'button.profile-button'}")
+    assert get(ctx, "kinds()") == [], "precondition: the visit ping should be debounced"
+    ctx.eval("timeout()")
+    assert get(ctx, "kinds()") == ["blind", "auth"]
+    assert get(ctx, "store")["idl_alpha_sel"] == SEL
+
+
+def test_inside_thirty_seconds_it_tries_once_more_and_only_once():
+    now = _now()
+    ctx = boot(MILKIE, store={"idl_alpha_visit": now, "idl_alpha_blind": now - 5000,
+                              "idl_alpha_sel": ""},
+               reply="{ok: true, authSel: 'button.profile-button'}")
+    ctx.eval("timeout()")
+    assert get(ctx, "kinds()") == [], "it reported inside its own cooldown"
+    assert get(ctx, "timers.length") == 1, "no second attempt was scheduled"
+    ctx.eval("store.idl_alpha_blind = 0; timeout()")     # thirty seconds later
+    assert get(ctx, "kinds()") == ["blind", "auth"]
+    assert get(ctx, "timers.length") == 0, "it keeps retrying on a page left open"
+
+
+def test_every_other_ping_keeps_the_five_minute_pace():
+    """The short pace is for the one report whose reply matters right now.
+    Applied to `visit` it would ping on every page load of ordinary browsing."""
+    now = _now()
+    ctx = boot("E('a', 'x');", store={"idl_alpha_visit": now - 31000, "idl_alpha_sel": ""},
+               reply="{ok: true, authSel: ''}")
+    assert get(ctx, "kinds()") == []
+
+
+def test_a_refusal_backs_off_for_the_full_five_minutes():
+    """A 4xx is not transient. Stamped with the short pace, a report the
+    server refuses would be retried every thirty seconds."""
+    now = _now()
+    ctx = boot(MILKIE, store={"idl_alpha_visit": now, "idl_alpha_sel": ""},
+               reply="{__status: 400}")
+    ctx.eval("timeout()")
+    assert get(ctx, "kinds()") == ["blind"]
+    stamp = get(ctx, "store")["idl_alpha_blind"]
+    assert stamp - now > 4 * 60 * 1000, \
+        f"backs off for only {(stamp - now + 30000) / 1000:.0f}s"
+
+
+def test_a_retry_that_is_also_too_early_does_not_schedule_another():
+    """The test above ends with the retry SUCCEEDING, which a loop would pass
+    just as well. Here the retry is debounced too, and that must be the end of
+    it: a page left open on a site the script cannot read must go quiet."""
+    now = _now()
+    ctx = boot(MILKIE, store={"idl_alpha_visit": now, "idl_alpha_blind": now - 5000,
+                              "idl_alpha_sel": ""}, reply="{ok: true, authSel: ''}")
+    ctx.eval("timeout()")
+    assert get(ctx, "timers.length") == 1
+    ctx.eval("timeout()")                       # the retry, still inside the cooldown
+    assert get(ctx, "kinds()") == []
+    assert get(ctx, "timers.length") == 0, "the retry scheduled another retry"

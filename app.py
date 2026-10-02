@@ -1831,7 +1831,9 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
 
         This is how a selector reaches the browser: in the reply to a ping the
         script was sending anyway, so confirming one on the dashboard takes
-        effect on the next page load with nothing to reinstall. ALWAYS present,
+        effect within a minute of the next visit, with nothing to reinstall
+        (the script paces its can't-tell report at thirty seconds for exactly
+        this, where everything else waits five minutes). ALWAYS present,
         empty when there is none, because the script caches it and "absent"
         has to keep meaning "an older server that does not send one" rather
         than "cleared".
@@ -4433,7 +4435,7 @@ __SHEET__
        post('/api/limit/'+d.id,{auth_sel:v}).then(r=>{last=r.auth_sel||'';
          selIn.value=last;refresh(r);paint(tr,r);
          const a=el.querySelector('.ask');if(a&&!r.blind)a.remove();
-         msg(last?'saved. It applies on your next visit to the site'
+         msg(last?'saved. The script picks it up within a minute of your next visit'
                  :'cleared, back to automatic detection','good');})
         .catch(e=>{msg(e.message,'bad');selIn.value=last;});};
      selIn.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();selIn.blur();}});
@@ -4446,8 +4448,8 @@ __SHEET__
        msg(which!=='yes'
          ?'nothing changed. Sign in there and it will ask again only if it still cannot tell'
          :r.auth_sel
-         ?'using it. That visit now counts as a login, and it applies on your next visit'
-         :'cleared. That visit counts as a login, and Idlarr looks again on your next visit',
+         ?'using it. That visit now counts as a login. The script picks this up within a minute of your next visit'
+         :'cleared. That visit counts as a login, and the script looks again within a minute of your next visit',
          'good');
      }).catch(e=>msg(e.message,'bad'));
    const byes=el.querySelector('.byes'); if(byes)byes.addEventListener('click',()=>answer('yes'));

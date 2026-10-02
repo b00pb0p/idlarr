@@ -181,7 +181,7 @@ def test_the_script_reports_only_when_a_logout_was_found():
     # in a console line telling you to set an authSel; since 1.11 it is
     # reported too, but as its own kind, and only after the veto has returned.
     # Reporting both the same way would bury which one you are looking at.
-    blind = src.find("send('blind', site.authSel")
+    blind = src.find("'blind', site.authSel")
     assert blind > call, "the can't-tell report is missing or sits before the veto"
     assert "return;" in src[call:blind], \
         "a vetoed page falls through and is ALSO reported as can't-tell"

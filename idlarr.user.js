@@ -35,6 +35,14 @@
   // indication anywhere. This 5 minutes only stops request spam while browsing;
   // any drift now self-heals within one cooldown.
   const COOLDOWN = 5 * 60 * 1000;
+  // The one report that is paced faster. When a page ends with the script
+  // unable to tell, the reply is how it learns a selector that was just
+  // confirmed on the dashboard, and the natural thing to do after answering
+  // that question is to come straight back and look. At five minutes that
+  // looked broken, twice, on the first real use (2026-10-01). Thirty seconds
+  // still bounds it: this fires at most once per page load, ten seconds in,
+  // and only on a page the script could not read.
+  const RECHECK = 30 * 1000;
 
   // hostname substring -> { id, authSel? }
   // `id` MUST equal the id in trackers.yml.
@@ -142,13 +150,14 @@
     return !!findLogout();
   }
 
-  function send(kind, extra) {
+  function send(kind, extra, cooldown) {
+    cooldown = cooldown || COOLDOWN;
     const key = `idl_${site.id}_${kind}`;
     const last = Number(GM_getValue(key, 0));
-    if (Date.now() - last < COOLDOWN) {
+    if (Date.now() - last < cooldown) {
       // Log it. A silent debounce is indistinguishable from a broken script,
       // and that ambiguity costs real time when diagnosing a quiet tracker.
-      const mins = ((COOLDOWN - (Date.now() - last)) / 60000).toFixed(1);
+      const mins = ((cooldown - (Date.now() - last)) / 60000).toFixed(1);
       console.log(`[idlarr] ${site.id} ${kind} debounced locally, ${mins}m left`);
       return false;
     }
@@ -182,7 +191,13 @@
           // still in this script's @match until the next update check, so
           // without this it POSTs and 404s on every single page load of that
           // site. 5xx and network errors still retry immediately.
-          if (res.status >= 400 && res.status < 500) GM_setValue(key, Date.now());
+          // The back-off is always the FULL cooldown, whatever pace this
+          // kind normally keeps: stamped as if sent that much later, so a
+          // report paced at thirty seconds does not retry a refusal every
+          // thirty seconds.
+          if (res.status >= 400 && res.status < 500) {
+            GM_setValue(key, Date.now() + COOLDOWN - cooldown);
+          }
           console.warn(`[idlarr] ${res.status}: ${res.responseText}`);
         }
       },
@@ -308,7 +323,7 @@
         // A login form: you really are signed out. Say so, because a standing
         // "can't tell" on the dashboard would now be wrong. It CAN tell.
         console.log(`[idlarr] ${site.id}: login form on ${location.pathname}`);
-        send('blind', { login: true });
+        send('blind', { login: true }, RECHECK);
         return;
       }
       console.warn(`[idlarr] ${site.id}: no logout affordance after ` +
@@ -326,8 +341,16 @@
       // to be completely silent: the tracker simply never recorded again.
       if (fields === 0) {
         const path = location.pathname.slice(0, 120);
-        send('blind', site.authSel ? { path, sel: site.authSel }
-                                   : { path, cand: signedInCandidates() });
+        const report = () => send(
+          'blind', site.authSel ? { path, sel: site.authSel }
+                                : { path, cand: signedInCandidates() }, RECHECK);
+        // Debounced means you came back inside thirty seconds. Try ONCE more
+        // when that has passed, so "within a minute" holds for a page that is
+        // simply left open, and never loop: a page that stays unreadable has
+        // said so already.
+        if (!report()) {
+          setTimeout(() => { if (!authSent && !checkAuth()) report(); }, RECHECK);
+        }
       }
     }, WATCH_MS);
     function stop() { obs.disconnect(); clearTimeout(timer); }

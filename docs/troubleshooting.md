@@ -46,7 +46,8 @@ out` that might not be true.
 Open the row. It asks **were you signed in on that visit?**
 
 - **Yes, use it** adopts the element the script found, counts that visit as a
-  login, and applies on your next page load of that tracker.
+  login. The script picks it up within a minute of your next visit to that
+  tracker; `__idlarr()` there shows `authSel` once it has.
 - **No, I was signed out** changes nothing. Sign in and you are done; it asks
   again only if it still can't tell.
 

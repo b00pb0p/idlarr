@@ -330,8 +330,12 @@ def test_the_userscript_backs_off_on_a_4xx(client):
     js = (Path(__file__).resolve().parent.parent / "idlarr.user.js").read_text()
     assert "res.status >= 400 && res.status < 500" in js, \
         "no 4xx back-off; a removed tracker will hammer /ping"
-    # the success path must still be the only one that counts as recorded
-    assert js.count("GM_setValue(key, Date.now())") == 2
+    # Success stamps the moment it was sent. The back-off stamps it as if
+    # sent LATER, so a kind paced faster than five minutes still waits the
+    # full five after a refusal. What a refusal actually leaves in storage is
+    # checked by running it, in test_userscript_runtime.py.
+    assert js.count("GM_setValue(key, Date.now())") == 1
+    assert "GM_setValue(key, Date.now() + COOLDOWN - cooldown)" in js
 
 
 def test_an_import_marks_the_script_stale_with_no_fetch(client, cfg):

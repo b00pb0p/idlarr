@@ -536,8 +536,8 @@ def test_the_script_never_adopts_a_candidate_itself():
 def test_it_reports_only_with_nothing_to_go_on():
     src = _js()
     gate = src.index("if (fields === 0) {")
-    assert 0 < src.index("send('blind', site.authSel", gate) - gate < 160
-    login = src.index("send('blind', { login: true })")
+    assert 0 < src.index("'blind', site.authSel", gate) - gate < 160
+    login = src.index("send('blind', { login: true }")
     assert login < gate and "return;" in src[login:gate], \
         "a login form falls through and is also reported as can't-tell"
 
