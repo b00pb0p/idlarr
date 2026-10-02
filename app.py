@@ -3723,9 +3723,12 @@ PAGE = """<!doctype html>
     background:var(--bannerwarn);border-radius:10px;font-family:var(--body)}
   .ask b{display:block;font-size:14.5px;font-weight:600;color:var(--fg);margin-bottom:5px}
   .ask p{margin:0 0 9px;font-size:13px;line-height:1.5;color:var(--dim2)}
-  .ask p.q{color:var(--fg);font-weight:500}
+  /* NOT `.q`. That is the `unconfirmed` badge: uppercase, outlined, a pill.
+     The question was first given that class and rendered as one. */
+  .ask p.ques{color:var(--fg);font-weight:500}
   .ask .c{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .ask .sub{margin:9px 0 0;font-size:11.5px;color:var(--dim)}
+  .ask .sub+.c{margin-top:9px}
   .ask code{font-family:var(--mono);font-size:10.5px;color:var(--fg);background:var(--bg);
     border:1px solid var(--line2);border-radius:5px;padding:2px 6px}
   .ask a{color:var(--accent)}
@@ -4267,7 +4270,7 @@ __SHEET__
       ?'<p>The element set for this tracker, <code>'+hesc(bl.sel)+'</code>, was not on '
        +'the page on your last visit, '+hesc(bl.at||'')+'. Either you were signed out, '
        +'or the site changed and it no longer matches.</p>'
-       +'<p class="q">Were you signed in then?</p>'
+       +'<p class="ques">Were you signed in then?</p>'
        +'<div class="c"><button class="lk pri byes">Yes, look again</button>'
        +'<button class="lk bno">No, I was signed out</button></div>'
        +'<p class="sub">Yes clears that element, and Idlarr looks for a new one on '
@@ -4275,7 +4278,7 @@ __SHEET__
       :pick
       ?'<p>This site has no sign-out control the script can see. On your last visit, '
        +hesc(bl.at||'')+', it found something that looks like it belongs to a '
-       +'signed-in member instead.</p><p class="q">Were you signed in then?</p>'
+       +'signed-in member instead.</p><p class="ques">Were you signed in then?</p>'
        +'<div class="c"><button class="lk pri byes">Yes, use it</button>'
        +'<button class="lk bno">No, I was signed out</button></div>'
        +'<p class="sub">It would watch for <code>'+hesc(pick)+'</code></p>'

@@ -474,6 +474,32 @@ def test_the_drawer_escapes_what_came_off_the_tracker(client, cfg):
         assert wrapped in ask, f"{wrapped} is missing from the question"
 
 
+def test_the_question_does_not_borrow_another_elements_class(client, cfg):
+    """Every class the question's markup uses must be styled ONLY under
+    `.ask`. Its key line was first given `class="q"`, which is the
+    `unconfirmed` badge, and rendered as an uppercase outlined pill. Found by
+    looking at it on a real instance; no test could see it, since the markup
+    and the CSS were each correct on their own.
+    """
+    page = client.get("/").text
+    js = _script(client)
+    ask = js[js.index("const ask="):js.index("el.innerHTML='<td colspan")]
+    css = re.sub(r"/\*.*?\*/", "", re.search(r"<style>(.*?)</style>", page, re.S).group(1), flags=re.S)
+    used = set(re.findall(r'class="([\w -]+)"', ask))
+    names = {c for group in used for c in group.split()} - {"ask", "lk", "pri", "byes", "bno"}
+    assert names, "the question's classes were not found; the regex needs updating"
+    for name in names:
+        for sel in re.findall(r"(?:^|\})\s*([^{}]*\.%s\b[^{}]*)\{" % re.escape(name), css):
+            for part in sel.split(","):
+                # Only an UNSCOPED rule can reach in here. `.sheet .sub` needs
+                # a `.sheet` ancestor the drawer does not have; a bare `.q`
+                # needs nothing, which is exactly how it got in.
+                first = re.split(r"[\s>+~]+", part.strip())[0]
+                if re.search(r"\.%s\b" % re.escape(name), first):
+                    assert ".ask" in part, \
+                        f"`.{name}` is styled outside the question by `{part.strip()}`"
+
+
 def test_the_page_takes_its_label_from_the_server(client, cfg):
     """One rule, computed in evaluate(). A second copy in the page script is
     how the state ordering and the unit labels each drifted."""
