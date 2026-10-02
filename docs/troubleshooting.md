@@ -16,8 +16,9 @@ round of guessing. Common outcomes:
 
 | What you see | What it means |
 |---|---|
-| `logoutFound: false`, `candidates` non-empty | the heuristic missed a convention. Widen it, or set `auth_sel` |
-| `candidates: []` | no logout control in the DOM at all (common in single-page apps). Point `auth_sel` at something else that only exists when logged in |
+| `logoutFound: false`, `candidates` non-empty | the heuristic missed a convention. Open an issue with that output; until it is widened, set **Detect** on that tracker |
+| `candidates: []` | no logout control in the DOM at all (common in single-page apps). The row will say `can't tell` and ask you one question: see [below](#a-row-says-cant-tell) |
+| `signedInCandidates` non-empty | what the script would offer the dashboard as a signed-in element |
 | `isAuthed: true` but nothing recorded | check the lines above it; a debounce or a `401` will say so |
 | `visiblePasswordField: true` | you're on a login page, or a change-password form |
 | `__idlarr` is not defined | the script isn't running here at all. See below |
@@ -34,6 +35,72 @@ script's ⋮ menu, *Check for updates*), or reinstall from Settings → Userscri
 Compare the `@version` in the installed script against the one the service is
 serving; if they differ, that's the whole answer.
 
+
+# A row says `can't tell`
+
+The script reached the end of its 10-second watch with no sign-out control and
+no login form on the page, so it has nothing to judge by. It reports that, and
+the row shows `can't tell` with a small question mark in place of a `logged
+out` that might not be true.
+
+Open the row. It asks **were you signed in on that visit?**
+
+- **Yes, use it** adopts the element the script found, counts that visit as a
+  login, and applies on your next page load of that tracker.
+- **No, I was signed out** changes nothing. Sign in and you are done; it asks
+  again only if it still can't tell.
+
+A real login form is never reported this way. If the script sees one, the row
+reads `logged out`, because then it does know.
+
+## If the script found nothing it could use
+
+The drawer says so. Find an element yourself and put it in **Detect**. You want
+something on the page that only a signed-in member sees: your profile button,
+your username, an upload link.
+
+Open the browser console on the tracker while signed in and run:
+
+```js
+__idlarr().signedInCandidates
+```
+
+If that is empty, list what the page has. Custom component names are usually
+the most stable thing a single-page app offers:
+
+```js
+JSON.stringify([...new Set([...document.querySelectorAll('*')].map(e=>e.tagName.toLowerCase()).filter(t=>t.includes('-')))],null,1)
+```
+
+and anything named for a member:
+
+```js
+JSON.stringify([...document.querySelectorAll('[class*=user],[class*=account],[class*=avatar],[class*=profile],[id*=user]')].map(e=>e.tagName+' class='+e.className+' id='+e.id).slice(0,30),null,1)
+```
+
+Prefer a name the site's own developers wrote, such as `button.profile-button`,
+over framework classes like `mat-icon-button` or generated ones like
+`css-1x2y3z`, which change between builds.
+
+**Check it both ways before you rely on it.** Signed in, this should be `true`;
+in a private window on the signed-out site, `false`:
+
+```js
+!!document.querySelector('button.profile-button')
+```
+
+The signed-out check is the one that matters. A selector that is also on the
+signed-out site records logins you did not make, and the dashboard reads `ok`
+while the account ages out. Idlarr refuses selectors that are on every page,
+such as `body`, and never records a login on a page showing a login form, but
+it cannot see your signed-out site for you.
+
+## If it asks about an element that used to work
+
+"The element set for this tracker was not on the page." Either you were signed
+out on a page with no login form, or the site changed and the element is gone.
+If you were signed in, answer **Yes, look again**: that clears the element, and
+on your next visit the script reports what is on the page now.
 
 # A row shows an amber warning glyph
 

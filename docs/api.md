@@ -100,6 +100,12 @@ underneath you.
 of days left. A tracker showing `logged out` outranks one with fewer days
 remaining, because a dead session cookie is not fixed by waiting.
 
+A tracker showing `can't tell` is the same state, `session`, and is counted
+with it here: the script saw a visit and no login, and could not work out
+which it was. The key never changes; only the wording on the page does.
+`/api/status` carries that wording as `label`, and the pending question as
+`blind`.
+
 Immune and snoozed trackers are **excluded** from `soonest_deadline`. Neither
 can expire, so reporting one as the next deadline would show a countdown that
 never fires.

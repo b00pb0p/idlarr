@@ -55,6 +55,9 @@ FastAPI + SQLite in one container. No Postgres, no build step, one DB file.
    - `veto`: diagnostic, never an event. The script sends it when it declined
      to judge a page that plainly had a logout control, so the row can say
      so instead of the refusal being silent
+   - `blind`: diagnostic, never an event. The script sends it when it had
+     nothing to judge by, so the dashboard can ask you one question instead
+     of guessing
 3. Daily, the service compares `last auth` against that tracker's inactivity limit
    and pushes an escalating alert if you're getting close.
 
@@ -194,7 +197,7 @@ a tracker with no data can never outrank one that's expiring.
 Click a **name** to open that tracker in a new tab. Click anywhere else on the
 row to expand a drawer with three panels:
 
-- **controls**: link, limit, alert threshold, snooze, notes, `confirm`,
+- **controls**: link, detect, limit, alert threshold, snooze, notes, `confirm`,
   `immune` (with a reason field), `seen`, `undo`, `remove`
 - **alert schedule**: the exact date each rung fires, or why it won't
 - **auth history**: recent auth events, and whether each was observed or asserted
@@ -216,6 +219,29 @@ If the glyph is **red**, that tracker's own URL is the declined page, which is a
 loop worth fixing: every visit from the dashboard lands somewhere that can never
 record a login. Point the Link at a page that can authenticate, such as browse
 or torrents, and it clears on your next visit.
+
+### When a row says `can't tell`
+
+Some sites keep no sign-out control in the page at all. Single-page apps
+usually draw it only once you open a menu, which a passive script cannot do.
+On those the script has nothing to judge by, so instead of calling you
+`logged out` the row says `can't tell`, carries a small question mark, and its
+drawer asks one thing: **were you signed in on that visit?**
+
+- **Yes** adopts an element the script found on the page that looks like it
+  belongs to a signed-in member, such as a profile button, and counts that
+  visit as a login. It takes effect on your next page load of that tracker.
+  There is nothing to reinstall and no file to edit.
+- **No** changes nothing. Sign in, and it asks again only if it still can't tell.
+
+Idlarr asks rather than deciding because this is the one thing it cannot see,
+and guessing wrong would record logins that never happened. If the script found
+nothing it could use, the drawer says so and points you at **Detect**, where
+you can set an element by hand: see
+[troubleshooting](docs/troubleshooting.md#a-row-says-cant-tell).
+
+The same question comes back if an element that used to work stops matching,
+which is what a site redesign looks like from here.
 
 **Add tracker**, the settings gear and, when sign-in uses Forms, a **sign-out**
 icon sit top right. Everything configurable lives behind the gear, in eight
@@ -270,7 +296,7 @@ policy, and a wrong number arriving with the authority of an import is worse
 than no number.
 
 Full detail on importing, editing `trackers.yml` by hand, `host` overrides and
-the `auth_sel` escape hatch for sites the auth heuristic cannot read is in
+what `auth_sel` does for sites the auth heuristic cannot read is in
 **[docs/trackers.md](docs/trackers.md)**.
 
 ## Alert escalation
@@ -405,10 +431,11 @@ changes.
 | `GET /` | Status page |
 | `GET /api/summary` | Counts, worst tracker, next deadline. **The stable shape for other services** |
 | `GET /api/status` | Same data as the page, as JSON. Shape follows the page |
-| `POST /ping` | Userscript ingest, `auth` / `visit` / `veto` (bearer auth) |
+| `POST /ping` | Userscript ingest, `auth` / `visit` / `veto` / `blind` (bearer auth). The reply carries that tracker's signed-in selector |
 | `POST /api/mark/{id}` | Manual "I just logged in" |
 | `POST /api/unmark/{id}` | Remove the most recent auth event |
-| `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune` / `snooze_until` / `alert_at_pct` / `notes`, writes trackers.yml |
+| `POST /api/limit/{id}` | Set `inactivity_days` / `verified` / `immune` / `snooze_until` / `alert_at_pct` / `notes` / `url` / `auth_sel`, writes trackers.yml |
+| `POST /api/blind/{id}` | Answer "were you signed in then?" with `yes` or `no` |
 | `GET /api/history/{id}` | Recent auth events, newest first (drawer) |
 | `GET /idlarr.user.js` | The userscript, generated from live config. `?token=` or a session |
 | `POST /api/tracker` | Add a tracker, appends to trackers.yml |
@@ -453,8 +480,9 @@ cross-origin from tracker pages, where cookies do not apply.
 - **Auth detection is a heuristic**: a `logout` link present, no password field.
   Works on Gazelle/UNIT3D and most PHP trackers. If a site redesigns, it silently
   stops recording `auth`, so you'll get alerts you don't deserve. That's the safe
-  failure direction, but check the console (`[idlarr]` logs) before assuming
-  the tracker is at fault. Use `auth_sel` to override per-site.
+  failure direction, and the row tells you when it happens: `can't tell` with a
+  one-click question, in place of a `logged out` that would send you off to
+  sign in for nothing.
 - **`trackers.yml` hot-reloads.** Edit it live; no restart.
 - **The database is backed up once a day**, at the start of the daily check
   rather than overnight, to `/data/backups/idlarr-YYYY-MM-DD.db`. 14 days by

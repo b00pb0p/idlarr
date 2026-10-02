@@ -125,9 +125,7 @@ expose them:
 
 | key | why it is not in the UI |
 |---|---|
-| `auth_sel` | a CSS selector. A text box for one would invite guesses, and a wrong selector means that tracker silently never records |
 | `host` | derived from `url`; overriding it is rare and easy to get wrong |
-| `alert_at_pct` | per-tracker alert timing. See the note about short limits in [Alert escalation](../README.md#alert-escalation) |
 | `software` | normally derived from the first word of `notes` |
 | the `defaults:` block | timezone, `check_hour`, and the fallback limit |
 
@@ -150,9 +148,15 @@ worse than no alerts.
 ## A site the heuristic can't read
 
 Single-page apps often keep no logout control in the DOM until you open a user
-menu, which passive detection can't do. Set `auth_sel` on that tracker to
-anything that only exists when you're authenticated: a per-account download
-link, an upload button, your username:
+menu, which passive detection can't do. You normally do not have to do anything
+about that by hand: the row says `can't tell`, and its drawer asks whether you
+were signed in and offers an element the script found. See
+[When a row says can't tell](../README.md#when-a-row-says-cant-tell).
+
+What that sets is `auth_sel`: a CSS selector for anything that only exists when
+you're authenticated. You can also set it yourself, in **Detect** in the row
+drawer or in the file. A per-account download link, an upload button, your
+username:
 
 ```yaml
   - id: example
@@ -161,7 +165,15 @@ link, an upload button, your username:
     auth_sel: 'a[href*="/torrent?key="]'
 ```
 
-It goes straight into the generated userscript's `SITES` entry as `authSel`.
+The script learns it from the reply to its next ping, so a change applies on
+your next page load of that tracker with no userscript update. It is also baked
+into the generated script's `SITES` entry as `authSel`, which is what a fresh
+install starts from.
+
+A selector used to be file-only, on the reasoning that a text box invites
+guesses and a wrong one fails silently. It no longer fails silently: if the
+element you set is not on the page, the row asks whether you were signed in,
+and answering yes clears it so the script can look again.
 
 A passkey in a download URL is stronger evidence than a logout link, since it
 cannot be rendered for an anonymous visitor. Note that such links usually only
