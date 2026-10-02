@@ -1031,11 +1031,16 @@ def test_every_icon_tooltip_can_actually_be_hovered(client, cfg):
     icon that gets a tooltip is covered on the day it is added.
     """
     app.set_state("veto_alpha", json.dumps({"path": "/x.php", "at": "2026-09-10"}))
+    # Every marker the row can carry has to be ON the page for the sweep to
+    # see it. The can't-tell marker was added later and would otherwise have
+    # been the next icon shipped with an unreachable tooltip.
+    app.set_state("blind_alpha", json.dumps(
+        {"path": "/b", "at": "2026-10-02", "iso": "", "cand": []}))
     page = client.get("/").text
 
     titled_icons = re.findall(
         r'<span class="([^"]+)"[^>]*\btitle="[^"]*"\s*>\s*<svg\b', page)
-    assert len(titled_icons) >= 2, (
+    assert len(titled_icons) >= 3, (
         "the sweep found no icon-only tooltips, so it proves nothing -- the "
         "marker markup changed shape and this regex needs updating")
 

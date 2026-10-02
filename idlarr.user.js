@@ -53,6 +53,35 @@
   const site = SITES.find(s => location.hostname.includes(s.host));
   if (!site) return;
 
+  // The selector comes from the SERVER, in the reply to every ping, and is
+  // cached here. The copy baked into SITES above is only the bootstrap for a
+  // fresh install. That is what lets a selector confirmed on the dashboard take
+  // effect on the next page load with nothing to reinstall. An empty string is
+  // a real answer ("there is none") and overrides the baked value; only a
+  // value that was never stored leaves the baked one alone.
+  const SEL_KEY = `idl_${site.id}_sel`;
+  const cachedSel = GM_getValue(SEL_KEY, null);
+  if (typeof cachedSel === 'string') site.authSel = cachedSel;
+
+  function applySel(sel) {
+    if (typeof sel !== 'string') return;      // an older server: keep what we have
+    if (GM_getValue(SEL_KEY, null) !== sel) GM_setValue(SEL_KEY, sel);
+    if ((site.authSel || '') === sel) return;
+    site.authSel = sel;
+    console.log(`[idlarr] ${site.id} now detects sign-in by ` +
+                (sel ? `"${sel}"` : 'the generic heuristic'));
+    // The element is usually on the page already, since this reply arrives
+    // after load. If it is not, the watcher still running will see it.
+    checkAuth();
+  }
+
+  // A selector that does not parse must read as "no match", never throw: this
+  // is called from a MutationObserver, and an exception there fires on every
+  // mutation of the page.
+  function selMatches(sel) {
+    try { return document.querySelectorAll(sel).length; } catch (_) { return 0; }
+  }
+
   // A logout affordance, by URL or by label. Three conventions seen in the wild:
   //   Gazelle / TBDev   <a href="logout.php?auth=...">
   //   UNIT3D            <form method="POST" action=".../logout">
@@ -109,7 +138,7 @@
     // replaces the positive signal, never this guard, or a login page that
     // happened to contain the selector would reset a countdown.
     if (visiblePasswordFields().length === 1) return false;
-    if (site.authSel) return !!document.querySelector(site.authSel);
+    if (site.authSel) return selMatches(site.authSel) > 0;
     return !!findLogout();
   }
 
@@ -141,8 +170,9 @@
       onload: res => {
         if (res.status >= 200 && res.status < 300) {
           GM_setValue(key, Date.now());
-          let deduped = false;
-          try { deduped = !!JSON.parse(res.responseText).deduped; } catch (_) {}
+          let deduped = false, body = null;
+          try { body = JSON.parse(res.responseText); } catch (_) {}
+          if (body) { deduped = !!body.deduped; applySel(body.authSel); }
           console.log(`[idlarr] ${site.id} ${kind} ` +
                       (deduped ? 'already on record (server dedupe)' : 'recorded'));
         } else {
@@ -160,6 +190,57 @@
       ontimeout: () => console.warn('[idlarr] endpoint timeout'),
     });
     return true;
+  }
+
+  // ------------------------------------------------------- signed-in candidates
+  //
+  // For a site with no sign-out control in the DOM at all (single-page apps
+  // usually render it only once a menu is opened). The script cannot tell
+  // signed-in from signed-out there, so it looks for something a member would
+  // have and lets the dashboard ASK. It never adopts one of these itself: a
+  // wrong guess records logins that did not happen.
+  //
+  // Only names a person wrote count. Framework and generated class names
+  // (mat-icon-button, css-1x2y3z) change between builds and say nothing.
+  const FRAMEWORK = /^(mat|mdc|cdk|ng|v|el|ant|chakra|css|sc|jsx|tw|fa|fas|far|ti|bi|icon|svg|is|has|js)[-_]|^Mui[A-Z]/;
+  const GENERATED = /\d{3,}|[-_](?=[a-z0-9]*\d)[a-z0-9]{5,}$/i;
+  const SIGNED_OUT = /(^|-)(log-?in|sign-?in|sign-?up|register|guest|anon(ymous)?|forgot|reset|recover)(-|$)/;
+  const SIGNED_OUT_TEXT = /log\s*in|sign\s*in|sign\s*up|register|create\s+an?\s+account/i;
+  const MEMBER = [
+    [/(^|-)(log|sign)-?out(-|$)/, 5],
+    [/(^|-)(profile|avatar|username)(-|$)/, 4],
+    [/(^|-)(user|account|member)(-|$)/, 3],
+    [/(^|-)(inbox|notifications?|ratio|bonus|invites?)(-|$)/, 2],
+  ];
+
+  function signedInCandidates() {
+    const found = new Map();
+    for (const el of document.querySelectorAll('[class],[id]')) {
+      const names = [];
+      if (el.id) names.push(['#', el.id]);
+      for (const c of el.classList || []) names.push(['.', c]);
+      const tag = el.tagName.toLowerCase();
+      for (const [sigil, name] of names) {
+        if (name.length > 60 || FRAMEWORK.test(name) || GENERATED.test(name)) continue;
+        // profileButton, profile_button and profile-button are one name.
+        const norm = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+                         .replace(/_/g, '-').toLowerCase();
+        if (SIGNED_OUT.test(norm)) continue;
+        const hit = MEMBER.find(([re]) => re.test(norm));
+        if (!hit) continue;
+        const sel = (sigil === '#' ? '' : tag) + sigil + CSS.escape(name);
+        if (sel.length > 120 || found.has(sel)) continue;
+        const n = selMatches(sel);
+        // More than a few matches is a list of other people (a `user` cell on
+        // every row of a torrent table), not something about YOU.
+        if (n < 1 || n > 3 || !isVisible(el)) continue;
+        if (SIGNED_OUT_TEXT.test((el.textContent || '').slice(0, 200))) continue;
+        found.set(sel, hit[1] + (n === 1 ? 1 : 0) +
+                       (tag === 'button' || tag === 'a' ? 1 : 0));
+      }
+    }
+    return [...found.entries()].sort((a, b) => b[1] - a[1])
+                               .slice(0, 3).map(e => e[0]);
   }
 
   // ------------------------------------------------------------- scheduling
@@ -222,8 +303,32 @@
         send('veto', { path: location.pathname.slice(0, 120) });
         return;
       }
+      const fields = visiblePasswordFields().length;
+      if (fields === 1) {
+        // A login form: you really are signed out. Say so, because a standing
+        // "can't tell" on the dashboard would now be wrong. It CAN tell.
+        console.log(`[idlarr] ${site.id}: login form on ${location.pathname}`);
+        send('blind', { login: true });
+        return;
+      }
       console.warn(`[idlarr] ${site.id}: no logout affordance after ` +
-                   `${WATCH_MS / 1000}s — set authSel for this site`);
+                   `${WATCH_MS / 1000}s`);
+      // No sign-out control, no password field, and no selector to go by: the
+      // script has nothing to judge with. This used to end in the console line
+      // above and nowhere else, so the dashboard called it "logged out", which
+      // was false, and the only fix was hand-editing a config file. Report it,
+      // with whatever on this page looks like it belongs to a member, so the
+      // dashboard can ask one question instead.
+      //
+      // WITH a selector the report says which one matched nothing, and offers
+      // no candidates. Either this is a signed-out page or the selector is
+      // wrong, and a wrong one (typed by hand, or broken by a redesign) used
+      // to be completely silent: the tracker simply never recorded again.
+      if (fields === 0) {
+        const path = location.pathname.slice(0, 120);
+        send('blind', site.authSel ? { path, sel: site.authSel }
+                                   : { path, cand: signedInCandidates() });
+      }
     }, WATCH_MS);
     function stop() { obs.disconnect(); clearTimeout(timer); }
   }
@@ -257,7 +362,9 @@
       isAuthed: isAuthed(),
       authAlreadyHandled: authSent,
       authSel: site.authSel || '(generic heuristic)',
-      authSelMatches: site.authSel ? document.querySelectorAll(site.authSel).length : null,
+      authSelMatches: site.authSel ? selMatches(site.authSel) : null,
+      // What the script would offer the dashboard if it could not tell.
+      signedInCandidates: signedInCandidates(),
       logoutFound: !!found,
       logoutHTML: found ? found.outerHTML.slice(0, 180) : null,
       // The COUNT, not a boolean: one field vetoes, two or more do not, so a

@@ -290,7 +290,8 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
                         notes: str | None = None,
                         snooze_until: str | None = None,
                         alert_at_pct: float | None = None,
-                        url: str | None = None) -> None:
+                        url: str | None = None,
+                        auth_sel: str | None = None) -> None:
     """Rewrite one tracker's inactivity_days / verified in trackers.yml.
 
     A surgical line edit, NOT a yaml.safe_dump round-trip. The comments in
@@ -305,7 +306,7 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
     # reported success, returned the row, and this returned before writing a
     # byte: the caller could not tell a saved edit from a discarded one.
     if all(v is None for v in (inactivity_days, verified, immune, immune_reason,
-                               notes, snooze_until, alert_at_pct, url)):
+                               notes, snooze_until, alert_at_pct, url, auth_sel)):
         return
 
     with _write_lock:
@@ -340,6 +341,12 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
             upsert("snooze_until", json.dumps(str(snooze_until)))
         if url is not None:
             upsert("url", json.dumps(str(url)))
+        if auth_sel is not None:
+            # An empty string is how one is CLEARED, and it is written rather
+            # than the line being deleted: every reader already treats a blank
+            # `auth_sel` as none, and removing lines is not something this
+            # function does anywhere else.
+            upsert("auth_sel", json.dumps(str(auth_sel)))
         if notes is not None:
             # Also re-derives the software column, since that is the first word
             # of notes unless an explicit `software:` key overrides it.
@@ -378,6 +385,8 @@ def save_tracker_fields(tracker_id: str, inactivity_days: int | None = None,
             raise ValueError("refusing write: snooze_until did not take")
         if alert_at_pct is not None and float(entry.get("alert_at_pct", -1)) != float(alert_at_pct):
             raise ValueError("refusing write: alert_at_pct did not take")
+        if auth_sel is not None and str(entry.get("auth_sel") or "") != str(auth_sel):
+            raise ValueError("refusing write: auth_sel did not take")
 
         tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
         tmp.write_text(candidate)
@@ -669,8 +678,13 @@ def init_db() -> None:
     _own_only(DB_PATH)
 
 
-def record(tracker_id: str, kind: str, source: str = "userscript") -> None:
-    now = datetime.now(timezone.utc).isoformat()
+def record(tracker_id: str, kind: str, source: str = "userscript",
+           when: datetime | None = None) -> None:
+    """`when` exists for exactly one caller, the "were you signed in then?"
+    answer, which is about a visit that already happened. Stamping that with
+    the moment the question was ANSWERED would start the countdown late by
+    however long the question sat there, and late is the unsafe direction."""
+    now = (when or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
     with db() as conn:
         conn.execute(
             "INSERT INTO events (tracker_id, kind, ts, source) VALUES (?,?,?,?)",
@@ -1062,7 +1076,41 @@ def elapsed_days(later: datetime, earlier: datetime) -> int:
     return (later.astimezone(tz).date() - earlier.astimezone(tz).date()).days
 
 
+CANT_TELL = "can't tell"
+
+
 def evaluate(tracker: dict, now: datetime | None = None) -> dict:
+    """One tracker's status, plus what the script could not work out.
+
+    `_evaluate()` is the ladder. This adds the one thing the ladder cannot
+    know: `session` means "visited recently, no login seen", and that has two
+    causes that need opposite responses. A dead cookie, where the script saw a
+    login form, wants you to sign in. A site with no sign-out control the
+    script can see wants a selector, and telling THAT user they are logged out
+    is false: they sign in again, nothing changes, and it reads as broken.
+    Reported on milkie.cc 2026-10-02.
+
+    The state KEY stays `session` either way: RANK, the colour, /api/summary
+    and every test keep one vocabulary. Only the label and the reason move,
+    and `label` is computed HERE so the row builder and the page script cannot
+    hold two copies of the rule.
+    """
+    out = _evaluate(tracker, now)
+    blind = blind_for(tracker["id"])
+    # Belt and braces: every path that changes the selector clears the record,
+    # and this refuses to show one that outlived the selector it was about.
+    if blind and blind.get("sel", "") != (tracker.get("auth_sel") or ""):
+        blind = None
+    out["blind"] = blind
+    out["label"] = STATE_LABEL.get(out["state"], out["state"])
+    if blind and out["state"] == "session":
+        out["label"] = CANT_TELL
+        out["reason"] = ("Idlarr can't tell if you're signed in here. "
+                         "Open its row on the dashboard to fix it in one click.")
+    return out
+
+
+def _evaluate(tracker: dict, now: datetime | None = None) -> dict:
     """Compute one tracker's status. Pure-ish: reads DB, decides nothing else."""
     now = now or datetime.now(timezone.utc)
     inactivity_days = int(tracker["inactivity_days"])
@@ -1209,6 +1257,62 @@ def clear_veto(tracker_id: str) -> bool:
     if veto_is_loop((entry or {}).get("url") or "", vet):
         return False
     del_state(f"veto_{tracker_id}")
+    return True
+
+
+# A selector that matches every page records a login on every page, including
+# the ones you were signed out on. That is the dangerous direction: the
+# dashboard reads `ok` while the account ages out.
+_TOO_BROAD = frozenset((
+    "*", ":root", "html", "head", "body", "div", "span", "a", "p", "main",
+    "header", "nav", "footer", "section", "article", "aside", "ul", "ol", "li",
+    "img", "button", "input", "form", "table", "tr", "td", "svg", "script"))
+
+
+def valid_selector(raw) -> str:
+    """A signed-in selector fit to store and hand to the script, or ValueError.
+
+    This cannot check that the selector is valid CSS (the page does that with
+    querySelector before posting, and the script wraps its own call), nor that
+    it is absent when signed out, which nothing but a signed-out page can
+    show. It refuses what is certainly wrong: nothing printable, something
+    that spans lines, or a bare structural tag that is on every page there is.
+    """
+    sel = str(raw or "").strip()
+    if not sel:
+        raise ValueError("the selector is empty")
+    if len(sel) > 200:
+        raise ValueError("the selector is longer than 200 characters")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in sel):
+        raise ValueError("the selector contains a control character")
+    if sel.lower() in _TOO_BROAD:
+        raise ValueError(f"'{sel}' is on every page, signed in or not, so it "
+                         f"would record logins that never happened")
+    return sel
+
+
+def blind_for(tracker_id: str) -> dict | None:
+    """The last time the script could not tell whether you were signed in:
+    no sign-out control, no password field, nothing to go on. None when it
+    never has, or when the record is unreadable."""
+    raw = get_state(f"blind_{tracker_id}", "") or ""
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(d, dict):
+        return None
+    cand = d.get("cand")
+    d["cand"] = [c for c in cand if isinstance(c, str)] if isinstance(cand, list) else []
+    return d
+
+
+def clear_blind(tracker_id: str) -> bool:
+    if not get_state(f"blind_{tracker_id}", ""):
+        return False
+    del_state(f"blind_{tracker_id}")
     return True
 
 
@@ -1708,8 +1812,8 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
     require_token(authorization)
     tid = str(payload.get("tracker", "")).strip().lower()
     kind = payload.get("kind", "auth")
-    if kind not in ("auth", "visit", "veto"):
-        raise HTTPException(400, "kind must be auth|visit|veto")
+    if kind not in ("auth", "visit", "veto", "blind"):
+        raise HTTPException(400, "kind must be auth|visit|veto|blind")
     # The script reports which version it is running. Adding or importing a
     # tracker bumps the served version, and until the browser picks that up the
     # new site has no @match, so it never pings and sits at `unknown` looking
@@ -1719,7 +1823,72 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
         set_state("script_seen", seen)
         set_state("script_seen_at", datetime.now(local_tz()).strftime("%Y-%m-%d %H:%M"))
 
-    known = {t["id"] for t in load_config()["trackers"]}
+    by_id = {t["id"]: t for t in load_config()["trackers"]}
+    known = set(by_id)
+
+    def pong(**extra) -> dict:
+        """Every answer to a known tracker carries its selector.
+
+        This is how a selector reaches the browser: in the reply to a ping the
+        script was sending anyway, so confirming one on the dashboard takes
+        effect on the next page load with nothing to reinstall. ALWAYS present,
+        empty when there is none, because the script caches it and "absent"
+        has to keep meaning "an older server that does not send one" rather
+        than "cleared".
+        """
+        return {"ok": True, **extra,
+                "authSel": (by_id[tid].get("auth_sel") or "")}
+
+    if kind == "blind":
+        # NOT an event, for the same reason a veto is not: `events` is what the
+        # ACCOUNT did, and this is the script saying it has nothing to go on.
+        if tid not in known:
+            return {"ok": True, "ignored": "unknown tracker"}
+        if payload.get("login"):
+            # The script saw a login form. That is a real signed-out page, so
+            # a standing "can't tell" would now be wrong: it CAN tell.
+            clear_blind(tid)
+            return pong(blind=False)
+        # Two different endings arrive here. With no selector the script had
+        # nothing to judge by and sends what it found (`cand`). With one, the
+        # selector matched nothing (`sel`), which is either a signed-out page
+        # or a selector that is WRONG: typed by hand, or broken by a redesign.
+        # That second case used to be silent, and it is the reason the docs
+        # gave for never offering a selector field at all.
+        current = by_id[tid].get("auth_sel") or ""
+        used = str(payload.get("sel") or "")
+        if used != current:
+            # The script and the server disagree about the selector, so the
+            # script is one reply behind: it has not learned a new one, or is
+            # still using one that was cleared. Its report is about a setup
+            # that no longer exists, and this reply is what corrects it.
+            return pong(ignored="the script's selector is out of date")
+        cand = []
+        raw = [] if current else payload.get("cand")
+        for c in (raw if isinstance(raw, list) else [])[:12]:
+            # str() would turn a number or a nested list into a "selector".
+            if not isinstance(c, str):
+                continue
+            try:
+                sel = valid_selector(c)
+            except ValueError:
+                continue
+            if len(sel) <= 120 and sel not in cand:
+                cand.append(sel)
+        now_local = datetime.now(local_tz())
+        set_state(f"blind_{tid}", json.dumps({
+            "path": str(payload.get("path", ""))[:120],
+            "at": now_local.strftime("%Y-%m-%d %H:%M"),
+            "iso": now_local.astimezone(timezone.utc).isoformat(),
+            "cand": cand[:3],
+            # The selector that matched nothing, or "" when there was none.
+            "sel": current,
+        }))
+        print(f"[ping] {tid}: could not tell on "
+              f"{str(payload.get('path', ''))[:120]}, "
+              f"{len(cand[:3])} candidate(s)", flush=True)
+        return pong(blind=True)
+
     if kind == "veto":
         # NOT an event. `events` stays append-only history of what the ACCOUNT
         # did; this is the script saying it declined to judge a page, which is
@@ -1738,7 +1907,7 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
         print(f"[ping] {tid}: auth declined on "
               f"{str(payload.get('path', ''))[:120]} "
               f"(logout present, one password field)")
-        return {"ok": True, "veto": True}
+        return pong(veto=True)
 
     if tid not in known:
         # Reached by a REMOVED tracker as well as a typo: the browser's script
@@ -1753,6 +1922,9 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
         # is still an observation that detection worked; returning early on it
         # would leave a resolved marker up for the rest of the 12h window.
         clear_veto(tid)
+        # Same reasoning, same placement: an observed login means the script
+        # CAN tell on this tracker, so the question has answered itself.
+        clear_blind(tid)
 
     # Dedupe HERE, not in the browser. The userscript used to hold a 12h
     # cooldown in GM storage, which meant /api/unmark could delete an event the
@@ -1762,10 +1934,10 @@ async def ping(payload: dict = Body(...), authorization: str | None = Header(def
     # short cooldown purely to avoid request spam while browsing.
     last, _ = last_event(tid, kind)
     if last is not None and (datetime.now(timezone.utc) - last) < timedelta(hours=DEDUPE_HOURS):
-        return {"ok": True, "tracker": tid, "kind": kind, "deduped": True}
+        return pong(tracker=tid, kind=kind, deduped=True)
 
     record(tid, kind)
-    return {"ok": True, "tracker": tid, "kind": kind, "deduped": False}
+    return pong(tracker=tid, kind=kind, deduped=False)
 
 
 @app.post("/api/mark/{tracker_id}", dependencies=[Depends(require_ui)])
@@ -1797,6 +1969,9 @@ def clean(r: dict) -> dict:
         "notes": r.get("notes", ""), "alert_at_pct": float(r.get("alert_at_pct", 0.65)),
         "last_auth": r["last_auth"].isoformat() if r["last_auth"] else None,
         "last_visit": r["last_visit"].isoformat() if r["last_visit"] else None,
+        "label": r.get("label") or r["state"],
+        "auth_sel": r.get("auth_sel", "") or "",
+        "blind": r.get("blind"),
     }
 
 
@@ -1882,16 +2057,104 @@ async def set_limit(tracker_id: str, payload: dict = Body(...)):
                     400, f"that URL is on {want}, but this tracker is "
                          f"{entry['host']}. Change the path, not the site.")
 
+    auth_sel = payload.get("auth_sel")
+    if auth_sel is not None:
+        auth_sel = str(auth_sel).strip()
+        if auth_sel:
+            try:
+                auth_sel = valid_selector(auth_sel)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+
     if all(v is None for v in (days, verified, immune, immune_reason, notes,
-                               snooze, pct, url)):
+                               snooze, pct, url, auth_sel)):
         raise HTTPException(400, "nothing to update")
 
     try:
         save_tracker_fields(tracker_id, days, verified, immune, immune_reason,
-                            notes, snooze, pct, url)
+                            notes, snooze, pct, url, auth_sel)
     except (KeyError, ValueError) as exc:
         raise HTTPException(500, f"config write refused: {exc}")
+    if auth_sel is not None:
+        # Set or cleared by hand: either way the record was about the OLD
+        # selector, and the next visit will ask again if it still cannot tell.
+        clear_blind(tracker_id)
 
+    row = next(r for r in statuses() if r["id"] == tracker_id)
+    return clean(row)
+
+
+@app.post("/api/blind/{tracker_id}", dependencies=[Depends(require_ui)])
+async def answer_blind(tracker_id: str, payload: dict = Body(...)):
+    """Answer "were you signed in then?" for a tracker the script cannot read.
+
+    The script has no way to tell a signed-in page from a signed-out one on a
+    site with no sign-out control in the DOM. That is the one fact only the
+    user has, so it is asked for once, and NOT guessed: a wrong guess records
+    logins that never happened, and the dashboard reads `ok` while the account
+    ages out.
+
+    `yes` adopts the element the script found and counts that visit as a
+    login. It is recorded as `manual`, because it is asserted rather than
+    observed, and at the time of the VISIT, not the time of the answer.
+    `no` only withdraws the question: being signed out says nothing about
+    whether the element is a good one, so nothing is remembered against it.
+
+    When the tracker already HAS a selector and it matched nothing, `yes`
+    means the selector is wrong, so it is cleared instead of replaced.
+    """
+    entry = next((t for t in load_config()["trackers"] if t["id"] == tracker_id), None)
+    if entry is None:
+        raise HTTPException(404, "unknown tracker")
+    blind = blind_for(tracker_id)
+    if blind is None:
+        raise HTTPException(409, "nothing is being asked about this tracker")
+
+    answer = str(payload.get("answer", "")).strip().lower()
+    if answer not in ("yes", "no"):
+        raise HTTPException(400, "answer must be yes or no")
+
+    if answer == "yes" and blind.get("sel"):
+        # "I WAS signed in, and your selector did not see me." So it is wrong.
+        # Clear it rather than guess at a replacement: with none set, the next
+        # visit reports what is on the page now and the question comes back
+        # with something to offer.
+        try:
+            save_tracker_fields(tracker_id, auth_sel="")
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(500, f"config write refused: {exc}")
+    elif answer == "yes":
+        if not blind["cand"]:
+            raise HTTPException(
+                400, "the script found nothing to use on that page. "
+                     "Set a signed-in element by hand instead.")
+        # Only what the SCRIPT reported, never free text: this endpoint adopts
+        # a suggestion, and /api/limit is where a hand-written one goes.
+        chosen = str(payload.get("selector") or blind["cand"][0])
+        if chosen not in blind["cand"]:
+            raise HTTPException(400, "that is not one of the elements the script found")
+        try:
+            chosen = valid_selector(chosen)
+            save_tracker_fields(tracker_id, auth_sel=chosen)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(500, f"config write refused: {exc}")
+
+    if answer == "yes":
+        try:
+            seen_at = datetime.fromisoformat(str(blind.get("iso", "")))
+            if seen_at.tzinfo is None:
+                raise ValueError("naive")
+        except ValueError:
+            seen_at = None
+        last = last_seen(tracker_id, "auth")
+        now = datetime.now(timezone.utc)
+        # Unreadable or future-dated means the record cannot be trusted as a
+        # time, and an older one than the last login adds nothing. In every
+        # such case the selector is still adopted; only the backfill is skipped.
+        if seen_at and seen_at <= now and (last is None or seen_at > last):
+            record(tracker_id, "auth", source="manual", when=seen_at)
+
+    clear_blind(tracker_id)
     row = next(r for r in statuses() if r["id"] == tracker_id)
     return clean(row)
 
@@ -2554,8 +2817,17 @@ def _userscript_payload(base: str) -> tuple[str, str, str, int]:
         # render_userscript() raises loudly on this; the staleness check must
         # not take the status page down over it.
         template = ""
+    # Selectors are deliberately NOT in the digest, though they are still baked
+    # into SITES. The script learns its selector from every /ping reply, so a
+    # selector change needs no reinstall, and hashing it would raise the
+    # "your userscript is behind" banner one click after the dashboard said
+    # there was nothing to reinstall. Baking it in remains the bootstrap for a
+    # fresh install, before the first reply has arrived.
+    hashed_sites = "\n".join(
+        "    {{ host: {}, id: {} }},".format(json.dumps(t["host"]), json.dumps(t["id"]))
+        for t in trackers)
     return (matches, sites,
-            "\n".join([base, matches, sites, template]), len(trackers))
+            "\n".join([base, matches, hashed_sites, template]), len(trackers))
 
 
 def userscript_version(payload: str) -> str:
@@ -3380,6 +3652,12 @@ PAGE = """<!doctype html>
      something to DO about it, so it is louder. */
   td.nm .veto.loop{color:var(--critical)}
   td.nm .veto svg{display:block;pointer-events:none}
+  /* A question mark, not the triangle: the triangle says "something was
+     declined", this says "you are being asked something". Same colour, since
+     both are things to act on. */
+  td.nm .blind{display:inline-flex;vertical-align:middle;margin-left:5px;
+    color:var(--warn);cursor:help}
+  td.nm .blind svg{display:block;pointer-events:none}
   /* Stacked, not inline: the badge beside the software read as a second word
      of it, and a long software name pushed the badge out of the column. */
   td.nm .m2{display:flex;flex-direction:column;align-items:flex-start;gap:4px;
@@ -3438,6 +3716,19 @@ PAGE = """<!doctype html>
   button.arm{color:var(--expired);border-color:var(--expired);background:var(--armbg)}
   button.danger:hover{color:var(--expired);border-color:var(--expired)}
   .msg{font-size:10px;color:var(--dim);min-height:14px;margin-top:9px;letter-spacing:.03em}
+  /* The one-click question. It sits ABOVE the three panels, full width,
+     because it is the reason the row is in the state it is in and everything
+     under it is secondary until it is answered. */
+  .ask{margin:14px 16px 2px;padding:13px 16px;border:1px solid var(--warn);
+    background:var(--bannerwarn);border-radius:10px;font-family:var(--body)}
+  .ask b{display:block;font-size:14.5px;font-weight:600;color:var(--fg);margin-bottom:5px}
+  .ask p{margin:0 0 9px;font-size:13px;line-height:1.5;color:var(--dim2)}
+  .ask p.q{color:var(--fg);font-weight:500}
+  .ask .c{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .ask .sub{margin:9px 0 0;font-size:11.5px;color:var(--dim)}
+  .ask code{font-family:var(--mono);font-size:10.5px;color:var(--fg);background:var(--bg);
+    border:1px solid var(--line2);border-radius:5px;padding:2px 6px}
+  .ask a{color:var(--accent)}
   .msg.bad{color:var(--critical)} .msg.good{color:var(--ok)} .msg.warn{color:var(--due)}
   /* Controls are sized to their CONTENT and share a left edge. Stretching
      each one to the column width put a three-digit day count in a 200px box. */
@@ -3914,7 +4205,11 @@ __SHEET__
    tr.dataset.el=d.days_since===null?'0':
      Math.min(100,Math.max(0,d.days_since/Math.max(d.inactivity_days,1)*100)).toFixed(2);
    tr.querySelector('td.st').textContent=d.immune&&d.immune_reason?d.immune_reason
-     :(SLBL[d.state]||d.state);
+     :(d.label||SLBL[d.state]||d.state);
+   // The question mark only ever needs REMOVING here. It appears because the
+   // script pinged, which this page learns about on a reload; it goes because
+   // someone answered in the drawer, which is a repaint.
+   const bq=tr.querySelector('td.nm .blind'); if(bq&&!d.blind)bq.remove();
    // The countdown carries its unit as a child, so textContent= would wipe it.
    // `td.seen` and `td.lim` are gone -- last auth and the limit share the
    // elapsed cell's meta line now.
@@ -3963,7 +4258,36 @@ __SHEET__
      for(let v=40;v<100;v+=5)o+='<option value="'+(v/100).toFixed(2)+'"'
        +(Math.abs(sel-v/100)<0.001?' selected':'')+'>'+v+'%</option>';
      return o;};
-   el.innerHTML='<td colspan="5"><div class="d" style="--c:var(--'+d.state+')">'
+   // One question, asked once. `cand` came off a tracker page, as did the
+   // path, so every piece of it goes through hesc().
+   const bl=d.blind, pick=bl&&bl.cand&&bl.cand.length?bl.cand[0]:'';
+   const ask=!bl?'':'<div class="ask"><b>Idlarr can\u2019t tell when you\u2019re signed in to '
+    +hesc(d.name)+'</b>'
+    +(bl.sel
+      ?'<p>The element set for this tracker, <code>'+hesc(bl.sel)+'</code>, was not on '
+       +'the page on your last visit, '+hesc(bl.at||'')+'. Either you were signed out, '
+       +'or the site changed and it no longer matches.</p>'
+       +'<p class="q">Were you signed in then?</p>'
+       +'<div class="c"><button class="lk pri byes">Yes, look again</button>'
+       +'<button class="lk bno">No, I was signed out</button></div>'
+       +'<p class="sub">Yes clears that element, and Idlarr looks for a new one on '
+       +'your next visit.</p>'
+      :pick
+      ?'<p>This site has no sign-out control the script can see. On your last visit, '
+       +hesc(bl.at||'')+', it found something that looks like it belongs to a '
+       +'signed-in member instead.</p><p class="q">Were you signed in then?</p>'
+       +'<div class="c"><button class="lk pri byes">Yes, use it</button>'
+       +'<button class="lk bno">No, I was signed out</button></div>'
+       +'<p class="sub">It would watch for <code>'+hesc(pick)+'</code></p>'
+      :'<p>This site has no sign-out control the script can see, and on your last visit, '
+       +hesc(bl.at||'')+', nothing else on the page looked like it belongs to a '
+       +'signed-in member.</p><p class="sub">If you were signed in, put an element only a '
+       +'member sees in <b style="display:inline;font-size:inherit">Detect</b> below. '
+       +'<a href="https://github.com/b00pb0p/idlarr/blob/main/docs/troubleshooting.md#a-row-says-cant-tell" target="_blank" '
+       +'rel="noopener">How to find one</a></p>'
+       +'<div class="c"><button class="lk bno">I was signed out</button></div>')
+    +'</div>';
+   el.innerHTML='<td colspan="5">'+ask+'<div class="d" style="--c:var(--'+d.state+')">'
     +'<div><div class="dh">controls</div><div class="a2">'
     +'<div class="r"><label>Limit</label><div class="c">'
     +'<input class="lim w-num" type="text" inputmode="numeric" value="'
@@ -3982,6 +4306,15 @@ __SHEET__
     +'<div class="r"><label>Link</label><div class="c">'
     +'<input class="url w-grow" value="'+hesc(d.url||'')
     +'" placeholder="https://tracker.example/browse.php"></div></div>'
+    // Blank is the normal case and means the generic heuristic. This is the
+    // override for a site with no sign-out control in the page at all, which
+    // used to be settable only when a tracker was first added or by editing
+    // trackers.yml by hand.
+    +'<div class="r"><label>Detect</label><div class="c">'
+    +'<input class="sel w-grow" value="'+hesc(d.auth_sel||'')
+    +'" placeholder="automatic" title="Leave blank unless this site has no '
+    +'sign-out control. Otherwise: a CSS selector for something only a signed-in '
+    +'member sees."></div></div>'
     +'<div class="r"><label>Notes</label><div class="c">'
     +'<input class="nts w-grow" value="'+hesc(d.notes||'')
     +'" placeholder="first word sets the software column"></div></div>'
@@ -4086,6 +4419,36 @@ __SHEET__
         .catch(e=>{msg(e.message,'bad');urlIn.value=last;});};
      urlIn.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();urlIn.blur();}});
      urlIn.addEventListener('blur',save);}
+
+   const selIn=el.querySelector('.sel');
+   if(selIn){let last=selIn.value;
+     const save=()=>{const v=selIn.value.trim();if(v===last)return;
+       // The server cannot parse CSS, so a typo would be stored and then throw
+       // in the script on every page. Catch it here, where it can be said.
+       if(v){try{document.querySelector(v);}catch(_){
+         msg('that is not a valid CSS selector','bad');selIn.value=last;return;}}
+       post('/api/limit/'+d.id,{auth_sel:v}).then(r=>{last=r.auth_sel||'';
+         selIn.value=last;refresh(r);paint(tr,r);
+         const a=el.querySelector('.ask');if(a&&!r.blind)a.remove();
+         msg(last?'saved. It applies on your next visit to the site'
+                 :'cleared, back to automatic detection','good');})
+        .catch(e=>{msg(e.message,'bad');selIn.value=last;});};
+     selIn.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();selIn.blur();}});
+     selIn.addEventListener('blur',save);}
+
+   const answer=(which)=>post('/api/blind/'+d.id,{answer:which}).then(r=>{
+       refresh(r);paint(tr,r);
+       const a=el.querySelector('.ask');if(a)a.remove();
+       if(selIn)selIn.value=r.auth_sel||'';
+       msg(which!=='yes'
+         ?'nothing changed. Sign in there and it will ask again only if it still cannot tell'
+         :r.auth_sel
+         ?'using it. That visit now counts as a login, and it applies on your next visit'
+         :'cleared. That visit counts as a login, and Idlarr looks again on your next visit',
+         'good');
+     }).catch(e=>msg(e.message,'bad'));
+   const byes=el.querySelector('.byes'); if(byes)byes.addEventListener('click',()=>answer('yes'));
+   const bno=el.querySelector('.bno'); if(bno)bno.addEventListener('click',()=>answer('no'));
 
    const nts=el.querySelector('.nts');
    if(nts){let last=nts.value;
@@ -5173,8 +5536,23 @@ async def index(request: Request):
                 '1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>') if vet else ""
         q = ("" if (r["verified"] or r["immune"]) else
              '<span class="q" title="limit is a placeholder, not researched">unconfirmed</span>')
+        # Asked rather than stated. The script reached the end of its watch
+        # with no sign-out control and no password field, so it has nothing to
+        # judge by, and only the person who was there knows which it was.
+        bl = r.get("blind")
+        blind = (f'<span class="blind" title="Idlarr could not tell whether you '
+                 f'were signed in here: on {esc(bl.get("path") or "a page")} at '
+                 f'{esc(bl.get("at") or "")} the script found '
+                 + ("nothing matching the element set for this tracker. "
+                    if bl.get("sel") else "no sign-out control. ")
+                 + 'Open this row to answer one question and fix it.">'
+                 '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" '
+                 'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
+                 'aria-hidden="true"><circle cx="12" cy="12" r="9.5"/>'
+                 '<path d="M9.4 9.3a2.7 2.7 0 1 1 3.9 2.4c-.8.5-1.3 1-1.3 2M12 17v.01"/>'
+                 '</svg></span>') if bl else ""
         state_txt = (r["immune_reason"] if (r["immune"] and r["immune_reason"])
-                     else STATE_LABEL.get(s, s))
+                     else (r.get("label") or STATE_LABEL.get(s, s)))
         body.append(
             f'<tr class="row" id="t-{esc(r["id"])}" data-nm="{esc(r["name"])}" '
             f'data-sw="{esc(r["software"])}" data-st="{RANK[s]}" data-state="{s}" '
@@ -5185,7 +5563,7 @@ async def index(request: Request):
             f"data-row='{json.dumps(p).replace(chr(39), '&#39;')}' "
             f'style="--c:var(--{s})">'
             f'<td class="s"></td>'
-            f'<td class="nm">{name}{hand}{note}{veto}'
+            f'<td class="nm">{name}{hand}{note}{veto}{blind}'
             f'<span class="m2"><span class="sw">{esc(r["software"])}</span>{q}</span></td>'
             f'<td class="st">{esc(state_txt)}</td>'
             f'<td class="n">{big}<small>{unit}</small></td>'

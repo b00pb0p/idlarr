@@ -104,7 +104,8 @@ def test_the_error_says_which_secret_to_send(client):
 
 WRITES = [
     ("post", "/api/mark/alpha"), ("post", "/api/unmark/alpha"),
-    ("post", "/api/limit/alpha"), ("post", "/api/tracker"),
+    ("post", "/api/limit/alpha"), ("post", "/api/blind/alpha"),
+    ("post", "/api/tracker"),
     ("delete", "/api/tracker/alpha"), ("post", "/api/settings"),
     ("post", "/api/import"), ("post", "/api/config"),
     ("post", "/api/auth"), ("post", "/api/apikey"),

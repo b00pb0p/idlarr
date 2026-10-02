@@ -177,9 +177,14 @@ def test_the_script_reports_only_when_a_logout_was_found():
     assert "findLogout" not in src[guard + 60:call], \
         "something else sits between the guard and the report"
 
-    # The other ending must stay separate: no logout control at all needs an
-    # authSel, and reporting both the same way buries the actionable one.
-    assert "set authSel for this site" in src
+    # The other ending must stay SEPARATE. No logout control at all used to end
+    # in a console line telling you to set an authSel; since 1.11 it is
+    # reported too, but as its own kind, and only after the veto has returned.
+    # Reporting both the same way would bury which one you are looking at.
+    blind = src.find("send('blind', site.authSel")
+    assert blind > call, "the can't-tell report is missing or sits before the veto"
+    assert "return;" in src[call:blind], \
+        "a vetoed page falls through and is ALSO reported as can't-tell"
 
 
 def test_the_script_sends_the_path():

@@ -30,7 +30,11 @@ jobs:
           # if we relied on that, so name it. Starlette deprecated plain `httpx`
           # here in the 0.52 uvicorn/fastapi bump; it still works, but a future
           # release drops it and the suite would fail at import.
-          pip install -r requirements.txt pytest httpx2
+          # quickjs is a test-only JavaScript engine. The userscript is the
+          # half of this project nothing else executes, and the tests that RUN
+          # it skip themselves when the engine is missing, which in CI would
+          # be a green run that checked nothing.
+          pip install -r requirements.txt pytest httpx2 quickjs
       - name: Run tests
         run: python -m pytest -q
       - name: Check the config example and userscript still parse
