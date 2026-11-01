@@ -211,7 +211,10 @@ real login page never has. It happens on a page carrying exactly one password
 field, because one field cannot be told apart from a login form; hover the
 glyph and the tooltip names the page. Any other page on that tracker records
 auth normally, so it is information rather than a fault, and it **clears on its
-own** the next time the script records a login there. Marking the tracker
+own** the next time the script records a login there. It only appears when it
+could matter: not on immune trackers, and not while the script has seen a real
+login there within that tracker's limit, unless that page is why the row reads
+`logged out`. Marking the tracker
 `seen` does not clear it, since that is you saying you logged in rather than the
 script seeing it work.
 

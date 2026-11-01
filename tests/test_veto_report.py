@@ -434,3 +434,99 @@ def test_the_loop_rule_has_one_definition(client, cfg):
     assert src.count("def veto_is_loop") == 1
     assert src.count("url_path(") <= 2, \
         "url_path is being compared in more than the one shared rule"
+
+
+# ------------------------------------------- a warning only when it can matter
+
+def _ago(tid, kind, days, source="userscript"):
+    from datetime import datetime, timedelta, timezone
+    ts = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with app.db() as conn:
+        conn.execute("INSERT INTO events (tracker_id, kind, ts, source) VALUES (?,?,?,?)",
+                     (tid, kind, ts, source))
+
+
+def _set(cfg, tid, **fields):
+    import yaml
+    d = yaml.safe_load(cfg.read_text())
+    next(t for t in d["trackers"] if t["id"] == tid).update(fields)
+    cfg.write_text(yaml.safe_dump(d))
+    app._cfg_cache["data"] = None
+
+
+def test_an_immune_tracker_never_shows_it(client, cfg):
+    """Reported on BTN 2026-11-01. No countdown, so detection affects nothing.
+    The record is kept, so un-marking immune brings the warning back."""
+    veto(client, path="/pastebin.php")
+    _set(cfg, "alpha", immune=True)
+    assert not _marked(client)
+    assert app.veto_for("alpha") is not None, "the record was thrown away"
+    _set(cfg, "alpha", immune=False)
+    assert _marked(client)
+
+
+def test_immune_outranks_the_loop(client, cfg):
+    _set(cfg, "alpha", immune=True, url="https://alpha.example/my.php")
+    veto(client, path="/my.php")
+    assert not _marked(client)
+
+
+def test_a_recent_observed_login_keeps_it_quiet(client, cfg):
+    """One visit to a page like /pastebin.php, with detection plainly working
+    on every other page, is not worth a warning."""
+    _ago("alpha", "auth", 2)
+    veto(client, path="/pastebin.php")
+    assert not _marked(client)
+
+
+def test_it_shows_once_that_login_is_past_the_limit(client, cfg):
+    """Boundary included: the limit is 30 in the fixture, so day 30 is quiet
+    and day 31 is not. Compared to the tracker's own limit, not a constant."""
+    _ago("alpha", "auth", 30)
+    veto(client, path="/x.php")
+    assert not _marked(client)
+    with app.db() as conn:
+        conn.execute("DELETE FROM events")
+    _ago("alpha", "auth", 31)
+    assert _marked(client)
+    _set(cfg, "alpha", inactivity_days=90)
+    assert not _marked(client), "the window ignored this tracker's own limit"
+
+
+def test_a_login_marked_by_hand_is_not_evidence(client, cfg):
+    """`seen` is you asserting a login, and the newest event being manual must
+    not hide an observed one either."""
+    _ago("alpha", "auth", 1, source="manual")
+    veto(client, path="/x.php")
+    assert _marked(client), "a manual mark hid a detection warning"
+    _ago("alpha", "auth", 3)
+    assert not _marked(client), "a newer manual mark masked the observed login"
+
+
+def test_an_event_with_no_source_counts_as_observed(client, cfg):
+    _ago("alpha", "auth", 2, source=None)
+    veto(client, path="/x.php")
+    assert not _marked(client)
+
+
+def test_the_loop_shows_despite_a_recent_login(client, cfg):
+    _set(cfg, "alpha", url="https://alpha.example/my.php")
+    _ago("alpha", "auth", 1)
+    veto(client, path="/my.php")
+    assert _marked(client), "a wrong Link was hidden by a login seen elsewhere"
+
+
+def test_it_stays_when_it_explains_logged_out(client, cfg):
+    """Login 10 days ago, inside the limit, and a fresh visit to the declined
+    page: the row reads `logged out`, and this is the only thing saying why."""
+    _ago("alpha", "auth", 10)
+    _ago("alpha", "visit", 0)
+    veto(client, path="/pastebin.php")
+    assert next(r for r in app.statuses() if r["id"] == "alpha")["state"] == "session"
+    assert _marked(client), "the explanation for logged out was hidden"
+
+
+def test_marking_immune_takes_it_down_without_a_reload(client, cfg):
+    js = "\n".join(re.findall(r"<script>(.*?)</script>", client.get("/").text, re.S))
+    paint = js[js.index("function paint("):js.index("function drawer(")]
+    assert re.search(r"querySelector\('td\.nm \.veto'\).*?d\.immune\)\w+\.remove\(\)", paint, re.S)

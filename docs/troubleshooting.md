@@ -120,6 +120,11 @@ silent: the row looked exactly like a tracker you had never opened, and finding
 which of your sites had such a page meant visiting the profile page of every one
 of them.
 
+It is deliberately quiet. An immune tracker never shows it, and neither does a
+tracker where the script has seen a real login within its limit, unless that
+declined page is why the row reads `logged out`. A red glyph is the exception to
+the second rule, because a wrong Link needs fixing regardless.
+
 **It clears on its own** the next time the script records a login on that
 tracker, so visiting any normal page is enough. If you see it and it does not go
 away after that, the script is not recording auth anywhere on the site, which is

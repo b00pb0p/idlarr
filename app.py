@@ -1229,6 +1229,45 @@ def veto_is_loop(url: str, vet: dict | None) -> bool:
     return bool(vet and url and vet.get("path") and url_path(url) == vet["path"])
 
 
+def last_observed_auth(tracker_id: str) -> datetime | None:
+    """The newest login the SCRIPT saw, ignoring any asserted by hand. Not
+    `last_event()`, which returns whichever is newest: a `seen` click says
+    nothing about whether detection works. Anything not explicitly `manual`
+    counts, so rows predating the source column are not read as hand-marked."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT ts FROM events WHERE tracker_id=? AND kind='auth' "
+            "AND COALESCE(source,'') != 'manual' ORDER BY ts DESC LIMIT 1",
+            (tracker_id,),
+        ).fetchone()
+    return datetime.fromisoformat(row["ts"]) if row else None
+
+
+def veto_visible(r: dict, vet: dict | None, now: datetime | None = None) -> bool:
+    """Whether a recorded veto deserves a warning on the row.
+
+    A triangle that needs no action teaches you to ignore the triangle.
+    Reported on BTN 2026-11-01: immune, detection plainly working, and one
+    visit to /pastebin.php put the warning back. So the record is kept and only
+    the display is decided here:
+
+    - Immune: never. There is no countdown for detection to affect.
+    - The loop: always otherwise. The row's own link is wrong, and that needs
+      fixing however recently a login was seen elsewhere.
+    - `session`: always otherwise. The declined visit is the fresh visit behind
+      that `logged out`, so this is the one thing on the row that explains it.
+    - Otherwise only with no observed login inside the tracker's own limit,
+      which is the one case where "detection may not work here" is still open.
+    """
+    if not vet or r.get("immune"):
+        return False
+    if veto_is_loop(r.get("url") or "", vet) or r.get("state") == "session":
+        return True
+    seen = last_observed_auth(r["id"])
+    now = now or datetime.now(timezone.utc)
+    return seen is None or elapsed_days(now, seen) > int(r["inactivity_days"])
+
+
 def clear_veto(tracker_id: str) -> bool:
     """Drop a tracker's declined-page marker. Returns whether one went.
 
@@ -4215,6 +4254,10 @@ __SHEET__
    // script pinged, which this page learns about on a reload; it goes because
    // someone answered in the drawer, which is a repaint.
    const bq=tr.querySelector('td.nm .blind'); if(bq&&!d.blind)bq.remove();
+   // Immune rows never carry the warning, so marking one immune takes it down
+   // here. Un-marking does not bring it back until a reload: whether it should
+   // show is decided on the server, and a stale absence alarms nobody.
+   const vq=tr.querySelector('td.nm .veto'); if(vq&&d.immune)vq.remove();
    // The countdown carries its unit as a child, so textContent= would wipe it.
    // `td.seen` and `td.lim` are gone -- last auth and the limit share the
    // elapsed cell's meta line now.
@@ -5514,6 +5557,8 @@ async def index(request: Request):
         # does not. Finding these by hand meant opening the profile page of
         # every tracker; this puts it on the row instead.
         vet = veto_for(r["id"])
+        if not veto_visible(r, vet):
+            vet = None
         # The LOOP case, and the only one that needs acting on. If this
         # tracker's own URL is the page being declined, the link on this row
         # leads somewhere that can never record an auth: every visit from the
